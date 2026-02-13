@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clipboard-mcp"
+version = "0.1.0"
+description = "MCP server that reads content from the system clipboard — tables, text, code, JSON, URLs, and more."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Chris Means", email = "chris.a.means@gmail.com"},
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "mcp[cli]>=1.2.0",
+]
+
+[project.scripts]
+clipboard-mcp = "clipboard_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/cmeans/clipboard-mcp"
+Repository = "https://github.com/cmeans/clipboard-mcp"
+Issues = "https://github.com/cmeans/clipboard-mcp/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clipboard_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
