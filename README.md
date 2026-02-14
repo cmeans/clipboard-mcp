@@ -30,7 +30,7 @@ Markdown, JSON, or CSV), code snippets, JSON data, URLs, rich HTML text, and pla
 
 ### Prerequisites
 
-**Python 3.11+** and [uv](https://docs.astral.sh/uv/) (recommended) or pip.
+**Python 3.11+** and one of: [uv](https://docs.astral.sh/uv/) (recommended), [pipx](https://pipx.pypa.io/), or pip.
 
 You also need a platform-specific clipboard tool:
 
@@ -42,29 +42,61 @@ You also need a platform-specific clipboard tool:
 | **macOS** | Built-in | No install needed (`osascript` / `pbpaste`) |
 | **Windows** | Built-in | No install needed (PowerShell) |
 
-### Install
-
-```bash
-# Clone
-git clone https://github.com/cmeans/clipboard-mcp.git
-cd clipboard-mcp
-
-# Install with uv
-uv sync
-
-# Or with pip
-pip install -e .
-```
+> **Platform status**: Linux (Wayland and X11) is tested and actively used.
+> macOS and Windows implementations are complete but **untested on real hardware** —
+> they should work but may have edge cases. Bug reports and PRs are very welcome.
 
 ### Configure Claude Desktop
 
-Add the following to your Claude Desktop config file:
+Add one of the following to your Claude Desktop config file:
 
 **Linux**: `~/.config/Claude/claude_desktop_config.json`
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-#### Option A: Using uv (recommended)
+#### Option A: uvx — no clone needed (recommended)
+
+Requires [uv](https://docs.astral.sh/uv/). Installs and runs directly from GitHub:
+
+```json
+{
+  "mcpServers": {
+    "clipboard": {
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/cmeans/clipboard-mcp",
+        "clipboard-mcp"
+      ]
+    }
+  }
+}
+```
+
+#### Option B: pipx — no clone needed
+
+Requires [pipx](https://pipx.pypa.io/). Same idea, different tool manager:
+
+```json
+{
+  "mcpServers": {
+    "clipboard": {
+      "command": "pipx",
+      "args": [
+        "run", "--spec", "git+https://github.com/cmeans/clipboard-mcp",
+        "clipboard-mcp"
+      ]
+    }
+  }
+}
+```
+
+#### Option C: Local clone with uv
+
+```bash
+git clone https://github.com/cmeans/clipboard-mcp.git
+cd clipboard-mcp
+uv sync
+```
 
 ```json
 {
@@ -73,7 +105,7 @@ Add the following to your Claude Desktop config file:
       "command": "uv",
       "args": [
         "run",
-        "--directory", "/home/cmeans/github.com/cmeans/clipboard-mcp",
+        "--directory", "/path/to/clipboard-mcp",
         "clipboard-mcp"
       ]
     }
@@ -81,17 +113,28 @@ Add the following to your Claude Desktop config file:
 }
 ```
 
-#### Option B: Direct Python
+#### Option D: Local clone with pip
+
+```bash
+git clone https://github.com/cmeans/clipboard-mcp.git
+cd clipboard-mcp
+pip install -e .
+```
 
 ```json
 {
   "mcpServers": {
     "clipboard": {
-      "command": "/home/cmeans/github.com/cmeans/clipboard-mcp/.venv/bin/clipboard-mcp"
+      "command": "clipboard-mcp"
     }
   }
 }
 ```
+
+> **Note**: Option D depends on `clipboard-mcp` being on your PATH. Since Claude
+> Desktop launches outside a shell, this may not work reliably. Prefer options A–C.
+
+Restart Claude Desktop after editing the config.
 
 #### Environment variables
 
@@ -114,10 +157,9 @@ non-standard socket path, or a containerized environment):
 {
   "mcpServers": {
     "clipboard": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--directory", "/path/to/clipboard-mcp",
+        "--from", "git+https://github.com/cmeans/clipboard-mcp",
         "clipboard-mcp"
       ],
       "env": {
@@ -128,8 +170,6 @@ non-standard socket path, or a containerized environment):
   }
 }
 ```
-
-Restart Claude Desktop after editing the config.
 
 ## Usage
 
@@ -145,6 +185,29 @@ Restart Claude Desktop after editing the config.
    - "Convert my clipboard to CSV" (uses `output_format=csv`)
 3. Claude will call `clipboard_paste` and return the content.
 
+### Tips for reliable triggering
+
+The server includes instructions that tell Claude when to check the clipboard, but
+host models vary in how consistently they follow MCP server instructions. If Claude
+isn't picking up on your intent, try these approaches:
+
+**Be explicit** — these phrases work most reliably:
+- "Paste my clipboard"
+- "Read what I copied"
+- "What's on my clipboard?"
+
+**Reference the clipboard when data is missing** — Claude is instructed to check the
+clipboard when you refer to data that isn't in the conversation, but this doesn't
+always fire. If Claude asks you to provide the data instead of reading it, nudge it:
+- "It's on my clipboard — paste it"
+- "Check my clipboard"
+
+**Add a system prompt hint** — If you have access to a custom system prompt (e.g. in
+a Claude Desktop project), you can reinforce the behavior:
+
+> When the user references data not present in the conversation, check the clipboard
+> using clipboard_paste before asking them to provide it.
+
 ### Content handling
 
 | Content type | What happens |
@@ -155,6 +218,7 @@ Restart Claude Desktop after editing the config.
 | **URL** | Returned cleanly as a URL |
 | **Rich HTML** (no table) | HTML tags stripped, readable text returned |
 | **Plain text** | Returned as-is |
+| **Images / binary** | Not supported — returns a message identifying the format (see [Limitations](#limitations)) |
 
 ### Table output formats
 
@@ -195,12 +259,17 @@ clipboard-mcp/
 │   ├── __init__.py          # Package version
 │   ├── server.py            # MCP server, tool definitions & debug logging setup
 │   ├── clipboard.py         # Platform-agnostic clipboard backend (Wayland auto-detection)
-│   └── parser.py            # HTML table parser, formatters, content detection
+│   ├── parser.py            # HTML table parser, formatters, content detection
+│   └── instructions/        # Tool & server descriptions (loaded at startup)
+│       ├── server.md        # Server-level MCP instructions
+│       ├── clipboard_paste.md
+│       ├── clipboard_read_table.md
+│       ├── clipboard_read_raw.md
+│       └── clipboard_list_formats.md
 ├── tests/
 │   ├── test_parser.py       # Parser & formatter tests
 │   └── test_server.py       # MCP server, clipboard backend & Wayland detection tests
-├── pyproject.toml           # Project metadata & dependencies
-├── pytest.ini               # Pytest config (pythonpath, asyncio_mode)
+├── pyproject.toml           # Project metadata, dependencies & pytest config
 ├── CLAUDE.md                # Claude Code guidance
 ├── LICENSE                  # MIT
 └── README.md
@@ -218,6 +287,19 @@ clipboard-mcp/
    is classified as JSON, URL, code, or plain text and returned with appropriate
    formatting (pretty-printed JSON, fenced code blocks, etc.). Content is truncated
    at 50KB.
+
+## Limitations
+
+- **Images and binary data are not supported.** If the clipboard contains an image
+  (PNG, JPEG, etc.), audio, or video, the server will report what format is present
+  but cannot return the content. MCP does support image content blocks, so this is a
+  possible future enhancement.
+- **Text content is truncated at 50KB** to avoid overwhelming the model's context
+  window.
+- **macOS and Windows are untested** (see [Platform status](#prerequisites)).
+  Implementations are complete but may have edge cases on real hardware.
+- **Only `text/html` and `text/plain` are read** from the clipboard. Other text-based
+  MIME types (e.g. `text/rtf`) are not currently parsed.
 
 ## License
 

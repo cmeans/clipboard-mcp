@@ -134,8 +134,6 @@ def _detect_backend() -> str:
             return "wayland"
         if shutil.which("xclip"):
             return "x11"
-        if shutil.which("xsel"):
-            return "x11"  # We'll prefer xclip but note xsel as fallback
         raise ClipboardError(
             "No clipboard tool found. Install wl-paste (Wayland) or xclip (X11).\n"
             "  Fedora: sudo dnf install wl-clipboard   # or xclip\n"
@@ -189,8 +187,23 @@ async def _macos_read(mime_type: str) -> str:
         )
         return await _run(["osascript", "-e", script])
 
-    # pbpaste gives plain text
-    return await _run(["pbpaste"])
+    if mime_type == "text/plain":
+        return await _run(["pbpaste"])
+
+    # Unsupported MIME type — signal "not available" rather than returning wrong content
+    return ""
+
+
+_UTI_TO_MIME: dict[str, str] = {
+    "public.html": "text/html",
+    "public.utf8-plain-text": "text/plain",
+    "public.plain-text": "text/plain",
+    "public.rtf": "text/rtf",
+    "public.png": "image/png",
+    "public.tiff": "image/tiff",
+    "public.jpeg": "image/jpeg",
+    "public.url": "text/uri-list",
+}
 
 
 async def _macos_list_formats() -> list[str]:
@@ -205,7 +218,8 @@ async def _macos_list_formats() -> list[str]:
         "return output"
     )
     raw = await _run(["osascript", "-e", script])
-    return [line.strip() for line in raw.splitlines() if line.strip()]
+    native = [line.strip() for line in raw.splitlines() if line.strip()]
+    return [_UTI_TO_MIME.get(t, t) for t in native]
 
 
 async def _windows_read(mime_type: str) -> str:
@@ -215,20 +229,33 @@ async def _windows_read(mime_type: str) -> str:
             "[System.Windows.Forms.Clipboard]::GetData("
             "[System.Windows.Forms.DataFormats]::Html)"
         )
-        result = await _run([
+        return await _run([
             "powershell",
             "-NoProfile",
             "-Command",
             f"Add-Type -AssemblyName System.Windows.Forms; {script}",
         ])
-        return result
 
-    return await _run([
-        "powershell",
-        "-NoProfile",
-        "-Command",
-        "Get-Clipboard",
-    ])
+    if mime_type == "text/plain":
+        return await _run([
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-Clipboard",
+        ])
+
+    # Unsupported MIME type — signal "not available" rather than returning wrong content
+    return ""
+
+
+_WIN_TO_MIME: dict[str, str] = {
+    "HTML Format": "text/html",
+    "Text": "text/plain",
+    "UnicodeText": "text/plain",
+    "Rich Text Format": "text/rtf",
+    "PNG": "image/png",
+    "Bitmap": "image/bmp",
+}
 
 
 async def _windows_list_formats() -> list[str]:
@@ -237,7 +264,8 @@ async def _windows_list_formats() -> list[str]:
         "[System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()"
     )
     raw = await _run(["powershell", "-NoProfile", "-Command", script])
-    return [line.strip() for line in raw.splitlines() if line.strip()]
+    native = [line.strip() for line in raw.splitlines() if line.strip()]
+    return [_WIN_TO_MIME.get(f, f) for f in native]
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +277,7 @@ _backend: str | None = None
 
 
 def _get_backend() -> str:
-    # TODO:Put a pylint ignore here.
-    global _backend
+    global _backend  # noqa: PLW0603
     if _backend is None:
         _backend = _detect_backend()
         logger.debug("Clipboard backend: %s", _backend)

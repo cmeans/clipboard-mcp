@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -43,22 +44,23 @@ def _configure_logging() -> None:
 
 _configure_logging()
 
+_INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
+
+
+def _load_instruction(name: str) -> str:
+    """Load an instruction file from the instructions/ directory."""
+    return (_INSTRUCTIONS_DIR / f"{name}.md").read_text().strip()
+
+
 mcp = FastMCP(
     "clipboard_mcp",
-    instructions=(
-        "This server reads content from the user's system clipboard. "
-        "When the user says 'paste', 'read my clipboard', 'what did I copy', "
-        "'show clipboard data', 'I copied some data', or otherwise references "
-        "clipboard content, call clipboard_paste. It handles any content type: "
-        "tables, plain text, code, JSON, URLs, etc. "
-        "If the clipboard contains a table and the user asks for a specific "
-        "format (JSON, CSV, markdown), pass the output_format parameter."
-    ),
+    instructions=_load_instruction("server"),
 )
 
 
 _VALID_FORMATS = {"markdown", "json", "csv"}
 _MAX_CONTENT_LEN = 50_000
+_BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "application/octet-stream")
 
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
@@ -128,6 +130,7 @@ def _format_non_tabular(text: str) -> str:
 
 @mcp.tool(
     name="clipboard_paste",
+    description=_load_instruction("clipboard_paste"),
     annotations={
         "title": "Paste Clipboard",
         "readOnlyHint": True,
@@ -139,27 +142,6 @@ def _format_non_tabular(text: str) -> str:
 async def clipboard_paste(
     output_format: str = "markdown",
 ) -> str:
-    """Read content from the system clipboard and return it.
-
-    Call this tool when the user says "paste", "read my clipboard",
-    "what's on my clipboard", "read what I copied", "I copied some data",
-    "show me what I copied", or any reference to clipboard contents or pasted data.
-
-    Handles any clipboard content: spreadsheet tables, plain text, code snippets,
-    JSON, URLs, rich text, and more. If the clipboard contains a table (from
-    Google Sheets, Excel, etc.), it will be parsed and returned in the requested
-    output_format. For non-tabular content, it is returned with smart formatting.
-
-    Args:
-        output_format: Format for table data (case-insensitive). Only applies when
-            the clipboard contains a table. Ignored for non-tabular content. Options:
-            - "markdown" (default): GitHub-flavored Markdown table
-            - "json": Array of objects keyed by header row
-            - "csv": Comma-separated values
-
-    Returns:
-        The clipboard content, formatted appropriately for the content type.
-    """
     output_format = output_format.strip().lower()
     if output_format not in _VALID_FORMATS:
         return (
@@ -185,11 +167,28 @@ async def clipboard_paste(
     if not content:
         content = text
 
+    # If no text content at all, check whether the clipboard holds binary data
+    if not content.strip():
+        try:
+            formats = await list_clipboard_formats()
+            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)]
+            if binary:
+                fmt_list = ", ".join(binary)
+                return (
+                    f"Clipboard contains binary data ({fmt_list}) which cannot be "
+                    f"read as text. Images, audio, and video are not currently "
+                    f"supported — only text-based content (plain text, HTML, code, "
+                    f"JSON, URLs, tables)."
+                )
+        except ClipboardError:
+            pass
+
     return _format_non_tabular(content)
 
 
 @mcp.tool(
     name="clipboard_read_table",
+    description=_load_instruction("clipboard_read_table"),
     annotations={
         "title": "Read Clipboard Table",
         "readOnlyHint": True,
@@ -201,16 +200,12 @@ async def clipboard_paste(
 async def clipboard_read_table(
     output_format: str = "markdown",
 ) -> str:
-    """Read tabular data from the clipboard. Alias for clipboard_paste.
-
-    Use clipboard_paste for general clipboard access. This tool is kept for
-    backward compatibility and behaves identically.
-    """
     return await clipboard_paste(output_format=output_format)
 
 
 @mcp.tool(
     name="clipboard_read_raw",
+    description=_load_instruction("clipboard_read_raw"),
     annotations={
         "title": "Read Raw Clipboard",
         "readOnlyHint": True,
@@ -222,19 +217,13 @@ async def clipboard_read_table(
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
 ) -> str:
-    """Read raw clipboard content in a specific MIME format. Diagnostic tool only.
+    if mime_type.startswith(_BINARY_MIME_PREFIXES):
+        return (
+            f"Cannot read binary MIME type '{mime_type}'. "
+            f"This tool only supports text-based formats (e.g. text/plain, text/html). "
+            f"Image, audio, and video clipboard content is not currently supported."
+        )
 
-    Use clipboard_paste instead for normal clipboard access. This tool returns
-    the clipboard content as-is without any parsing or restructuring.
-    Use clipboard_list_formats first to see what MIME types are available.
-
-    Args:
-        mime_type: The MIME type to read from the clipboard.
-            Common values: "text/plain", "text/html"
-
-    Returns:
-        The raw clipboard content in the requested format, or an error message.
-    """
     try:
         content = await read_clipboard(mime_type)
     except ClipboardError as e:
@@ -255,6 +244,7 @@ async def clipboard_read_raw(
 
 @mcp.tool(
     name="clipboard_list_formats",
+    description=_load_instruction("clipboard_list_formats"),
     annotations={
         "title": "List Clipboard Formats",
         "readOnlyHint": True,
@@ -264,15 +254,6 @@ async def clipboard_read_raw(
     },
 )
 async def clipboard_list_formats() -> str:
-    """List the MIME types / formats currently available on the system clipboard.
-
-    Use clipboard_paste to actually read clipboard data. This diagnostic tool
-    just lists what formats are present. For spreadsheet data, you want to see
-    "text/html" (best) or "text/plain" (fallback with tab-separated values).
-
-    Returns:
-        A list of available clipboard formats.
-    """
     try:
         formats = await list_clipboard_formats()
     except ClipboardError as e:

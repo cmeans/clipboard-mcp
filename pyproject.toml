@@ -43,7 +43,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clipboard_mcp"]
+artifacts = ["src/clipboard_mcp/instructions/*.md"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"

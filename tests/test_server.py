@@ -390,8 +390,62 @@ async def test_read_raw_empty():
     assert "No content available" in result
 
 
+@pytest.mark.asyncio
+async def test_read_raw_rejects_binary_mime():
+    """clipboard_read_raw refuses to read binary MIME types like image/png."""
+    result = await clipboard_read_raw(mime_type="image/png")
+
+    assert "Cannot read binary" in result
+    assert "image/png" in result
+    assert "not currently supported" in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_rejects_audio_mime():
+    """clipboard_read_raw refuses audio MIME types."""
+    result = await clipboard_read_raw(mime_type="audio/wav")
+
+    assert "Cannot read binary" in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_rejects_video_mime():
+    """clipboard_read_raw refuses video MIME types."""
+    result = await clipboard_read_raw(mime_type="video/mp4")
+
+    assert "Cannot read binary" in result
+
+
 # ---------------------------------------------------------------------------
-# 6. Wayland auto-detection
+# 6. clipboard_paste with binary clipboard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paste_detects_image_clipboard():
+    """clipboard_paste reports image formats when clipboard has no text."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/png", "image/tiff"]):
+            result = await clipboard_paste()
+
+    assert "binary data" in result
+    assert "image/png" in result
+    assert "not currently supported" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_empty_clipboard_no_binary():
+    """clipboard_paste returns 'empty' when clipboard has no text and no binary."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+            result = await clipboard_paste()
+
+    assert "empty" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# 7. Wayland auto-detection
 # ---------------------------------------------------------------------------
 
 
@@ -550,3 +604,121 @@ def test_detect_backend_prefers_env_var_over_socket():
                 result = _detect_backend()
 
     assert result == "wayland"
+
+
+# ---------------------------------------------------------------------------
+# 8. macOS backend
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import (
+    _macos_read,
+    _macos_list_formats,
+    _UTI_TO_MIME,
+    _windows_read,
+    _windows_list_formats,
+    _WIN_TO_MIME,
+)
+
+
+@pytest.mark.asyncio
+async def test_macos_read_html():
+    """_macos_read uses osascript for text/html."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+        result = await _macos_read("text/html")
+
+    assert result == "<b>hi</b>"
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "osascript"
+
+
+@pytest.mark.asyncio
+async def test_macos_read_plain():
+    """_macos_read uses pbpaste for text/plain."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+        result = await _macos_read("text/plain")
+
+    assert result == "hello"
+    cmd = mock_run.call_args[0][0]
+    assert cmd == ["pbpaste"]
+
+
+@pytest.mark.asyncio
+async def test_macos_read_unsupported_returns_empty():
+    """_macos_read returns empty string for unsupported MIME types."""
+    result = await _macos_read("text/rtf")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_macos_list_formats_maps_uti_to_mime():
+    """_macos_list_formats maps known UTIs to MIME types."""
+    raw_output = "public.html\npublic.utf8-plain-text\npublic.png\n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _macos_list_formats()
+
+    assert result == ["text/html", "text/plain", "image/png"]
+
+
+@pytest.mark.asyncio
+async def test_macos_list_formats_passthrough_unknown():
+    """_macos_list_formats passes through unknown UTIs as-is."""
+    raw_output = "public.html\ncom.apple.something-custom\n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _macos_list_formats()
+
+    assert result == ["text/html", "com.apple.something-custom"]
+
+
+# ---------------------------------------------------------------------------
+# 9. Windows backend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_windows_read_html():
+    """_windows_read uses PowerShell HTML clipboard for text/html."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+        result = await _windows_read("text/html")
+
+    assert result == "<b>hi</b>"
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "powershell"
+    assert "Html" in cmd[-1]
+
+
+@pytest.mark.asyncio
+async def test_windows_read_plain():
+    """_windows_read uses Get-Clipboard for text/plain."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+        result = await _windows_read("text/plain")
+
+    assert result == "hello"
+    cmd = mock_run.call_args[0][0]
+    assert "Get-Clipboard" in cmd[-1]
+
+
+@pytest.mark.asyncio
+async def test_windows_read_unsupported_returns_empty():
+    """_windows_read returns empty string for unsupported MIME types."""
+    result = await _windows_read("text/rtf")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_windows_list_formats_maps_names_to_mime():
+    """_windows_list_formats maps known Windows format names to MIME types."""
+    raw_output = "HTML Format\nText\nUnicodeText\nPNG\n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _windows_list_formats()
+
+    assert result == ["text/html", "text/plain", "text/plain", "image/png"]
+
+
+@pytest.mark.asyncio
+async def test_windows_list_formats_passthrough_unknown():
+    """_windows_list_formats passes through unknown format names as-is."""
+    raw_output = "HTML Format\nSystem.String\n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _windows_list_formats()
+
+    assert result == ["text/html", "System.String"]

@@ -198,7 +198,11 @@ OutputFormat = Literal["markdown", "json", "csv"]
 
 
 def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
-    """Format parsed rows into the requested output format."""
+    """Format parsed rows into the requested output format.
+
+    For JSON output: single-column tables produce a flat array of values;
+    multi-column tables use the first row as object keys.
+    """
     if not rows:
         return ""
 
