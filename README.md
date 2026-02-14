@@ -42,9 +42,10 @@ You also need a platform-specific clipboard tool:
 | **macOS** | Built-in | No install needed (`osascript` / `pbpaste`) |
 | **Windows** | Built-in | No install needed (PowerShell) |
 
-> **Platform status**: Linux (Wayland and X11) is tested and actively used.
-> macOS and Windows implementations are complete but **untested on real hardware** —
-> they should work but may have edge cases. Bug reports and PRs are very welcome.
+> **Platform status**: Linux with Wayland is tested and actively used.
+> Linux with X11, macOS, and Windows implementations are complete but
+> **untested on real hardware** — they should work but may have edge cases.
+> Bug reports and PRs are very welcome.
 
 ### Configure Claude Desktop
 
@@ -296,7 +297,7 @@ clipboard-mcp/
   possible future enhancement.
 - **Text content is truncated at 50KB** to avoid overwhelming the model's context
   window.
-- **macOS and Windows are untested** (see [Platform status](#prerequisites)).
+- **X11, macOS, and Windows are untested** (see [Platform status](#prerequisites)).
   Implementations are complete but may have edge cases on real hardware.
 - **Only `text/html` and `text/plain` are read** from the clipboard. Other text-based
   MIME types (e.g. `text/rtf`) are not currently parsed.

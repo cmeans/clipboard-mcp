@@ -66,4 +66,4 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - Entry point: `clipboard_mcp.server:main()`
 - Tool descriptions live in `src/clipboard_mcp/instructions/*.md` — edit those files to change what the host model sees
 - `pyproject.toml` `artifacts` setting ensures instruction `.md` files are included in the wheel
-- Linux (Wayland, X11) is tested; macOS and Windows implementations are complete but untested on real hardware
+- Linux with Wayland is tested; X11, macOS, and Windows implementations are complete but untested on real hardware
