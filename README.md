@@ -50,9 +50,9 @@ You also need a platform-specific clipboard tool:
 
 Add one of the following to your Claude Desktop config file:
 
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 #### Option A: uvx — no clone needed (recommended)
 
