@@ -63,7 +63,10 @@ Requires [uv](https://docs.astral.sh/uv/). Installs and runs directly from PyPI:
   "mcpServers": {
     "clipboard": {
       "command": "uvx",
-      "args": ["clipboard-mcp-server"]
+      "args": [
+        "--from", "clipboard-mcp-server",
+        "clipboard-mcp"
+      ]
     }
   }
 }
@@ -78,7 +81,10 @@ Requires [pipx](https://pipx.pypa.io/). Same idea, different tool manager:
   "mcpServers": {
     "clipboard": {
       "command": "pipx",
-      "args": ["run", "clipboard-mcp-server"]
+      "args": [
+        "run", "--spec", "clipboard-mcp-server",
+        "clipboard-mcp"
+      ]
     }
   }
 }
@@ -155,7 +161,10 @@ non-standard socket path, or a containerized environment):
   "mcpServers": {
     "clipboard": {
       "command": "uvx",
-      "args": ["clipboard-mcp-server"],
+      "args": [
+        "--from", "clipboard-mcp-server",
+        "clipboard-mcp"
+      ],
       "env": {
         "WAYLAND_DISPLAY": "wayland-0",
         "XDG_RUNTIME_DIR": "/run/user/1000"
