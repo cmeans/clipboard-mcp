@@ -41,7 +41,6 @@ Three-layer design with clean separation:
 
 - **server.py** — MCP server (`FastMCP`, name `clipboard_mcp`) exposing 4 tools:
   - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Detects binary clipboard content and reports it.
-  - `clipboard_read_table(output_format)` — Backward-compatible alias for `clipboard_paste`.
   - `clipboard_read_raw(mime_type)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types.
   - `clipboard_list_formats()` — Lists available MIME types on clipboard.
 

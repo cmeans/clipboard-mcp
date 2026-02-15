@@ -18,7 +18,7 @@ from clipboard_mcp.clipboard import (
     _wayland_env,
     _detect_backend,
 )
-from clipboard_mcp.server import clipboard_paste, clipboard_read_table, clipboard_read_raw, clipboard_list_formats
+from clipboard_mcp.server import clipboard_paste, clipboard_read_raw, clipboard_list_formats
 
 
 # ---------------------------------------------------------------------------
@@ -242,32 +242,6 @@ async def test_paste_large_content_truncated():
 
     assert "truncated" in result.lower()
 
-
-# ---------------------------------------------------------------------------
-# 4. clipboard_read_table alias
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_read_table_alias_returns_table():
-    """clipboard_read_table alias works for tabular data."""
-    with patch("clipboard_mcp.server.read_clipboard",
-               side_effect=_mock_read(html=SAMPLE_HTML)):
-        result = await clipboard_read_table(output_format="markdown")
-
-    assert "3 rows × 3 columns" in result
-    assert "| Name" in result
-
-
-@pytest.mark.asyncio
-async def test_read_table_alias_returns_non_tabular():
-    """clipboard_read_table alias also returns non-tabular content."""
-    with patch("clipboard_mcp.server.read_clipboard",
-               side_effect=_mock_read(html="", text="just some text")):
-        result = await clipboard_read_table()
-
-    assert "Clipboard content:" in result
-    assert "just some text" in result
 
 
 # ---------------------------------------------------------------------------

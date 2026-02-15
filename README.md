@@ -22,7 +22,6 @@ Markdown, JSON, or CSV), code snippets, JSON data, URLs, rich HTML text, and pla
 | Tool | Description |
 |------|-------------|
 | `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs. Tables are formatted as Markdown/JSON/CSV; other content is returned with smart formatting. |
-| `clipboard_read_table` | Alias for `clipboard_paste` (backward compatibility) |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic) |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard |
 
@@ -264,7 +263,6 @@ clipboard-mcp/
 │   └── instructions/        # Tool & server descriptions (loaded at startup)
 │       ├── server.md        # Server-level MCP instructions
 │       ├── clipboard_paste.md
-│       ├── clipboard_read_table.md
 │       ├── clipboard_read_raw.md
 │       └── clipboard_list_formats.md
 ├── tests/

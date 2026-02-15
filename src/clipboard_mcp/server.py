@@ -186,22 +186,6 @@ async def clipboard_paste(
     return _format_non_tabular(content)
 
 
-@mcp.tool(
-    name="clipboard_read_table",
-    description=_load_instruction("clipboard_read_table"),
-    annotations={
-        "title": "Read Clipboard Table",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-async def clipboard_read_table(
-    output_format: str = "markdown",
-) -> str:
-    return await clipboard_paste(output_format=output_format)
-
 
 @mcp.tool(
     name="clipboard_read_raw",
