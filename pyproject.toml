@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clipboard-mcp"
+name = "clipboard-mcp-server"
 version = "0.1.0"
 description = "MCP server that reads content from the system clipboard — tables, text, code, JSON, URLs, and more."
 readme = "README.md"

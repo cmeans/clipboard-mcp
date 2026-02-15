@@ -56,17 +56,14 @@ Add one of the following to your Claude Desktop config file:
 
 #### Option A: uvx — no clone needed (recommended)
 
-Requires [uv](https://docs.astral.sh/uv/). Installs and runs directly from GitHub:
+Requires [uv](https://docs.astral.sh/uv/). Installs and runs directly from PyPI:
 
 ```json
 {
   "mcpServers": {
     "clipboard": {
       "command": "uvx",
-      "args": [
-        "--from", "git+https://github.com/cmeans/clipboard-mcp",
-        "clipboard-mcp"
-      ]
+      "args": ["clipboard-mcp-server"]
     }
   }
 }
@@ -81,14 +78,14 @@ Requires [pipx](https://pipx.pypa.io/). Same idea, different tool manager:
   "mcpServers": {
     "clipboard": {
       "command": "pipx",
-      "args": [
-        "run", "--spec", "git+https://github.com/cmeans/clipboard-mcp",
-        "clipboard-mcp"
-      ]
+      "args": ["run", "clipboard-mcp-server"]
     }
   }
 }
 ```
+
+> **Note**: The PyPI package name is `clipboard-mcp-server` but the command it
+> installs is `clipboard-mcp`.
 
 #### Option C: Local clone with uv
 
@@ -158,10 +155,7 @@ non-standard socket path, or a containerized environment):
   "mcpServers": {
     "clipboard": {
       "command": "uvx",
-      "args": [
-        "--from", "git+https://github.com/cmeans/clipboard-mcp",
-        "clipboard-mcp"
-      ],
+      "args": ["clipboard-mcp-server"],
       "env": {
         "WAYLAND_DISPLAY": "wayland-0",
         "XDG_RUNTIME_DIR": "/run/user/1000"
