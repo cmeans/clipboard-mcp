@@ -46,6 +46,17 @@ You also need a platform-specific clipboard tool:
 > **untested on real hardware** — they should work but may have edge cases.
 > Bug reports and PRs are very welcome.
 
+### Install via AUR (Arch Linux)
+
+Using an AUR helper like `yay` or `paru`:
+
+```bash
+yay -S clipboard-mcp
+```
+
+Install a clipboard tool if you haven't already: `wl-clipboard` (Wayland) or
+`xclip` (X11).
+
 ### Configure Claude Desktop
 
 Add one of the following to your Claude Desktop config file:

@@ -1,0 +1,27 @@
+# Maintainer: Chris Means <chris.a.means@gmail.com>
+pkgname=clipboard-mcp
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="MCP server that reads content from the system clipboard — tables, text, code, JSON, URLs, and more"
+arch=('any')
+url="https://github.com/cmeans/clipboard-mcp"
+license=('MIT')
+depends=('python>=3.11' 'python-mcp')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-hatchling')
+optdepends=(
+    'wl-clipboard: Wayland clipboard support (wl-paste)'
+    'xclip: X11 clipboard support'
+)
+source=("https://files.pythonhosted.org/packages/source/c/clipboard_mcp_server/clipboard_mcp_server-${pkgver}.tar.gz")
+sha256sums=('4d8e5d4f07e986c8db8a00457582008b88b857fcd75cc98b615dba528b6938c6')
+
+build() {
+    cd "clipboard_mcp_server-${pkgver}"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "clipboard_mcp_server-${pkgver}"
+    python -m installer --destdir="${pkgdir}" dist/*.whl
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
