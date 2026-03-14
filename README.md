@@ -1,5 +1,7 @@
 # clipboard-mcp
 
+[![clipboard-mcp MCP server](https://glama.ai/mcp/servers/cmeans/clipboard-mcp/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/clipboard-mcp)
+
 An MCP (Model Context Protocol) server that reads and writes your system clipboard —
 tables, plain text, code, JSON, URLs, images, and more. Preserves structure when
 possible (e.g. spreadsheet row/column layout) and returns non-tabular content cleanly.
