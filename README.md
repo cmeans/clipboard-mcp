@@ -1,8 +1,8 @@
 # clipboard-mcp
 
-An MCP (Model Context Protocol) server that reads content from your system clipboard —
-tables, plain text, code, JSON, URLs, and more. Preserves structure when possible
-(e.g. spreadsheet row/column layout) and returns non-tabular content cleanly.
+An MCP (Model Context Protocol) server that reads and writes your system clipboard —
+tables, plain text, code, JSON, URLs, images, and more. Preserves structure when
+possible (e.g. spreadsheet row/column layout) and returns non-tabular content cleanly.
 
 ## The Problem
 
@@ -15,7 +15,9 @@ copied" without manually pasting.
 
 Instead of pasting, tell Claude to **"read my clipboard"**. This MCP server reads the
 clipboard directly and handles any content type: spreadsheet tables (returned as
-Markdown, JSON, or CSV), code snippets, JSON data, URLs, rich HTML text, and plain text.
+Markdown, JSON, or CSV), images (returned as image content), code snippets, JSON data,
+URLs, rich HTML text, and plain text. It can also **write** to the clipboard, so Claude
+can copy results back for you to paste elsewhere.
 
 ## Tools
 
@@ -177,7 +179,7 @@ non-standard socket path, or a containerized environment):
 
 ## Usage
 
-1. **Copy anything** — spreadsheet cells, code, text, a URL, JSON, etc.
+1. **Copy anything** — spreadsheet cells, code, text, a URL, JSON, an image, etc.
 2. In Claude, say something like:
    - "Paste my clipboard"
    - "Read my clipboard"
@@ -188,6 +190,11 @@ non-standard socket path, or a containerized environment):
    - "Give me that data as JSON" (uses `output_format=json`)
    - "Convert my clipboard to CSV" (uses `output_format=csv`)
 3. Claude will call `clipboard_paste` and return the content.
+
+**Writing to the clipboard** — Claude can also copy results back:
+- "Copy that to my clipboard"
+- "Put the cleaned-up JSON on my clipboard"
+- "Copy just the SQL query"
 
 ### Tips for reliable triggering
 
@@ -222,7 +229,8 @@ a Claude Desktop project), you can reinforce the behavior:
 | **URL** | Returned cleanly as a URL |
 | **Rich HTML** (no table) | HTML tags stripped, readable text returned |
 | **Plain text** | Returned as-is |
-| **Images / binary** | Not supported — returns a message identifying the format (see [Limitations](#limitations)) |
+| **Images** (PNG, etc.) | Returned as image content — Claude can see and analyze the image |
+| **Audio / video** | Detected and reported, but content is not returned |
 
 ### Table output formats
 
@@ -267,6 +275,7 @@ clipboard-mcp/
 │   └── instructions/        # Tool & server descriptions (loaded at startup)
 │       ├── server.md        # Server-level MCP instructions
 │       ├── clipboard_paste.md
+│       ├── clipboard_copy.md
 │       ├── clipboard_read_raw.md
 │       └── clipboard_list_formats.md
 ├── tests/
@@ -280,29 +289,37 @@ clipboard-mcp/
 
 ## How It Works
 
+### Reading (`clipboard_paste`)
+
 1. **Clipboard read**: The server calls the platform's clipboard tool (`wl-paste`,
    `xclip`, `pbpaste`, or PowerShell) to read the clipboard.
 2. **Table detection**: Tries `text/html` first — Google Sheets and Excel put `<table>`
    markup on the clipboard. Parsed with Python's built-in `html.parser` (no external
    dependencies). Falls back to `text/plain` tab-separated values.
 3. **Table found?** Format as Markdown, JSON, or CSV (per `output_format`) and return.
-4. **Non-tabular content**: If no table is found, the plain text (or HTML-extracted text)
+4. **Non-tabular text**: If no table is found, the plain text (or HTML-extracted text)
    is classified as JSON, URL, code, or plain text and returned with appropriate
    formatting (pretty-printed JSON, fenced code blocks, etc.). Content is truncated
    at 50KB.
+5. **No text content?** Check for image formats on the clipboard. If found, read the
+   image data and return it as base64-encoded image content that Claude can see.
+6. **Audio/video**: Detected and reported, but content is not returned.
+
+### Writing (`clipboard_copy`)
+
+The server writes text to the clipboard using the platform's clipboard tool
+(`wl-copy`, `xclip`, `pbcopy`, or PowerShell). Currently supports text content only.
 
 ## Limitations
 
-- **Images and binary data are not supported.** If the clipboard contains an image
-  (PNG, JPEG, etc.), audio, or video, the server will report what format is present
-  but cannot return the content. MCP does support image content blocks, so this is a
-  possible future enhancement.
+- **Audio and video are not supported.** If the clipboard contains audio or video,
+  the server will report what format is present but cannot return the content.
+- **Clipboard write is text-only.** `clipboard_copy` writes plain text. Writing images
+  or other binary data is not yet supported.
 - **Text content is truncated at 50KB** to avoid overwhelming the model's context
   window.
 - **macOS and Windows are untested** (see [Platform status](#prerequisites)).
   Implementations are complete but may have edge cases on real hardware.
-- **Only `text/html` and `text/plain` are read** from the clipboard. Other text-based
-  MIME types (e.g. `text/rtf`) are not currently parsed.
 
 ## License
 
