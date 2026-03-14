@@ -357,6 +357,14 @@ The server writes text to the clipboard using the platform's clipboard tool
 - **macOS and Windows are untested** (see [Platform status](#prerequisites)).
   Implementations are complete but may have edge cases on real hardware.
 
+## Acknowledgments
+
+This project was designed and built in collaboration with
+[Claude Code](https://claude.ai/code) (Anthropic's CLI for Claude). Architecture, design
+decisions, and release management were driven by the human; implementation, testing, code
+review, and documentation were delegated conversationally, with Claude writing code,
+catching stale docs, and filling test coverage gaps across every commit.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
