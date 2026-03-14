@@ -383,7 +383,7 @@ async def test_read_raw_rejects_binary_mime():
 
     assert "Cannot read binary" in result
     assert "image/png" in result
-    assert "not currently supported" in result
+    assert "text-based formats" in result
 
 
 @pytest.mark.asyncio
@@ -400,6 +400,28 @@ async def test_read_raw_rejects_video_mime():
     result = await clipboard_read_raw(mime_type="video/mp4")
 
     assert "Cannot read binary" in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_svg():
+    """clipboard_read_raw allows image/svg+xml as text-readable."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
+        result = await clipboard_read_raw(mime_type="image/svg+xml")
+
+    assert "circle" in result
+    assert "Cannot read binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_application_json():
+    """clipboard_read_raw allows application/json as text-readable."""
+    json_str = '{"key": "value"}'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=json_str):
+        result = await clipboard_read_raw(mime_type="application/json")
+
+    assert "key" in result
+    assert "Cannot read binary" not in result
 
 
 # ---------------------------------------------------------------------------

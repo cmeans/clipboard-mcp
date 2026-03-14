@@ -87,16 +87,23 @@ async def _run_with_stdin(
     timeout: float = 5.0,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Run a subprocess, piping input_data to its stdin."""
+    """Run a subprocess, piping input_data to its stdin.
+
+    stdout and stderr are sent to /dev/null because clipboard write commands
+    (wl-copy, xclip) fork a background child that inherits pipe file
+    descriptors.  If those streams are piped, communicate() blocks waiting
+    for the child to close them — which only happens when another copy
+    replaces the clipboard — causing a spurious timeout.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
             env=env,
         )
-        _, stderr = await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
+        await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
     except FileNotFoundError as fnf:
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
     except asyncio.TimeoutError as te:
@@ -104,8 +111,7 @@ async def _run_with_stdin(
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
     if proc.returncode != 0:
-        err = stderr.decode(errors="replace").strip()
-        raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
+        raise ClipboardError(f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}")
 
 
 def _find_wayland_display() -> str | None:

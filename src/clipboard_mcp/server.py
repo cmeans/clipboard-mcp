@@ -76,6 +76,14 @@ _VALID_FORMATS = {"markdown", "json", "csv"}
 _MAX_CONTENT_LEN = 50_000
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "application/octet-stream")
 
+# MIME types that match _BINARY_MIME_PREFIXES but are actually text-readable.
+_TEXT_READABLE_MIMES = frozenset({
+    "image/svg+xml",
+    "application/json",
+    "application/xml",
+    "application/xhtml+xml",
+})
+
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
     """Read clipboard and attempt to extract tabular data.
@@ -226,11 +234,11 @@ async def clipboard_paste(
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
 ) -> str:
-    if mime_type.startswith(_BINARY_MIME_PREFIXES):
+    if mime_type.startswith(_BINARY_MIME_PREFIXES) and mime_type not in _TEXT_READABLE_MIMES:
         return (
             f"Cannot read binary MIME type '{mime_type}'. "
-            f"This tool only supports text-based formats (e.g. text/plain, text/html). "
-            f"Image, audio, and video clipboard content is not currently supported."
+            f"This tool only supports text-based formats (e.g. text/plain, text/html, "
+            f"image/svg+xml, application/json)."
         )
 
     try:
