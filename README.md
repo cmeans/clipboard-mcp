@@ -311,6 +311,41 @@ clipboard-mcp/
 The server writes text to the clipboard using the platform's clipboard tool
 (`wl-copy`, `xclip`, `pbcopy`, or PowerShell). Currently supports text content only.
 
+## Features
+
+- **Smart Table Parsing** — Automatically detects structured data on the clipboard
+  (from Excel, Google Sheets, or web tables). Prioritizes `text/html` and `text/plain`
+  (TSV) to preserve formatting, delivering clean Markdown, JSON, or CSV instead of a
+  disorganized text string.
+
+- **Multimodal Image Support** — Reads image data directly from the clipboard. When a
+  user "pastes" a PNG or JPEG, the server captures the raw bytes and returns a standard
+  MCP `ImageContent` block, enabling vision-capable models to analyze screenshots or
+  graphics instantly.
+
+- **Clipboard Write** — Copies text back to the system clipboard so Claude can hand off
+  cleaned-up JSON, reformatted code, SQL queries, or any text for the user to paste
+  elsewhere.
+
+- **Automatic Content Classification** — Intelligently identifies and formats specific
+  data types:
+  - **JSON** — Pretty-printed for better model readability.
+  - **Code** — Wrapped in fenced code blocks.
+  - **URLs** — Extracted and presented for easy navigation or fetching.
+
+- **Cross-Platform Architecture** — Uses native system binaries (`wl-paste`/`wl-copy`
+  for Wayland, `xclip` for X11, `pbpaste`/`pbcopy` for macOS, PowerShell for Windows)
+  to minimize dependencies and maintain a lightweight footprint.
+
+- **Zero-Config Execution** — Designed for modern workflows using `uvx`, allowing the
+  server to run instantly without manual environment management or permanent
+  installation.
+
+- **Diagnostic Tools** — `clipboard_list_formats` lets users inspect available MIME
+  types on the clipboard, and `clipboard_read_raw` returns raw content for any
+  text-readable MIME type (including `image/svg+xml`, `application/json`, and
+  `application/xml`) for troubleshooting and verification.
+
 ## Limitations
 
 - **Audio and video are not supported.** If the clipboard contains audio or video,
