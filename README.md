@@ -25,7 +25,7 @@ can copy results back for you to paste elsewhere.
 |------|-------------|
 | `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; images are returned as image content; other content is returned with smart formatting. |
 | `clipboard_copy` | Write text to the system clipboard |
-| `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic) |
+| `clipboard_read_raw` | Return raw clipboard content for a given MIME type — supports text formats plus `image/svg+xml`, `application/json`, `application/xml`, `application/xhtml+xml` (diagnostic) |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard |
 
 ## Setup
@@ -230,6 +230,7 @@ a Claude Desktop project), you can reinforce the behavior:
 | **Rich HTML** (no table) | HTML tags stripped, readable text returned |
 | **Plain text** | Returned as-is |
 | **Images** (PNG, etc.) | Returned as image content — Claude can see and analyze the image |
+| **SVG** | Readable as text via `clipboard_read_raw` with `image/svg+xml`, or returned as image via `clipboard_paste` |
 | **Audio / video** | Detected and reported, but content is not returned |
 
 ### Table output formats
