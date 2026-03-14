@@ -13,5 +13,9 @@ the missing content is on the clipboard. If the clipboard is empty or irrelevant
 then ask the user.
 
 `clipboard_paste` is the default tool — it auto-detects content type (tables,
-text, code, JSON, URLs) and handles everything. Only use `clipboard_read_raw` or
-`clipboard_list_formats` for diagnostic purposes.
+text, code, JSON, URLs, images) and handles everything. Images on the clipboard
+are returned directly as image content for visual analysis. Only use
+`clipboard_read_raw` or `clipboard_list_formats` for diagnostic purposes.
+
+Use `clipboard_copy` to write text to the clipboard when the user wants to copy
+formatted output, cleaned-up data, or any text for use outside the conversation.

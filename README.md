@@ -21,7 +21,8 @@ Markdown, JSON, or CSV), code snippets, JSON data, URLs, rich HTML text, and pla
 
 | Tool | Description |
 |------|-------------|
-| `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs. Tables are formatted as Markdown/JSON/CSV; other content is returned with smart formatting. |
+| `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; images are returned as image content; other content is returned with smart formatting. |
+| `clipboard_copy` | Write text to the system clipboard |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic) |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard |
 

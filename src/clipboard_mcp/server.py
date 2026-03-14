@@ -14,8 +14,15 @@ import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities.types import Image
 
-from .clipboard import ClipboardError, list_clipboard_formats, read_clipboard
+from .clipboard import (
+    ClipboardError,
+    list_clipboard_formats,
+    read_clipboard,
+    read_clipboard_image,
+    write_clipboard,
+)
 from .parser import (
     detect_content_type,
     extract_html_text,
@@ -148,7 +155,7 @@ def _format_non_tabular(text: str) -> str:
 )
 async def clipboard_paste(
     output_format: str = "markdown",
-) -> str:
+):
     output_format = output_format.strip().lower()
     if output_format not in _VALID_FORMATS:
         return (
@@ -178,14 +185,25 @@ async def clipboard_paste(
     if not content.strip():
         try:
             formats = await list_clipboard_formats()
-            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)]
+            image_formats = [f for f in formats if f.startswith("image/")]
+            if image_formats:
+                # Prefer PNG, fall back to first available image format
+                mime = "image/png" if "image/png" in image_formats else image_formats[0]
+                try:
+                    data = await read_clipboard_image(mime)
+                    if data:
+                        fmt = mime.split("/", 1)[1]
+                        return Image(data=data, format=fmt)
+                except ClipboardError as e:
+                    logger.debug("Image read failed: %s", e)
+            # Non-image binary (audio/video) — report but can't return
+            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)
+                      and not f.startswith("image/")]
             if binary:
                 fmt_list = ", ".join(binary)
                 return (
                     f"Clipboard contains binary data ({fmt_list}) which cannot be "
-                    f"read as text. Images, audio, and video are not currently "
-                    f"supported — only text-based content (plain text, HTML, code, "
-                    f"JSON, URLs, tables)."
+                    f"returned as text. Audio and video are not supported."
                 )
         except ClipboardError:
             pass
@@ -266,6 +284,28 @@ async def clipboard_list_formats() -> str:
         result += "\n\n" + "\n".join(highlights)
 
     return result
+
+
+@mcp.tool(
+    name="clipboard_copy",
+    description=_load_instruction("clipboard_copy"),
+    annotations={
+        "title": "Copy to Clipboard",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def clipboard_copy(
+    content: str,
+) -> str:
+    try:
+        await write_clipboard(content)
+    except ClipboardError as e:
+        return f"Error writing to clipboard: {e}"
+
+    return f"Copied {len(content)} characters to clipboard."
 
 
 def main() -> None:

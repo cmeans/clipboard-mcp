@@ -19,8 +19,9 @@ to provide the data manually.
 Do NOT ask the user to paste or provide data — just call this tool.
 
 Handles any clipboard content: tables (from spreadsheets, HTML), plain text,
-code, JSON, URLs, and rich text. Tables are auto-detected and formatted per
-output_format. Non-tabular content is returned with smart formatting.
+code, JSON, URLs, rich text, and images. Tables are auto-detected and formatted
+per output_format. Non-tabular content is returned with smart formatting.
+Images on the clipboard are returned directly as image content.
 
 Args:
     output_format: Format for table data (case-insensitive). Only applies when
@@ -31,3 +32,4 @@ Args:
 
 Returns:
     The clipboard content, formatted appropriately for the content type.
+    Images are returned as image content (base64-encoded) for visual analysis.
