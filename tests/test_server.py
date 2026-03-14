@@ -17,8 +17,14 @@ from clipboard_mcp.clipboard import (
     _find_wayland_display,
     _wayland_env,
     _detect_backend,
+    _get_backend,
 )
-from clipboard_mcp.server import clipboard_paste, clipboard_read_raw, clipboard_list_formats
+from clipboard_mcp.server import (
+    clipboard_paste,
+    clipboard_read_raw,
+    clipboard_list_formats,
+    _load_instruction,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -747,3 +753,133 @@ async def test_x11_list_formats_strips_whitespace():
         result = await _x11_list_formats()
 
     assert result == ["text/html", "text/plain"]
+
+
+# ---------------------------------------------------------------------------
+# 11. _load_instruction()
+# ---------------------------------------------------------------------------
+
+
+def test_load_instruction_returns_content():
+    """_load_instruction loads and strips instruction file content."""
+    result = _load_instruction("server")
+    assert isinstance(result, str)
+    assert len(result) > 0
+    # Should not have leading/trailing whitespace
+    assert result == result.strip()
+
+
+def test_load_instruction_missing_file():
+    """_load_instruction raises RuntimeError for missing files."""
+    with pytest.raises(RuntimeError, match="Missing instruction file"):
+        _load_instruction("nonexistent_file")
+
+
+# ---------------------------------------------------------------------------
+# 12. _detect_backend() platform coverage
+# ---------------------------------------------------------------------------
+
+
+def test_detect_backend_darwin():
+    """_detect_backend returns 'macos' on Darwin."""
+    with patch("clipboard_mcp.clipboard.platform.system", return_value="Darwin"):
+        import clipboard_mcp.clipboard as cb
+        cb._backend = None
+        result = _detect_backend()
+
+    assert result == "macos"
+
+
+def test_detect_backend_windows():
+    """_detect_backend returns 'windows' on Windows."""
+    with patch("clipboard_mcp.clipboard.platform.system", return_value="Windows"):
+        import clipboard_mcp.clipboard as cb
+        cb._backend = None
+        result = _detect_backend()
+
+    assert result == "windows"
+
+
+def test_detect_backend_unsupported():
+    """_detect_backend raises ClipboardError on unsupported platforms."""
+    with patch("clipboard_mcp.clipboard.platform.system", return_value="FreeBSD"):
+        import clipboard_mcp.clipboard as cb
+        cb._backend = None
+        with pytest.raises(ClipboardError, match="Unsupported platform: FreeBSD"):
+            _detect_backend()
+
+
+def test_detect_backend_linux_no_tools():
+    """_detect_backend raises ClipboardError when no clipboard tools are installed."""
+    with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
+        with patch("clipboard_mcp.clipboard.shutil.which", return_value=None):
+            with patch.dict("os.environ", {}, clear=True):
+                import clipboard_mcp.clipboard as cb
+                cb._backend = None
+                with pytest.raises(ClipboardError, match="No clipboard tool found"):
+                    _detect_backend()
+
+
+# ---------------------------------------------------------------------------
+# 13. Backend dispatch (read_clipboard / list_clipboard_formats)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_dispatches_to_wayland():
+    """read_clipboard calls the wayland reader when backend is wayland."""
+    mock_reader = AsyncMock(return_value="hello")
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
+            result = await read_clipboard("text/plain")
+
+    assert result == "hello"
+    mock_reader.assert_called_once_with("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_dispatches_to_x11():
+    """read_clipboard calls the x11 reader when backend is x11."""
+    mock_reader = AsyncMock(return_value="hello")
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"x11": mock_reader}):
+            result = await read_clipboard("text/plain")
+
+    assert result == "hello"
+    mock_reader.assert_called_once_with("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_dispatches_to_macos():
+    """read_clipboard calls the macos reader when backend is macos."""
+    mock_reader = AsyncMock(return_value="hello")
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"macos": mock_reader}):
+            result = await read_clipboard("text/plain")
+
+    assert result == "hello"
+    mock_reader.assert_called_once_with("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_dispatches_to_windows():
+    """read_clipboard calls the windows reader when backend is windows."""
+    mock_reader = AsyncMock(return_value="hello")
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"windows": mock_reader}):
+            result = await read_clipboard("text/plain")
+
+    assert result == "hello"
+    mock_reader.assert_called_once_with("text/plain")
+
+
+@pytest.mark.asyncio
+async def test_list_clipboard_formats_dispatches_to_backend():
+    """list_clipboard_formats calls the correct backend lister."""
+    mock_lister = AsyncMock(return_value=["text/plain"])
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
+        with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"x11": mock_lister}):
+            result = await list_clipboard_formats()
+
+    assert result == ["text/plain"]
+    mock_lister.assert_called_once()
