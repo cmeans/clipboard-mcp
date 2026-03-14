@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clipboard-mcp-server"
-version = "1.0.0"
+version = "1.0.1"
 description = "MCP server that reads and writes the system clipboard — tables, text, code, JSON, URLs, images, and more."
 readme = "README.md"
 license = {text = "MIT"}
@@ -13,7 +13,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Utilities",
 ]
+keywords = ["clipboard", "mcp", "claude", "paste", "spreadsheet", "table"]
 dependencies = [
     "mcp[cli]>=1.2.0",
 ]

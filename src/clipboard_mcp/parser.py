@@ -151,7 +151,7 @@ _CODE_PATTERNS = (
     "function ", "const ", "let ", "var ",              # JavaScript
     "func ", "package ",                                # Go
     "public ", "private ", "protected ",                # Java/C#
-    "fn ", "pub ", "mod ", "use ",                      # Rust
+    "fn ", "pub ", "mod ",                               # Rust
     "=>", "->", "::","&&", "||",                        # Operators
     "if (", "for (", "while (",                         # Control flow
     "#!/",                                              # Shebang

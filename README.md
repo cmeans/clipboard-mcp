@@ -44,7 +44,8 @@ You also need a platform-specific clipboard tool:
 | **macOS** | Built-in | No install needed (`osascript` / `pbpaste`) |
 | **Windows** | Built-in | No install needed (PowerShell) |
 
-> **Platform status**: Linux with Wayland and X11 is tested.
+> **Platform status**: Linux with Wayland is tested on real hardware.
+> X11 has unit test coverage but has not been verified on a live X11 session.
 > macOS and Windows implementations are complete but
 > **untested on real hardware** — they should work but may have edge cases.
 > Bug reports and PRs are very welcome.

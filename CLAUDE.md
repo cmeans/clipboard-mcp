@@ -71,7 +71,8 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - Tool descriptions live in `src/clipboard_mcp/instructions/*.md` — edit those files to change what the host model sees
 - `pyproject.toml` `artifacts` setting ensures instruction `.md` files are included in the wheel
 - PyPI package name is `clipboard-mcp-server` (the command and import name remain `clipboard-mcp` / `clipboard_mcp`)
-- Linux with Wayland and X11 is tested; macOS and Windows implementations are complete but untested on real hardware
+- Linux with Wayland is tested on real hardware; X11 has unit tests but is unverified on live hardware; macOS and Windows are complete but untested
+- `clipboard_paste` intentionally has no return type annotation — adding `-> str | Image` causes FastMCP to fail Pydantic schema generation for `Image`
 
 ## Packaging Feature Branches
 

@@ -25,7 +25,7 @@ class ClipboardError(Exception):
     """Raised when clipboard access fails."""
 
 
-def _base_mime_type(mime: str) -> str:
+def base_mime_type(mime: str) -> str:
     """Strip parameters from a MIME type string.
 
     MIME types on the clipboard often include parameters after a semicolon
@@ -34,38 +34,21 @@ def _base_mime_type(mime: str) -> str:
     return mime.split(";", 1)[0].strip()
 
 
-async def _run(cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | None = None) -> str:
-    """Run a subprocess and return its stdout as a string."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except FileNotFoundError as fnf:
-        raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
-    except asyncio.TimeoutError as te:
-        proc.kill()
-        raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
-
-    if proc.returncode != 0:
-        err = stderr.decode(errors="replace").strip()
-        # wl-paste returns exit 1 with "No suitable type" when format unavailable
-        # xclip returns 1 when target not available
-        # These are expected "not available" signals, not hard errors.
-        if proc.returncode == 1:
-            return ""
-        raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
-
-    return stdout.decode(errors="replace")
-
-
-async def _run_binary(
-    cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | None = None
+async def _run_subprocess(
+    cmd: list[str],
+    *,
+    timeout: float = 5.0,
+    env: dict[str, str] | None = None,
+    allow_empty_exit: bool = True,
 ) -> bytes:
-    """Run a subprocess and return its stdout as raw bytes."""
+    """Run a subprocess and return its stdout as raw bytes.
+
+    When *allow_empty_exit* is ``True``, exit code 1 is treated as "format not
+    available" and returns empty bytes.  This is the expected behaviour for
+    ``wl-paste`` ("No suitable type of content") and ``xclip`` ("target not
+    available").  Set it to ``False`` for macOS and Windows backends where exit
+    code 1 indicates a real error (script failure, permission denied, etc.).
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -81,12 +64,39 @@ async def _run_binary(
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
     if proc.returncode != 0:
-        if proc.returncode == 1:
+        if allow_empty_exit and proc.returncode == 1:
             return b""
         err = stderr.decode(errors="replace").strip()
         raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
 
     return stdout
+
+
+async def _run(
+    cmd: list[str],
+    *,
+    timeout: float = 5.0,
+    env: dict[str, str] | None = None,
+    allow_empty_exit: bool = True,
+) -> str:
+    """Run a subprocess and return its stdout as a string."""
+    data = await _run_subprocess(
+        cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit
+    )
+    return data.decode(errors="replace")
+
+
+async def _run_binary(
+    cmd: list[str],
+    *,
+    timeout: float = 5.0,
+    env: dict[str, str] | None = None,
+    allow_empty_exit: bool = True,
+) -> bytes:
+    """Run a subprocess and return its stdout as raw bytes."""
+    return await _run_subprocess(
+        cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit
+    )
 
 
 async def _run_with_stdin(
@@ -256,10 +266,10 @@ async def _macos_read(mime_type: str) -> str:
             "initWithData:htmlData encoding:(current application's NSUTF8StringEncoding))\n"
             "return htmlString as text"
         )
-        return await _run(["osascript", "-e", script])
+        return await _run(["osascript", "-e", script], allow_empty_exit=False)
 
     if mime_type == "text/plain":
-        return await _run(["pbpaste"])
+        return await _run(["pbpaste"], allow_empty_exit=False)
 
     # Unsupported MIME type — signal "not available" rather than returning wrong content
     return ""
@@ -288,7 +298,7 @@ async def _macos_list_formats() -> list[str]:
         "end repeat\n"
         "return output"
     )
-    raw = await _run(["osascript", "-e", script])
+    raw = await _run(["osascript", "-e", script], allow_empty_exit=False)
     native = [line.strip() for line in raw.splitlines() if line.strip()]
     return [_UTI_TO_MIME.get(t, t) for t in native]
 
@@ -305,7 +315,7 @@ async def _windows_read(mime_type: str) -> str:
             "-NoProfile",
             "-Command",
             f"Add-Type -AssemblyName System.Windows.Forms; {script}",
-        ])
+        ], allow_empty_exit=False)
 
     if mime_type == "text/plain":
         return await _run([
@@ -313,7 +323,7 @@ async def _windows_read(mime_type: str) -> str:
             "-NoProfile",
             "-Command",
             "Get-Clipboard",
-        ])
+        ], allow_empty_exit=False)
 
     # Unsupported MIME type — signal "not available" rather than returning wrong content
     return ""
@@ -334,7 +344,8 @@ async def _windows_list_formats() -> list[str]:
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()"
     )
-    raw = await _run(["powershell", "-NoProfile", "-Command", script])
+    raw = await _run(["powershell", "-NoProfile", "-Command", script],
+                     allow_empty_exit=False)
     native = [line.strip() for line in raw.splitlines() if line.strip()]
     return [_WIN_TO_MIME.get(f, f) for f in native]
 
@@ -368,7 +379,7 @@ async def _macos_read_image(mime_type: str) -> bytes:
         "set b64 to (imgData's base64EncodedStringWithOptions:0)\n"
         "return b64 as text"
     )
-    b64_text = await _run(["osascript", "-e", script])
+    b64_text = await _run(["osascript", "-e", script], allow_empty_exit=False)
     if not b64_text.strip():
         return b""
     return base64.b64decode(b64_text.strip())
@@ -385,7 +396,8 @@ async def _windows_read_image(mime_type: str) -> bytes:
         "$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); "
         "[Convert]::ToBase64String($ms.ToArray())"
     )
-    b64_text = await _run(["powershell", "-NoProfile", "-Command", script])
+    b64_text = await _run(["powershell", "-NoProfile", "-Command", script],
+                          allow_empty_exit=False)
     if not b64_text.strip():
         return b""
     return base64.b64decode(b64_text.strip())
@@ -481,10 +493,10 @@ async def read_clipboard(mime_type: str = "text/plain") -> str:
     # Wayland / X11 pass the MIME type verbatim to wl-paste / xclip which
     # may do strict matching.  Resolve via format listing when needed.
     if not result and backend in ("wayland", "x11"):
-        base = _base_mime_type(mime_type)
+        base = base_mime_type(mime_type)
         formats = await _FORMAT_LISTERS[backend]()
         for fmt in formats:
-            if fmt != mime_type and _base_mime_type(fmt) == base:
+            if fmt != mime_type and base_mime_type(fmt) == base:
                 result = await _READERS[backend](fmt)
                 if result:
                     break
@@ -510,10 +522,10 @@ async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
     result = await _IMAGE_READERS[backend](mime_type)
 
     if not result and backend in ("wayland", "x11"):
-        base = _base_mime_type(mime_type)
+        base = base_mime_type(mime_type)
         formats = await _FORMAT_LISTERS[backend]()
         for fmt in formats:
-            if fmt != mime_type and _base_mime_type(fmt) == base:
+            if fmt != mime_type and base_mime_type(fmt) == base:
                 result = await _IMAGE_READERS[backend](fmt)
                 if result:
                     break

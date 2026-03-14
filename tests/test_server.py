@@ -1167,15 +1167,15 @@ async def test_write_clipboard_dispatches():
 # MIME type parameter handling
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import _base_mime_type
+from clipboard_mcp.clipboard import base_mime_type
 
 
 def test_base_mime_type_strips_params():
-    """_base_mime_type strips everything after the semicolon."""
-    assert _base_mime_type("text/plain;charset=utf-8") == "text/plain"
-    assert _base_mime_type("image/svg+xml;windows_formatname=\"image/svg+xml\"") == "image/svg+xml"
-    assert _base_mime_type("text/plain") == "text/plain"
-    assert _base_mime_type("application/json") == "application/json"
+    """base_mime_type strips everything after the semicolon."""
+    assert base_mime_type("text/plain;charset=utf-8") == "text/plain"
+    assert base_mime_type("image/svg+xml;windows_formatname=\"image/svg+xml\"") == "image/svg+xml"
+    assert base_mime_type("text/plain") == "text/plain"
+    assert base_mime_type("application/json") == "application/json"
 
 
 @pytest.mark.asyncio

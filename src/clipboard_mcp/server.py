@@ -1,8 +1,8 @@
 """Clipboard MCP Server.
 
-Exposes tools to read content from the system clipboard — tables, text, code,
-JSON, URLs, and more. Preserves structure when possible (e.g. spreadsheet
-row/column layout) and returns non-tabular content cleanly.
+MCP server that reads and writes the system clipboard — tables, text, code,
+JSON, URLs, images, and more. Preserves structure when possible (e.g.
+spreadsheet row/column layout) and returns non-tabular content cleanly.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from mcp.server.fastmcp.utilities.types import Image
 
 from .clipboard import (
     ClipboardError,
-    _base_mime_type,
+    base_mime_type,
     list_clipboard_formats,
     read_clipboard,
     read_clipboard_image,
@@ -50,8 +51,6 @@ def _configure_logging() -> None:
     logging.getLogger("clipboard_mcp").setLevel(level)
 
 
-_configure_logging()
-
 _INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
 
 
@@ -75,15 +74,14 @@ mcp = FastMCP(
 
 _VALID_FORMATS = {"markdown", "json", "csv"}
 _MAX_CONTENT_LEN = 50_000
-_BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "application/octet-stream")
+_BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
+_BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
 
-# MIME types that match _BINARY_MIME_PREFIXES but are actually text-readable.
-_TEXT_READABLE_MIMES = frozenset({
-    "image/svg+xml",
-    "application/json",
-    "application/xml",
-    "application/xhtml+xml",
-})
+# image/* entries that are text-readable (not actual binary).
+_TEXT_READABLE_MIMES = frozenset({"image/svg+xml"})
+
+# Basic MIME type validation: type/subtype with optional parameters.
+_MIME_RE = re.compile(r"^[\w.+\-]+/[\w.+\-]+(;[\w.+\-=]+)*$")
 
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
@@ -198,19 +196,22 @@ async def clipboard_paste(
             if image_formats:
                 # Prefer PNG (match by base type to handle parameter suffixes)
                 mime = next(
-                    (f for f in image_formats if _base_mime_type(f) == "image/png"),
+                    (f for f in image_formats if base_mime_type(f) == "image/png"),
                     image_formats[0],
                 )
                 try:
                     data = await read_clipboard_image(mime)
                     if data:
-                        fmt = _base_mime_type(mime).split("/", 1)[1]
+                        fmt = base_mime_type(mime).split("/", 1)[1]
                         return Image(data=data, format=fmt)
                 except ClipboardError as e:
                     logger.debug("Image read failed: %s", e)
             # Non-image binary (audio/video) — report but can't return
-            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)
-                      and not f.startswith("image/")]
+            binary = [
+                f for f in formats
+                if (f.startswith(_BINARY_MIME_PREFIXES) or f in _BINARY_MIME_EXACT)
+                and not f.startswith("image/")
+            ]
             if binary:
                 fmt_list = ", ".join(binary)
                 return (
@@ -221,7 +222,6 @@ async def clipboard_paste(
             pass
 
     return _format_non_tabular(content)
-
 
 
 @mcp.tool(
@@ -238,8 +238,15 @@ async def clipboard_paste(
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
 ) -> str:
-    base_type = _base_mime_type(mime_type)
-    if base_type.startswith(_BINARY_MIME_PREFIXES) and base_type not in _TEXT_READABLE_MIMES:
+    base_type = base_mime_type(mime_type)
+    if not _MIME_RE.match(base_type):
+        return (
+            f"Invalid MIME type: {mime_type!r}. "
+            f"Expected format: type/subtype (e.g. text/plain, image/png)."
+        )
+    if (
+        base_type.startswith(_BINARY_MIME_PREFIXES) or base_type in _BINARY_MIME_EXACT
+    ) and base_type not in _TEXT_READABLE_MIMES:
         return (
             f"Cannot read binary MIME type '{mime_type}'. "
             f"This tool only supports text-based formats (e.g. text/plain, text/html, "
@@ -323,6 +330,7 @@ async def clipboard_copy(
 
 def main() -> None:
     """Entry point for the clipboard-mcp command."""
+    _configure_logging()
     # Strip --debug before FastMCP sees argv
     sys.argv = [a for a in sys.argv if a != "--debug"]
     mcp.run()
