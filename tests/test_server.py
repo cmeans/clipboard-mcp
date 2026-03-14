@@ -585,6 +585,8 @@ def test_detect_backend_prefers_env_var_over_socket():
 # ---------------------------------------------------------------------------
 
 from clipboard_mcp.clipboard import (
+    _x11_read,
+    _x11_list_formats,
     _macos_read,
     _macos_list_formats,
     _UTI_TO_MIME,
@@ -696,3 +698,52 @@ async def test_windows_list_formats_passthrough_unknown():
         result = await _windows_list_formats()
 
     assert result == ["text/html", "System.String"]
+
+
+# ---------------------------------------------------------------------------
+# 10. X11 backend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_x11_read_html():
+    """_x11_read calls xclip with correct target for text/html."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+        result = await _x11_read("text/html")
+
+    assert result == "<b>hi</b>"
+    cmd = mock_run.call_args[0][0]
+    assert cmd == ["xclip", "-selection", "clipboard", "-target", "text/html", "-o"]
+
+
+@pytest.mark.asyncio
+async def test_x11_read_plain():
+    """_x11_read calls xclip with correct target for text/plain."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+        result = await _x11_read("text/plain")
+
+    assert result == "hello"
+    cmd = mock_run.call_args[0][0]
+    assert cmd == ["xclip", "-selection", "clipboard", "-target", "text/plain", "-o"]
+
+
+@pytest.mark.asyncio
+async def test_x11_list_formats():
+    """_x11_list_formats calls xclip with TARGETS and parses output."""
+    raw_output = "text/html\ntext/plain\nimage/png\n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output) as mock_run:
+        result = await _x11_list_formats()
+
+    assert result == ["text/html", "text/plain", "image/png"]
+    cmd = mock_run.call_args[0][0]
+    assert cmd == ["xclip", "-selection", "clipboard", "-target", "TARGETS", "-o"]
+
+
+@pytest.mark.asyncio
+async def test_x11_list_formats_strips_whitespace():
+    """_x11_list_formats strips whitespace and skips blank lines."""
+    raw_output = "  text/html  \n\n  text/plain  \n"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _x11_list_formats()
+
+    assert result == ["text/html", "text/plain"]

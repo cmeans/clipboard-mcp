@@ -49,7 +49,14 @@ _INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
 
 def _load_instruction(name: str) -> str:
     """Load an instruction file from the instructions/ directory."""
-    return (_INSTRUCTIONS_DIR / f"{name}.md").read_text().strip()
+    path = _INSTRUCTIONS_DIR / f"{name}.md"
+    try:
+        return path.read_text().strip()
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"Missing instruction file: {path}. "
+            "The clipboard-mcp package may be installed incorrectly."
+        ) from None
 
 
 mcp = FastMCP(
