@@ -25,6 +25,15 @@ class ClipboardError(Exception):
     """Raised when clipboard access fails."""
 
 
+def _base_mime_type(mime: str) -> str:
+    """Strip parameters from a MIME type string.
+
+    MIME types on the clipboard often include parameters after a semicolon
+    (e.g., ``text/plain;charset=utf-8``).  This returns just the base type.
+    """
+    return mime.split(";", 1)[0].strip()
+
+
 async def _run(cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | None = None) -> str:
     """Run a subprocess and return its stdout as a string."""
     try:
@@ -460,9 +469,27 @@ async def read_clipboard(mime_type: str = "text/plain") -> str:
     """Read the clipboard content in the specified MIME type.
 
     Returns an empty string if the requested format is not available.
+
+    Clipboard MIME types may include parameters (e.g.,
+    ``text/plain;charset=utf-8``).  If the exact requested type is not
+    found, this function falls back to listing available formats and
+    retrying with a matching suffixed variant.
     """
     backend = _get_backend()
-    return await _READERS[backend](mime_type)
+    result = await _READERS[backend](mime_type)
+
+    # Wayland / X11 pass the MIME type verbatim to wl-paste / xclip which
+    # may do strict matching.  Resolve via format listing when needed.
+    if not result and backend in ("wayland", "x11"):
+        base = _base_mime_type(mime_type)
+        formats = await _FORMAT_LISTERS[backend]()
+        for fmt in formats:
+            if fmt != mime_type and _base_mime_type(fmt) == base:
+                result = await _READERS[backend](fmt)
+                if result:
+                    break
+
+    return result
 
 
 async def list_clipboard_formats() -> list[str]:
@@ -475,9 +502,23 @@ async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
     """Read binary image data from the clipboard.
 
     Returns raw bytes of the image, or empty bytes if not available.
+
+    Like :func:`read_clipboard`, falls back to a matching suffixed MIME
+    type when the exact requested type is not available.
     """
     backend = _get_backend()
-    return await _IMAGE_READERS[backend](mime_type)
+    result = await _IMAGE_READERS[backend](mime_type)
+
+    if not result and backend in ("wayland", "x11"):
+        base = _base_mime_type(mime_type)
+        formats = await _FORMAT_LISTERS[backend]()
+        for fmt in formats:
+            if fmt != mime_type and _base_mime_type(fmt) == base:
+                result = await _IMAGE_READERS[backend](fmt)
+                if result:
+                    break
+
+    return result
 
 
 async def write_clipboard(content: str) -> None:

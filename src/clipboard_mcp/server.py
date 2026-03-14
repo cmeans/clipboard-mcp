@@ -18,6 +18,7 @@ from mcp.server.fastmcp.utilities.types import Image
 
 from .clipboard import (
     ClipboardError,
+    _base_mime_type,
     list_clipboard_formats,
     read_clipboard,
     read_clipboard_image,
@@ -195,12 +196,15 @@ async def clipboard_paste(
             formats = await list_clipboard_formats()
             image_formats = [f for f in formats if f.startswith("image/")]
             if image_formats:
-                # Prefer PNG, fall back to first available image format
-                mime = "image/png" if "image/png" in image_formats else image_formats[0]
+                # Prefer PNG (match by base type to handle parameter suffixes)
+                mime = next(
+                    (f for f in image_formats if _base_mime_type(f) == "image/png"),
+                    image_formats[0],
+                )
                 try:
                     data = await read_clipboard_image(mime)
                     if data:
-                        fmt = mime.split("/", 1)[1]
+                        fmt = _base_mime_type(mime).split("/", 1)[1]
                         return Image(data=data, format=fmt)
                 except ClipboardError as e:
                     logger.debug("Image read failed: %s", e)
@@ -234,7 +238,8 @@ async def clipboard_paste(
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
 ) -> str:
-    if mime_type.startswith(_BINARY_MIME_PREFIXES) and mime_type not in _TEXT_READABLE_MIMES:
+    base_type = _base_mime_type(mime_type)
+    if base_type.startswith(_BINARY_MIME_PREFIXES) and base_type not in _TEXT_READABLE_MIMES:
         return (
             f"Cannot read binary MIME type '{mime_type}'. "
             f"This tool only supports text-based formats (e.g. text/plain, text/html, "
