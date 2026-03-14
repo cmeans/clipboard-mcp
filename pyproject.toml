@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clipboard-mcp-server"
-version = "0.1.3"
-description = "MCP server that reads content from the system clipboard — tables, text, code, JSON, URLs, and more."
+version = "1.0.0"
+description = "MCP server that reads and writes the system clipboard — tables, text, code, JSON, URLs, images, and more."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
