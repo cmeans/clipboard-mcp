@@ -368,3 +368,5 @@ catching stale docs, and filling test coverage gaps across every commit.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Copyright (c) 2025-2026 Chris Means
