@@ -33,6 +33,10 @@ uv run mcp dev src/clipboard_mcp/server.py
 
 # Build wheel (to verify packaging)
 uv build --wheel
+
+# Publish to PyPI (do NOT publish directly — push a tag to trigger GitHub Actions)
+git tag v0.1.x && git push origin v0.1.x   # triggers .github/workflows/publish.yml
+git tag test-v0.1.x && git push origin test-v0.1.x  # triggers test-publish.yml (TestPyPI)
 ```
 
 ## Architecture
