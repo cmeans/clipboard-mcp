@@ -14,8 +14,16 @@ import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities.types import Image
 
-from .clipboard import ClipboardError, list_clipboard_formats, read_clipboard
+from .clipboard import (
+    ClipboardError,
+    _base_mime_type,
+    list_clipboard_formats,
+    read_clipboard,
+    read_clipboard_image,
+    write_clipboard,
+)
 from .parser import (
     detect_content_type,
     extract_html_text,
@@ -68,6 +76,14 @@ mcp = FastMCP(
 _VALID_FORMATS = {"markdown", "json", "csv"}
 _MAX_CONTENT_LEN = 50_000
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "application/octet-stream")
+
+# MIME types that match _BINARY_MIME_PREFIXES but are actually text-readable.
+_TEXT_READABLE_MIMES = frozenset({
+    "image/svg+xml",
+    "application/json",
+    "application/xml",
+    "application/xhtml+xml",
+})
 
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
@@ -148,7 +164,7 @@ def _format_non_tabular(text: str) -> str:
 )
 async def clipboard_paste(
     output_format: str = "markdown",
-) -> str:
+):
     output_format = output_format.strip().lower()
     if output_format not in _VALID_FORMATS:
         return (
@@ -178,14 +194,28 @@ async def clipboard_paste(
     if not content.strip():
         try:
             formats = await list_clipboard_formats()
-            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)]
+            image_formats = [f for f in formats if f.startswith("image/")]
+            if image_formats:
+                # Prefer PNG (match by base type to handle parameter suffixes)
+                mime = next(
+                    (f for f in image_formats if _base_mime_type(f) == "image/png"),
+                    image_formats[0],
+                )
+                try:
+                    data = await read_clipboard_image(mime)
+                    if data:
+                        fmt = _base_mime_type(mime).split("/", 1)[1]
+                        return Image(data=data, format=fmt)
+                except ClipboardError as e:
+                    logger.debug("Image read failed: %s", e)
+            # Non-image binary (audio/video) — report but can't return
+            binary = [f for f in formats if f.startswith(_BINARY_MIME_PREFIXES)
+                      and not f.startswith("image/")]
             if binary:
                 fmt_list = ", ".join(binary)
                 return (
                     f"Clipboard contains binary data ({fmt_list}) which cannot be "
-                    f"read as text. Images, audio, and video are not currently "
-                    f"supported — only text-based content (plain text, HTML, code, "
-                    f"JSON, URLs, tables)."
+                    f"returned as text. Audio and video are not supported."
                 )
         except ClipboardError:
             pass
@@ -208,11 +238,12 @@ async def clipboard_paste(
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
 ) -> str:
-    if mime_type.startswith(_BINARY_MIME_PREFIXES):
+    base_type = _base_mime_type(mime_type)
+    if base_type.startswith(_BINARY_MIME_PREFIXES) and base_type not in _TEXT_READABLE_MIMES:
         return (
             f"Cannot read binary MIME type '{mime_type}'. "
-            f"This tool only supports text-based formats (e.g. text/plain, text/html). "
-            f"Image, audio, and video clipboard content is not currently supported."
+            f"This tool only supports text-based formats (e.g. text/plain, text/html, "
+            f"image/svg+xml, application/json)."
         )
 
     try:
@@ -266,6 +297,28 @@ async def clipboard_list_formats() -> str:
         result += "\n\n" + "\n".join(highlights)
 
     return result
+
+
+@mcp.tool(
+    name="clipboard_copy",
+    description=_load_instruction("clipboard_copy"),
+    annotations={
+        "title": "Copy to Clipboard",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def clipboard_copy(
+    content: str,
+) -> str:
+    try:
+        await write_clipboard(content)
+    except ClipboardError as e:
+        return f"Error writing to clipboard: {e}"
+
+    return f"Copied {len(content)} characters to clipboard."
 
 
 def main() -> None:

@@ -1,15 +1,16 @@
-"""Platform-agnostic clipboard reading with support for rich (HTML) and plain text formats.
+"""Platform-agnostic clipboard access with support for rich (HTML) and plain text formats.
 
 Detection order:
-  1. Wayland (wl-paste)
+  1. Wayland (wl-paste / wl-copy)
   2. X11 (xclip)
-  3. macOS (osascript / pbpaste)
+  3. macOS (osascript / pbpaste / pbcopy)
   4. Windows (PowerShell)
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import platform
@@ -22,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 class ClipboardError(Exception):
     """Raised when clipboard access fails."""
+
+
+def _base_mime_type(mime: str) -> str:
+    """Strip parameters from a MIME type string.
+
+    MIME types on the clipboard often include parameters after a semicolon
+    (e.g., ``text/plain;charset=utf-8``).  This returns just the base type.
+    """
+    return mime.split(";", 1)[0].strip()
 
 
 async def _run(cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | None = None) -> str:
@@ -50,6 +60,67 @@ async def _run(cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | No
         raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
 
     return stdout.decode(errors="replace")
+
+
+async def _run_binary(
+    cmd: list[str], *, timeout: float = 5.0, env: dict[str, str] | None = None
+) -> bytes:
+    """Run a subprocess and return its stdout as raw bytes."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except FileNotFoundError as fnf:
+        raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
+    except asyncio.TimeoutError as te:
+        proc.kill()
+        raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
+
+    if proc.returncode != 0:
+        if proc.returncode == 1:
+            return b""
+        err = stderr.decode(errors="replace").strip()
+        raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
+
+    return stdout
+
+
+async def _run_with_stdin(
+    cmd: list[str],
+    input_data: bytes,
+    *,
+    timeout: float = 5.0,
+    env: dict[str, str] | None = None,
+) -> None:
+    """Run a subprocess, piping input_data to its stdin.
+
+    stdout and stderr are sent to /dev/null because clipboard write commands
+    (wl-copy, xclip) fork a background child that inherits pipe file
+    descriptors.  If those streams are piped, communicate() blocks waiting
+    for the child to close them — which only happens when another copy
+    replaces the clipboard — causing a spurious timeout.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
+    except FileNotFoundError as fnf:
+        raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
+    except asyncio.TimeoutError as te:
+        proc.kill()
+        raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
+
+    if proc.returncode != 0:
+        raise ClipboardError(f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}")
 
 
 def _find_wayland_display() -> str | None:
@@ -269,6 +340,87 @@ async def _windows_list_formats() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Backend image readers (binary)
+# ---------------------------------------------------------------------------
+
+
+async def _wayland_read_image(mime_type: str) -> bytes:
+    return await _run_binary(["wl-paste", "--type", mime_type], env=_wayland_env())
+
+
+async def _x11_read_image(mime_type: str) -> bytes:
+    return await _run_binary(
+        ["xclip", "-selection", "clipboard", "-target", mime_type, "-o"]
+    )
+
+
+async def _macos_read_image(mime_type: str) -> bytes:
+    # Map MIME to UTI for NSPasteboard lookup
+    mime_to_uti = {v: k for k, v in _UTI_TO_MIME.items() if v.startswith("image/")}
+    uti = mime_to_uti.get(mime_type, mime_type)
+    # Return image data as base64 text via osascript, then decode to bytes
+    script = (
+        'use framework "AppKit"\n'
+        'use framework "Foundation"\n'
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        f'set imgData to pb\'s dataForType:"{uti}"\n'
+        'if imgData is missing value then return ""\n'
+        "set b64 to (imgData's base64EncodedStringWithOptions:0)\n"
+        "return b64 as text"
+    )
+    b64_text = await _run(["osascript", "-e", script])
+    if not b64_text.strip():
+        return b""
+    return base64.b64decode(b64_text.strip())
+
+
+async def _windows_read_image(mime_type: str) -> bytes:
+    # Read clipboard image as base64 via PowerShell
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        "$img = [System.Windows.Forms.Clipboard]::GetImage(); "
+        "if ($img -eq $null) { return }; "
+        "$ms = New-Object System.IO.MemoryStream; "
+        "$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); "
+        "[Convert]::ToBase64String($ms.ToArray())"
+    )
+    b64_text = await _run(["powershell", "-NoProfile", "-Command", script])
+    if not b64_text.strip():
+        return b""
+    return base64.b64decode(b64_text.strip())
+
+
+# ---------------------------------------------------------------------------
+# Backend writers (text)
+# ---------------------------------------------------------------------------
+
+
+async def _wayland_write(content: str) -> None:
+    await _run_with_stdin(["wl-copy"], content.encode(), env=_wayland_env())
+
+
+async def _x11_write(content: str) -> None:
+    await _run_with_stdin(
+        ["xclip", "-selection", "clipboard"], content.encode()
+    )
+
+
+async def _macos_write(content: str) -> None:
+    await _run_with_stdin(["pbcopy"], content.encode())
+
+
+async def _windows_write(content: str) -> None:
+    await _run_with_stdin(
+        [
+            "powershell", "-NoProfile", "-Command",
+            "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+        ],
+        content.encode(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -298,17 +450,78 @@ _FORMAT_LISTERS = {
     "windows": _windows_list_formats,
 }
 
+_IMAGE_READERS = {
+    "wayland": _wayland_read_image,
+    "x11": _x11_read_image,
+    "macos": _macos_read_image,
+    "windows": _windows_read_image,
+}
+
+_WRITERS = {
+    "wayland": _wayland_write,
+    "x11": _x11_write,
+    "macos": _macos_write,
+    "windows": _windows_write,
+}
+
 
 async def read_clipboard(mime_type: str = "text/plain") -> str:
     """Read the clipboard content in the specified MIME type.
 
     Returns an empty string if the requested format is not available.
+
+    Clipboard MIME types may include parameters (e.g.,
+    ``text/plain;charset=utf-8``).  If the exact requested type is not
+    found, this function falls back to listing available formats and
+    retrying with a matching suffixed variant.
     """
     backend = _get_backend()
-    return await _READERS[backend](mime_type)
+    result = await _READERS[backend](mime_type)
+
+    # Wayland / X11 pass the MIME type verbatim to wl-paste / xclip which
+    # may do strict matching.  Resolve via format listing when needed.
+    if not result and backend in ("wayland", "x11"):
+        base = _base_mime_type(mime_type)
+        formats = await _FORMAT_LISTERS[backend]()
+        for fmt in formats:
+            if fmt != mime_type and _base_mime_type(fmt) == base:
+                result = await _READERS[backend](fmt)
+                if result:
+                    break
+
+    return result
 
 
 async def list_clipboard_formats() -> list[str]:
     """Return the list of MIME/format types currently available on the clipboard."""
     backend = _get_backend()
     return await _FORMAT_LISTERS[backend]()
+
+
+async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
+    """Read binary image data from the clipboard.
+
+    Returns raw bytes of the image, or empty bytes if not available.
+
+    Like :func:`read_clipboard`, falls back to a matching suffixed MIME
+    type when the exact requested type is not available.
+    """
+    backend = _get_backend()
+    result = await _IMAGE_READERS[backend](mime_type)
+
+    if not result and backend in ("wayland", "x11"):
+        base = _base_mime_type(mime_type)
+        formats = await _FORMAT_LISTERS[backend]()
+        for fmt in formats:
+            if fmt != mime_type and _base_mime_type(fmt) == base:
+                result = await _IMAGE_READERS[backend](fmt)
+                if result:
+                    break
+
+    return result
+
+
+async def write_clipboard(content: str) -> None:
+    """Write text content to the system clipboard."""
+    backend = _get_backend()
+    await _WRITERS[backend](content)

@@ -1,4 +1,4 @@
-"""MCP server for reading content from the system clipboard."""
+"""MCP server for reading and writing the system clipboard."""
 
 from importlib.metadata import version
 

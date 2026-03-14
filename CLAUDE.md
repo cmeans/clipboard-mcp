@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-clipboard-mcp is an MCP (Model Context Protocol) server that reads content from the system clipboard — tables, plain text, code, JSON, URLs, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Binary content (images, audio, video) is detected and reported but not returned.
+clipboard-mcp is an MCP (Model Context Protocol) server that reads and writes the system clipboard — tables, plain text, code, JSON, URLs, images, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Images on the clipboard are returned as viewable content; audio and video are detected and reported but not returned.
 
 ## Commands
 
@@ -39,18 +39,19 @@ uv build --wheel
 
 Three-layer design with clean separation:
 
-- **server.py** — MCP server (`FastMCP`, name `clipboard_mcp`) exposing 3 tools:
-  - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Detects binary clipboard content and reports it.
+- **server.py** — MCP server (`FastMCP`, name `clipboard_mcp`) exposing 4 tools:
+  - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Images are returned as base64-encoded image content. Audio/video are detected and reported.
+  - `clipboard_copy(content)` — Writes text to the system clipboard.
   - `clipboard_read_raw(mime_type)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types.
   - `clipboard_list_formats()` — Lists available MIME types on clipboard.
 
-- **clipboard.py** — Platform-agnostic clipboard abstraction. Auto-detects backend (Wayland `wl-paste`, X11 `xclip`, macOS `osascript`/`pbpaste`, Windows PowerShell). All operations are async with 5-second timeout. Exit code 1 means "format not available" (not an error). macOS UTI types and Windows format names are mapped to MIME types in `list_formats`. Read functions only handle `text/html` and `text/plain`; unsupported MIME types return empty string.
+- **clipboard.py** — Platform-agnostic clipboard abstraction. Auto-detects backend (Wayland `wl-paste`/`wl-copy`, X11 `xclip`, macOS `osascript`/`pbpaste`/`pbcopy`, Windows PowerShell). All operations are async with 5-second timeout. Exit code 1 means "format not available" (not an error). macOS UTI types and Windows format names are mapped to MIME types in `list_formats`. Supports text read/write and binary image reads.
 
 - **parser.py** — HTML table extraction (custom `HTMLParser` subclass), TSV parsing, HTML-to-text extraction, content-type detection (json/url/code/text), and table formatters (Markdown, JSON, CSV).
 
 - **instructions/** — Markdown files containing MCP server instructions and tool descriptions. Loaded at startup by `server.py` via `_load_instruction()`. These are the descriptions the host model sees when deciding which tool to call. Edit these files to change tool behavior descriptions without touching Python code.
 
-**Data flow**: `clipboard_paste` → try HTML → `parse_html_table()` → if rows, format table → return. Else try plain text → `parse_tsv()` → if rows, format table → return. Else if no text content, check for binary formats → report. Else `detect_content_type()` → return with smart formatting.
+**Data flow**: `clipboard_paste` → try HTML → `parse_html_table()` → if rows, format table → return. Else try plain text → `parse_tsv()` → if rows, format table → return. Else if no text content, check for image formats → read and return as image content. Else check for other binary formats → report. Else `detect_content_type()` → return with smart formatting.
 
 ## Testing
 

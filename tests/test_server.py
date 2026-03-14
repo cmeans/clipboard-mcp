@@ -9,10 +9,13 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from mcp.server.fastmcp.utilities.types import Image
 
 from clipboard_mcp.clipboard import (
     ClipboardError,
     read_clipboard,
+    read_clipboard_image,
+    write_clipboard,
     list_clipboard_formats,
     _find_wayland_display,
     _wayland_env,
@@ -21,6 +24,7 @@ from clipboard_mcp.clipboard import (
 )
 from clipboard_mcp.server import (
     clipboard_paste,
+    clipboard_copy,
     clipboard_read_raw,
     clipboard_list_formats,
     _load_instruction,
@@ -224,7 +228,8 @@ async def test_paste_empty_clipboard():
     """clipboard_paste returns empty message when clipboard is empty."""
     with patch("clipboard_mcp.server.read_clipboard",
                side_effect=_mock_read(html="", text="")):
-        result = await clipboard_paste()
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+            result = await clipboard_paste()
 
     assert "Clipboard is empty" in result
 
@@ -233,7 +238,8 @@ async def test_paste_empty_clipboard():
 async def test_paste_both_fail():
     """clipboard_paste returns empty message when both reads fail."""
     with patch("clipboard_mcp.server.read_clipboard", side_effect=_mock_read_error()):
-        result = await clipboard_paste()
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+            result = await clipboard_paste()
 
     assert "Clipboard is empty" in result
 
@@ -377,7 +383,7 @@ async def test_read_raw_rejects_binary_mime():
 
     assert "Cannot read binary" in result
     assert "image/png" in result
-    assert "not currently supported" in result
+    assert "text-based formats" in result
 
 
 @pytest.mark.asyncio
@@ -396,22 +402,46 @@ async def test_read_raw_rejects_video_mime():
     assert "Cannot read binary" in result
 
 
+@pytest.mark.asyncio
+async def test_read_raw_allows_svg():
+    """clipboard_read_raw allows image/svg+xml as text-readable."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
+        result = await clipboard_read_raw(mime_type="image/svg+xml")
+
+    assert "circle" in result
+    assert "Cannot read binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_application_json():
+    """clipboard_read_raw allows application/json as text-readable."""
+    json_str = '{"key": "value"}'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=json_str):
+        result = await clipboard_read_raw(mime_type="application/json")
+
+    assert "key" in result
+    assert "Cannot read binary" not in result
+
+
 # ---------------------------------------------------------------------------
 # 6. clipboard_paste with binary clipboard
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_paste_detects_image_clipboard():
-    """clipboard_paste reports image formats when clipboard has no text."""
+async def test_paste_returns_image():
+    """clipboard_paste returns Image when clipboard has image data."""
+    fake_png = b"\x89PNG\r\n\x1a\nfakedata"
     with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
         with patch("clipboard_mcp.server.list_clipboard_formats",
                    return_value=["image/png", "image/tiff"]):
-            result = await clipboard_paste()
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png):
+                result = await clipboard_paste()
 
-    assert "binary data" in result
-    assert "image/png" in result
-    assert "not currently supported" in result
+    assert isinstance(result, Image)
+    assert result.data == fake_png
 
 
 @pytest.mark.asyncio
@@ -883,3 +913,819 @@ async def test_list_clipboard_formats_dispatches_to_backend():
 
     assert result == ["text/plain"]
     mock_lister.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 14. Image passthrough
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paste_image_prefers_png():
+    """clipboard_paste prefers image/png when multiple image formats available."""
+    fake_png = b"\x89PNG\r\n\x1a\n"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/tiff", "image/png"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png) as mock_img:
+                result = await clipboard_paste()
+
+    mock_img.assert_called_once_with("image/png")
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_paste_image_falls_back_to_first():
+    """clipboard_paste uses first image format when PNG not available."""
+    fake_tiff = b"TIFF_DATA"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/tiff", "image/jpeg"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_tiff) as mock_img:
+                result = await clipboard_paste()
+
+    mock_img.assert_called_once_with("image/tiff")
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_paste_audio_still_reports_text():
+    """clipboard_paste returns text message for audio/video (not image)."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["audio/mpeg"]):
+            result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "binary data" in result
+    assert "audio/mpeg" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_image_read_failure_graceful():
+    """clipboard_paste handles image read failure gracefully."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/png"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       side_effect=ClipboardError("read failed")):
+                result = await clipboard_paste()
+
+    # Should fall through to empty clipboard message
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_paste_image_empty_data():
+    """clipboard_paste handles empty image data (format listed but no data)."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/png"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=b""):
+                result = await clipboard_paste()
+
+    # Empty data should fall through
+    assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# 15. Image read backends
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import (
+    _wayland_read_image,
+    _x11_read_image,
+    _macos_read_image,
+    _windows_read_image,
+)
+
+
+@pytest.mark.asyncio
+async def test_wayland_read_image():
+    """_wayland_read_image calls wl-paste with correct type flag."""
+    fake_data = b"\x89PNG\r\n\x1a\n"
+    with patch("clipboard_mcp.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
+        result = await _wayland_read_image("image/png")
+
+    assert result == fake_data
+    cmd = mock.call_args[0][0]
+    assert cmd == ["wl-paste", "--type", "image/png"]
+
+
+@pytest.mark.asyncio
+async def test_x11_read_image():
+    """_x11_read_image calls xclip with correct target for binary."""
+    fake_data = b"\x89PNG\r\n\x1a\n"
+    with patch("clipboard_mcp.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
+        result = await _x11_read_image("image/png")
+
+    assert result == fake_data
+    cmd = mock.call_args[0][0]
+    assert cmd == ["xclip", "-selection", "clipboard", "-target", "image/png", "-o"]
+
+
+@pytest.mark.asyncio
+async def test_macos_read_image():
+    """_macos_read_image reads base64 from osascript and decodes."""
+    import base64
+    fake_data = b"\x89PNG\r\n\x1a\n"
+    b64_text = base64.b64encode(fake_data).decode()
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
+        result = await _macos_read_image("image/png")
+
+    assert result == fake_data
+
+
+@pytest.mark.asyncio
+async def test_macos_read_image_empty():
+    """_macos_read_image returns empty bytes when no image available."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=""):
+        result = await _macos_read_image("image/png")
+
+    assert result == b""
+
+
+@pytest.mark.asyncio
+async def test_windows_read_image():
+    """_windows_read_image reads base64 from PowerShell and decodes."""
+    import base64
+    fake_data = b"\x89PNG\r\n\x1a\n"
+    b64_text = base64.b64encode(fake_data).decode()
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
+        result = await _windows_read_image("image/png")
+
+    assert result == fake_data
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_dispatches():
+    """read_clipboard_image dispatches to the correct backend."""
+    mock_reader = AsyncMock(return_value=b"IMG")
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
+        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"x11": mock_reader}):
+            result = await read_clipboard_image("image/png")
+
+    assert result == b"IMG"
+    mock_reader.assert_called_once_with("image/png")
+
+
+# ---------------------------------------------------------------------------
+# 16. Clipboard copy
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import (
+    _wayland_write,
+    _x11_write,
+    _macos_write,
+    _windows_write,
+)
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_success():
+    """clipboard_copy writes content and returns confirmation."""
+    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock):
+        result = await clipboard_copy("hello world")
+
+    assert "11 characters" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_error():
+    """clipboard_copy returns error message on failure."""
+    with patch("clipboard_mcp.server.write_clipboard",
+               side_effect=ClipboardError("write failed")):
+        result = await clipboard_copy("hello")
+
+    assert "Error" in result
+    assert "write failed" in result
+
+
+@pytest.mark.asyncio
+async def test_wayland_write():
+    """_wayland_write pipes content to wl-copy."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write("hello")
+
+    cmd = mock.call_args[0][0]
+    data = mock.call_args[0][1]
+    assert cmd == ["wl-copy"]
+    assert data == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_x11_write():
+    """_x11_write pipes content to xclip."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write("hello")
+
+    cmd = mock.call_args[0][0]
+    data = mock.call_args[0][1]
+    assert cmd == ["xclip", "-selection", "clipboard"]
+    assert data == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_macos_write():
+    """_macos_write pipes content to pbcopy."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write("hello")
+
+    cmd = mock.call_args[0][0]
+    data = mock.call_args[0][1]
+    assert cmd == ["pbcopy"]
+    assert data == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_windows_write():
+    """_windows_write pipes content to PowerShell Set-Clipboard."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write("hello")
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "powershell"
+    data = mock.call_args[0][1]
+    assert data == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_dispatches():
+    """write_clipboard dispatches to the correct backend."""
+    mock_writer = AsyncMock()
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"wayland": mock_writer}):
+            await write_clipboard("hello")
+
+    mock_writer.assert_called_once_with("hello")
+
+
+# ---------------------------------------------------------------------------
+# MIME type parameter handling
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import _base_mime_type
+
+
+def test_base_mime_type_strips_params():
+    """_base_mime_type strips everything after the semicolon."""
+    assert _base_mime_type("text/plain;charset=utf-8") == "text/plain"
+    assert _base_mime_type("image/svg+xml;windows_formatname=\"image/svg+xml\"") == "image/svg+xml"
+    assert _base_mime_type("text/plain") == "text/plain"
+    assert _base_mime_type("application/json") == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_falls_back_to_suffixed_mime():
+    """read_clipboard retries with the suffixed MIME type when exact match fails."""
+    call_log = []
+
+    async def mock_reader(mime_type):
+        call_log.append(mime_type)
+        if mime_type == "text/plain":
+            return ""  # exact match fails
+        if mime_type == "text/plain;charset=utf-8":
+            return "hello from charset"
+        return ""
+
+    async def mock_list():
+        return ["text/plain;charset=utf-8", "text/html"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+                result = await read_clipboard("text/plain")
+
+    assert result == "hello from charset"
+    assert "text/plain" in call_log
+    assert "text/plain;charset=utf-8" in call_log
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_no_fallback_when_exact_match_works():
+    """read_clipboard does not list formats when the exact MIME type succeeds."""
+    list_called = False
+
+    async def mock_reader(mime_type):
+        return "direct content"
+
+    async def mock_list():
+        nonlocal list_called
+        list_called = True
+        return []
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+                result = await read_clipboard("text/plain")
+
+    assert result == "direct content"
+    assert not list_called
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_no_fallback_on_macos():
+    """read_clipboard skips MIME fallback on macOS (not applicable)."""
+    async def mock_reader(mime_type):
+        return ""
+
+    list_called = False
+
+    async def mock_list():
+        nonlocal list_called
+        list_called = True
+        return ["text/plain;charset=utf-8"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
+        with patch.dict("clipboard_mcp.clipboard._READERS", {"macos": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
+                result = await read_clipboard("text/plain")
+
+    assert result == ""
+    assert not list_called
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_falls_back_to_suffixed_mime():
+    """read_clipboard_image retries with suffixed MIME type on fallback."""
+    async def mock_reader(mime_type):
+        if mime_type == "image/png":
+            return b""
+        if mime_type == "image/png;charset=binary":
+            return b"\x89PNG"
+        return b""
+
+    async def mock_list():
+        return ["image/png;charset=binary"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
+        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"x11": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"x11": mock_list}):
+                result = await read_clipboard_image("image/png")
+
+    assert result == b"\x89PNG"
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_svg_with_params():
+    """clipboard_read_raw allows image/svg+xml with parameter suffix."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
+        result = await clipboard_read_raw(
+            mime_type='image/svg+xml;windows_formatname="image/svg+xml"'
+        )
+
+    assert "circle" in result
+    assert "Cannot read binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_rejects_binary_with_params():
+    """clipboard_read_raw still rejects binary MIME types that have parameter suffixes."""
+    result = await clipboard_read_raw(mime_type="image/png;charset=binary")
+
+    assert "Cannot read binary" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_image_prefers_png_with_params():
+    """clipboard_paste prefers PNG even when format has parameter suffix."""
+    fake_png = b"\x89PNG\r\n\x1a\n"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/tiff", "image/png;charset=binary"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png) as mock_img:
+                result = await clipboard_paste()
+
+    # Should use the suffixed PNG format, not fall back to tiff
+    mock_img.assert_called_once_with("image/png;charset=binary")
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_paste_text_with_suffixed_mime():
+    """clipboard_paste returns text content when clipboard has text/plain;charset=utf-8.
+
+    This is the core bug scenario: Claude Desktop puts text on the clipboard with
+    MIME type text/plain;charset=utf-8, and clipboard_paste should still read it.
+    """
+    # read_clipboard already handles fallback resolution in clipboard.py,
+    # so from server.py's perspective, the mock just returns the content.
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html="", text="Hello from Claude")):
+        result = await clipboard_paste()
+
+    assert "Hello from Claude" in result
+
+
+# ---------------------------------------------------------------------------
+# 18. _run_binary() error handling
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import _run_binary
+
+
+@pytest.mark.asyncio
+async def test_run_binary_file_not_found():
+    """_run_binary raises ClipboardError when the command is not found."""
+    with pytest.raises(ClipboardError, match="Command not found: nonexistent_cmd"):
+        await _run_binary(["nonexistent_cmd"])
+
+
+@pytest.mark.asyncio
+async def test_run_binary_timeout():
+    """_run_binary raises ClipboardError on timeout."""
+    with pytest.raises(ClipboardError, match="timed out"):
+        await _run_binary(["sleep", "10"], timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_run_binary_exit_code_1_returns_empty():
+    """_run_binary returns empty bytes for exit code 1 (format not available)."""
+    result = await _run_binary(["sh", "-c", "exit 1"])
+    assert result == b""
+
+
+@pytest.mark.asyncio
+async def test_run_binary_exit_code_2_raises():
+    """_run_binary raises ClipboardError for exit codes > 1."""
+    with pytest.raises(ClipboardError, match="rc=2"):
+        await _run_binary(["sh", "-c", "echo err >&2; exit 2"])
+
+
+@pytest.mark.asyncio
+async def test_run_binary_returns_raw_bytes():
+    """_run_binary returns raw bytes from stdout."""
+    result = await _run_binary(["printf", "\\x89PNG"])
+    assert result == b"\x89PNG"
+
+
+# ---------------------------------------------------------------------------
+# 19. _run_with_stdin() error handling
+# ---------------------------------------------------------------------------
+
+from clipboard_mcp.clipboard import _run_with_stdin
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_file_not_found():
+    """_run_with_stdin raises ClipboardError when the command is not found."""
+    with pytest.raises(ClipboardError, match="Command not found: nonexistent_cmd"):
+        await _run_with_stdin(["nonexistent_cmd"], b"data")
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_timeout():
+    """_run_with_stdin raises ClipboardError on timeout."""
+    with pytest.raises(ClipboardError, match="timed out"):
+        await _run_with_stdin(["sleep", "10"], b"data", timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_nonzero_exit_raises():
+    """_run_with_stdin raises ClipboardError on any non-zero exit code (including 1)."""
+    with pytest.raises(ClipboardError, match="Clipboard write failed"):
+        await _run_with_stdin(["sh", "-c", "exit 1"], b"data")
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_success():
+    """_run_with_stdin succeeds when command exits 0."""
+    # cat reads stdin and writes to stdout (which is DEVNULL), exits 0
+    await _run_with_stdin(["cat"], b"hello")
+
+
+# ---------------------------------------------------------------------------
+# 20. clipboard_paste() image format and error paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_field_png():
+    """clipboard_paste sets Image.format to 'png' for image/png."""
+    fake_png = b"\x89PNG\r\n\x1a\n"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/png"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "png"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_field_jpeg():
+    """clipboard_paste sets Image.format to 'jpeg' for image/jpeg."""
+    fake_jpeg = b"\xff\xd8\xff"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/jpeg"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_jpeg):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "jpeg"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_field_with_params():
+    """clipboard_paste strips MIME params before extracting format."""
+    fake_png = b"\x89PNG"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["image/png;charset=binary"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "png"
+
+
+@pytest.mark.asyncio
+async def test_paste_list_formats_error_falls_through():
+    """clipboard_paste handles ClipboardError from list_clipboard_formats gracefully."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   side_effect=ClipboardError("no clipboard")):
+            result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "empty" in result.lower() or "Clipboard" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_mixed_image_and_audio():
+    """clipboard_paste returns image when both image and audio formats are present."""
+    fake_png = b"\x89PNG"
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["audio/mpeg", "image/png"]):
+            with patch("clipboard_mcp.server.read_clipboard_image",
+                       return_value=fake_png):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_paste_video_reports_binary():
+    """clipboard_paste reports video MIME types as unsupported binary."""
+    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("clipboard_mcp.server.list_clipboard_formats",
+                   return_value=["video/mp4"]):
+            result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "video/mp4" in result
+    assert "binary data" in result
+
+
+# ---------------------------------------------------------------------------
+# 21. read_clipboard_image() fallback edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_no_fallback_on_macos():
+    """read_clipboard_image skips MIME fallback on macOS."""
+    async def mock_reader(mime_type):
+        return b""
+
+    list_called = False
+
+    async def mock_list():
+        nonlocal list_called
+        list_called = True
+        return ["image/png;charset=binary"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
+        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"macos": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
+                result = await read_clipboard_image("image/png")
+
+    assert result == b""
+    assert not list_called
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_no_fallback_on_windows():
+    """read_clipboard_image skips MIME fallback on Windows."""
+    async def mock_reader(mime_type):
+        return b""
+
+    list_called = False
+
+    async def mock_list():
+        nonlocal list_called
+        list_called = True
+        return ["image/png;charset=binary"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
+        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"windows": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"windows": mock_list}):
+                result = await read_clipboard_image("image/png")
+
+    assert result == b""
+    assert not list_called
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_fallback_no_match():
+    """read_clipboard_image returns empty bytes when fallback finds no matching base type."""
+    async def mock_reader(mime_type):
+        return b""
+
+    async def mock_list():
+        return ["image/tiff", "text/plain"]
+
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"wayland": mock_reader}):
+            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+                result = await read_clipboard_image("image/png")
+
+    assert result == b""
+
+
+# ---------------------------------------------------------------------------
+# 22. write_clipboard() dispatch to all backends
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_dispatches_to_x11():
+    """write_clipboard dispatches to x11 backend."""
+    mock_writer = AsyncMock()
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
+        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"x11": mock_writer}):
+            await write_clipboard("test")
+
+    mock_writer.assert_called_once_with("test")
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_dispatches_to_macos():
+    """write_clipboard dispatches to macos backend."""
+    mock_writer = AsyncMock()
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
+        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"macos": mock_writer}):
+            await write_clipboard("test")
+
+    mock_writer.assert_called_once_with("test")
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_dispatches_to_windows():
+    """write_clipboard dispatches to windows backend."""
+    mock_writer = AsyncMock()
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
+        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"windows": mock_writer}):
+            await write_clipboard("test")
+
+    mock_writer.assert_called_once_with("test")
+
+
+# ---------------------------------------------------------------------------
+# 23. clipboard_read_raw allowlist/rejection edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_application_xml():
+    """clipboard_read_raw allows application/xml as text-readable."""
+    xml_str = '<?xml version="1.0"?><root/>'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=xml_str):
+        result = await clipboard_read_raw(mime_type="application/xml")
+
+    assert "root" in result
+    assert "Cannot read binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_allows_application_xhtml():
+    """clipboard_read_raw allows application/xhtml+xml as text-readable."""
+    xhtml = '<html xmlns="http://www.w3.org/1999/xhtml"><body>hi</body></html>'
+    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=xhtml):
+        result = await clipboard_read_raw(mime_type="application/xhtml+xml")
+
+    assert "hi" in result
+    assert "Cannot read binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_rejects_octet_stream():
+    """clipboard_read_raw rejects application/octet-stream."""
+    result = await clipboard_read_raw(mime_type="application/octet-stream")
+
+    assert "Cannot read binary" in result
+
+
+# ---------------------------------------------------------------------------
+# 24. clipboard_copy() edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_empty_string():
+    """clipboard_copy handles empty string input."""
+    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock):
+        result = await clipboard_copy("")
+
+    assert "0 characters" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_unicode():
+    """clipboard_copy handles unicode content correctly."""
+    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy("Hello \U0001f30d \u4f60\u597d")
+
+    mock.assert_called_once_with("Hello \U0001f30d \u4f60\u597d")
+    assert "characters" in result
+
+
+# ---------------------------------------------------------------------------
+# 25. Misc medium-priority tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_windows_read_image_empty():
+    """_windows_read_image returns empty bytes when no image on clipboard."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=""):
+        result = await _windows_read_image("image/png")
+
+    assert result == b""
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_passes_env():
+    """_wayland_write passes env from _wayland_env() to _run_with_stdin."""
+    fake_env = {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"}
+    with patch("clipboard_mcp.clipboard._wayland_env", return_value=fake_env):
+        with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+            await _wayland_write("hello")
+
+    assert mock.call_args.kwargs["env"] == fake_env
+
+
+@pytest.mark.asyncio
+async def test_macos_read_image_jpeg_uti():
+    """_macos_read_image maps image/jpeg to public.jpeg UTI."""
+    import base64
+    fake_data = b"\xff\xd8\xff"
+    b64_text = base64.b64encode(fake_data).decode()
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
+        result = await _macos_read_image("image/jpeg")
+
+    assert result == fake_data
+    # Verify the osascript uses the correct UTI
+    script = mock_run.call_args[0][0][-1]
+    assert "public.jpeg" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_read_image_unknown_mime_passthrough():
+    """_macos_read_image passes unknown MIME type as-is when no UTI mapping exists."""
+    import base64
+    fake_data = b"WEBP_DATA"
+    b64_text = base64.b64encode(fake_data).decode()
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
+        result = await _macos_read_image("image/webp")
+
+    assert result == fake_data
+    script = mock_run.call_args[0][0][-1]
+    # Should use the MIME type itself since no UTI mapping exists
+    assert "image/webp" in script
+
+
+def test_load_instruction_clipboard_copy():
+    """_load_instruction loads the clipboard_copy instruction file."""
+    result = _load_instruction("clipboard_copy")
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+@pytest.mark.asyncio
+async def test_detect_backend_x11_fallback():
+    """_detect_backend falls back to x11 when wl-paste is unavailable on Linux."""
+    def mock_which(cmd):
+        if cmd == "xclip":
+            return "/usr/bin/xclip"
+        return None  # wl-paste not found
+
+    with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
+        with patch("clipboard_mcp.clipboard.shutil.which", side_effect=mock_which):
+            with patch.dict("os.environ", {}, clear=True):
+                import clipboard_mcp.clipboard as cb
+                cb._backend = None
+                result = _detect_backend()
+
+    assert result == "x11"
