@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-clipboard-mcp is an MCP (Model Context Protocol) server that reads content from the system clipboard — tables, plain text, code, JSON, URLs, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Binary content (images, audio, video) is detected and reported but not returned.
+clipboard-mcp is an MCP (Model Context Protocol) server that reads and writes the system clipboard — tables, plain text, code, JSON, URLs, images, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Images on the clipboard are returned as viewable content; audio and video are detected and reported but not returned.
 
 ## Commands
 
