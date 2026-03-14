@@ -67,3 +67,8 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - `pyproject.toml` `artifacts` setting ensures instruction `.md` files are included in the wheel
 - PyPI package name is `clipboard-mcp-server` (the command and import name remain `clipboard-mcp` / `clipboard_mcp`)
 - Linux with Wayland and X11 is tested; macOS and Windows implementations are complete but untested on real hardware
+
+## Packaging Feature Branches
+
+- **`feature/homebrew-tap`** (local only) — Homebrew formula, update script, and CI template for a `cmeans/homebrew-clipboard-mcp` tap. Formula resource stanzas need populating via `brew update-python-resources` on macOS before the tap can be published. Has 36 transitive dependencies from `mcp[cli]`.
+- **`feature/aur-package`** (pushed to origin) — PKGBUILD for Arch Linux AUR. Ready to test in an Arch VM or Docker container. Note: depends on `python-mcp` which may need its own AUR package first. Test with `makepkg -si` in a VM or Docker build validation per `packaging/aur/README.md`.
