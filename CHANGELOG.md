@@ -28,6 +28,12 @@ All notable changes to this project will be documented here.
 - Removed `"use "` from code-detection patterns in `parser.py` to avoid false
   positives on ordinary English text
 
+### Known limitations
+- `clipboard_paste` has no return type annotation (`-> str | Image`) because
+  FastMCP passes the annotation through Pydantic's `create_model()`, which cannot
+  generate a schema for `Image`. The omission is intentional; see the comment in
+  `server.py` for details.
+
 ### Metadata
 - PyPI classifier updated from "Development Status :: 3 - Alpha" to
   "Development Status :: 5 - Production/Stable"

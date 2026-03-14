@@ -163,6 +163,12 @@ def _format_non_tabular(text: str) -> str:
 async def clipboard_paste(
     output_format: str = "markdown",
 ):
+    # NOTE: No return type annotation here by design.  The true type is
+    # `str | Image`, but annotating it that way causes FastMCP to call
+    # Pydantic's `create_model()` on the union, which fails because
+    # `mcp.server.fastmcp.utilities.types.Image` has no Pydantic schema.
+    # When/if FastMCP adds native Image support in its output schema path,
+    # add `-> str | Image` and remove this comment.
     output_format = output_format.strip().lower()
     if output_format not in _VALID_FORMATS:
         return (
