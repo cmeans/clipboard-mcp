@@ -4,6 +4,7 @@ from clipboard_mcp.parser import (
     detect_content_type,
     extract_html_text,
     format_table,
+    infer_column_types,
     parse_html_table,
     parse_tsv,
 )
@@ -268,3 +269,118 @@ def test_detect_plain_text():
 def test_detect_empty():
     assert detect_content_type("") == "text"
     assert detect_content_type("   ") == "text"
+
+
+# ---------------------------------------------------------------------------
+# Schema inference
+# ---------------------------------------------------------------------------
+
+
+def test_infer_integer_column():
+    rows = [["Count"], ["1"], ["42"], ["1,000"], ["99"]]
+    assert infer_column_types(rows) == ["integer"]
+
+
+def test_infer_float_column():
+    rows = [["Score"], ["3.14"], ["2.71"], ["0.5"]]
+    assert infer_column_types(rows) == ["float"]
+
+
+def test_infer_currency_column():
+    rows = [["Price"], ["$1.99"], ["$10.00"], ["$1,234.56"]]
+    assert infer_column_types(rows) == ["currency"]
+
+
+def test_infer_currency_other_symbols():
+    rows = [["Amount"], ["£9.99"], ["€100"], ["¥1,000"]]
+    assert infer_column_types(rows) == ["currency"]
+
+
+def test_infer_percentage_column():
+    rows = [["Rate"], ["10%"], ["3.5%"], ["100%"]]
+    assert infer_column_types(rows) == ["percentage"]
+
+
+def test_infer_date_iso():
+    rows = [["Date"], ["2024-01-15"], ["2024-06-30"], ["2023-12-01"]]
+    assert infer_column_types(rows) == ["date"]
+
+
+def test_infer_date_us_format():
+    rows = [["Date"], ["01/15/2024"], ["06/30/2024"], ["12/01/2023"]]
+    assert infer_column_types(rows) == ["date"]
+
+
+def test_infer_date_long_format():
+    rows = [["Date"], ["January 15, 2024"], ["June 30, 2024"]]
+    assert infer_column_types(rows) == ["date"]
+
+
+def test_infer_boolean_column():
+    rows = [["Active"], ["true"], ["false"], ["true"]]
+    assert infer_column_types(rows) == ["boolean"]
+
+
+def test_infer_boolean_yes_no():
+    rows = [["Enabled"], ["yes"], ["no"], ["yes"]]
+    assert infer_column_types(rows) == ["boolean"]
+
+
+def test_infer_text_column():
+    rows = [["Name"], ["Alice"], ["Bob"], ["Carol"]]
+    assert infer_column_types(rows) == ["text"]
+
+
+def test_infer_multiple_columns():
+    rows = [
+        ["Name", "Age", "Salary", "Active", "Score", "Join Date"],
+        ["Alice", "30", "$75,000", "true", "9.5", "2020-01-15"],
+        ["Bob", "25", "$60,000", "false", "8.2", "2021-06-30"],
+        ["Carol", "35", "$90,000", "true", "9.8", "2019-03-10"],
+    ]
+    types = infer_column_types(rows)
+    assert types == ["text", "integer", "currency", "boolean", "float", "date"]
+
+
+def test_infer_empty_cells_skipped():
+    """Empty cells should not affect type inference."""
+    rows = [["Val"], ["42"], [""], ["17"], [""]]
+    assert infer_column_types(rows) == ["integer"]
+
+
+def test_infer_header_excluded():
+    """Header row must not influence type inference."""
+    # Header looks like text, data is all integers — should infer integer
+    rows = [["Count of Items"], ["10"], ["20"], ["30"]]
+    assert infer_column_types(rows) == ["integer"]
+
+
+def test_infer_no_data_rows():
+    """Header-only table returns empty list."""
+    rows = [["Name", "Age"]]
+    assert infer_column_types(rows) == []
+
+
+def test_infer_empty_rows():
+    assert infer_column_types([]) == []
+
+
+def test_infer_majority_wins():
+    """Mixed column where one type wins majority."""
+    rows = [["Val"], ["42"], ["99"], ["hello"], ["17"]]
+    # 3 integers, 1 text → integer wins
+    assert infer_column_types(rows) == ["integer"]
+
+
+def test_infer_no_majority_falls_back_to_text():
+    """No type wins majority → text."""
+    rows = [["Val"], ["42"], ["hello"], ["3.14"], ["world"]]
+    # 1 integer, 1 text, 1 float, 1 text → text has 2, float and integer have 1 each
+    # text wins majority (2/4 = 50%, not strictly > 50%) → falls back to text
+    assert infer_column_types(rows) == ["text"]
+
+
+def test_infer_all_empty_column():
+    """A column with all empty cells returns text."""
+    rows = [["A", "B"], ["1", ""], ["2", ""], ["3", ""]]
+    assert infer_column_types(rows) == ["integer", "text"]
