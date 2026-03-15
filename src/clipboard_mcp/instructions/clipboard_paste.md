@@ -41,3 +41,10 @@ Args:
 Returns:
     The clipboard content, formatted appropriately for the content type.
     Images are returned as image content (base64-encoded) for visual analysis.
+
+IMPORTANT — when output_format is slack, jira, confluence, html, or notion:
+The tool has already produced the exact syntax required by the target
+application. Present the returned content to the user WITHOUT modification,
+reformatting, or substituting your own table syntax. Do not add pipes, headers,
+or alternative representations. Simply show the result and tell the user it is
+ready to paste into the target destination.
