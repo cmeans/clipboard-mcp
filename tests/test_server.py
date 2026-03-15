@@ -657,8 +657,21 @@ async def test_macos_read_plain():
 @pytest.mark.asyncio
 async def test_macos_read_unsupported_returns_empty():
     """_macos_read returns empty string for unsupported MIME types."""
-    result = await _macos_read("text/rtf")
+    result = await _macos_read("text/xml")
     assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_macos_read_rtf():
+    """_macos_read uses osascript for text/rtf."""
+    rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
+        result = await _macos_read("text/rtf")
+
+    assert result == rtf_content
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "osascript"
+    assert "public.rtf" in mock_run.call_args[0][0][-1]
 
 
 @pytest.mark.asyncio
@@ -712,8 +725,21 @@ async def test_windows_read_plain():
 @pytest.mark.asyncio
 async def test_windows_read_unsupported_returns_empty():
     """_windows_read returns empty string for unsupported MIME types."""
-    result = await _windows_read("text/rtf")
+    result = await _windows_read("text/xml")
     assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_windows_read_rtf():
+    """_windows_read uses PowerShell RTF clipboard for text/rtf."""
+    rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
+        result = await _windows_read("text/rtf")
+
+    assert result == rtf_content
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "powershell"
+    assert "Rtf" in cmd[-1]
 
 
 @pytest.mark.asyncio
@@ -1486,6 +1512,74 @@ async def test_paste_video_reports_binary():
     assert isinstance(result, str)
     assert "video/mp4" in result
     assert "binary data" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_rtf_fallback():
+    """clipboard_paste returns RTF content when HTML and plain text are empty."""
+    rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
+
+    async def mock_read(mime_type="text/plain"):
+        if mime_type == "text/rtf":
+            return rtf_content
+        return ""
+
+    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=["text/rtf"]):
+            result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "rich text (RTF)" in result
+    assert rtf_content in result
+
+
+@pytest.mark.asyncio
+async def test_paste_rtf_truncated():
+    """clipboard_paste truncates oversized RTF at 50KB."""
+    rtf_content = r"{\rtf1\ansi " + ("x" * 60_000) + "}"
+
+    async def mock_read(mime_type="text/plain"):
+        if mime_type == "text/rtf":
+            return rtf_content
+        return ""
+
+    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=["text/rtf"]):
+            result = await clipboard_paste()
+
+    assert "truncated" in result
+    assert "rich text (RTF)" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_rtf_skipped_when_text_present():
+    """clipboard_paste does not attempt RTF read when plain text is available."""
+    async def mock_read(mime_type="text/plain"):
+        if mime_type == "text/plain":
+            return "hello world"
+        if mime_type == "text/rtf":
+            raise AssertionError("RTF should not be read when plain text is present")
+        return ""
+
+    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
+        result = await clipboard_paste()
+
+    assert "hello world" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_rtf_error_falls_through():
+    """clipboard_paste falls through to binary check when RTF read raises ClipboardError."""
+    async def mock_read(mime_type="text/plain"):
+        if mime_type == "text/rtf":
+            raise ClipboardError("rtf not available")
+        return ""
+
+    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
+        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+            result = await clipboard_paste()
+
+    assert "empty" in result.lower()
 
 
 # ---------------------------------------------------------------------------
