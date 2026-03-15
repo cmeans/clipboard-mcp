@@ -271,6 +271,18 @@ async def _macos_read(mime_type: str) -> str:
     if mime_type == "text/plain":
         return await _run(["pbpaste"], allow_empty_exit=False)
 
+    if mime_type == "text/rtf":
+        script = (
+            'use framework "AppKit"\n'
+            "set pb to current application's NSPasteboard's generalPasteboard()\n"
+            'set rtfData to pb\'s dataForType:"public.rtf"\n'
+            'if rtfData is missing value then return ""\n'
+            "set rtfString to (current application's NSString's alloc()'s "
+            "initWithData:rtfData encoding:(current application's NSUTF8StringEncoding))\n"
+            "return rtfString as text"
+        )
+        return await _run(["osascript", "-e", script], allow_empty_exit=False)
+
     # Unsupported MIME type — signal "not available" rather than returning wrong content
     return ""
 
@@ -323,6 +335,20 @@ async def _windows_read(mime_type: str) -> str:
             "-NoProfile",
             "-Command",
             "Get-Clipboard",
+        ], allow_empty_exit=False)
+
+    if mime_type == "text/rtf":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$data = [System.Windows.Forms.Clipboard]::GetData("
+            "[System.Windows.Forms.DataFormats]::Rtf); "
+            "if ($data -eq $null) { return }; $data"
+        )
+        return await _run([
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            script,
         ], allow_empty_exit=False)
 
     # Unsupported MIME type — signal "not available" rather than returning wrong content

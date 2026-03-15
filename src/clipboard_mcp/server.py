@@ -194,6 +194,20 @@ async def clipboard_paste(
     if not content:
         content = text
 
+    # Strategy 3: RTF fallback — try text/rtf when HTML and plain text are empty
+    if not content.strip():
+        try:
+            rtf = await read_clipboard("text/rtf")
+            if rtf.strip():
+                truncated = len(rtf) > _MAX_CONTENT_LEN
+                display = rtf[:_MAX_CONTENT_LEN]
+                result = f"Clipboard contains rich text (RTF):\n\n```\n{display}\n```"
+                if truncated:
+                    result += "\n\n... [truncated at 50KB]"
+                return result
+        except ClipboardError as e:
+            logger.debug("RTF clipboard read failed: %s", e)
+
     # If no text content at all, check whether the clipboard holds binary data
     if not content.strip():
         try:

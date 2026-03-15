@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented here.
 
+## [1.1.0] - 2026-03-15
+
+### Added
+- RTF clipboard read support (`text/rtf`) on macOS (via `osascript`/NSPasteboard) and Windows (via PowerShell/`DataFormats::Rtf`)
+- `clipboard_paste` Strategy 3: when HTML and plain text are both empty, attempts `text/rtf` as a fallback before checking for binary formats; RTF content is returned in a fenced code block labelled "rich text (RTF)", truncated at 50KB
+- Wayland and X11 backends already supported `text/rtf` via pass-through MIME to `wl-paste`/`xclip`
+
 ## [1.0.1] - 2026-03-14
 
 ### Fixed
