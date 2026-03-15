@@ -29,6 +29,7 @@ from .parser import (
     detect_content_type,
     extract_html_text,
     format_table,
+    infer_column_types,
     parse_html_table,
     parse_tsv,
 )
@@ -162,6 +163,7 @@ def _format_non_tabular(text: str) -> str:
 )
 async def clipboard_paste(
     output_format: str = "markdown",
+    include_schema: bool = False,
 ):
     # NOTE: No return type annotation here by design.  The true type is
     # `str | Image`, but annotating it that way causes FastMCP to call
@@ -176,7 +178,11 @@ async def clipboard_paste(
             f"Valid options: markdown, json, csv"
         )
 
-    logger.debug("clipboard_paste called: output_format=%r", output_format)
+    logger.debug(
+        "clipboard_paste called: output_format=%r include_schema=%r",
+        output_format,
+        include_schema,
+    )
 
     rows, html, text = await _read_clipboard_content()
 
@@ -185,7 +191,22 @@ async def clipboard_paste(
         row_count = len(rows)
         col_count = max(len(r) for r in rows) if rows else 0
         formatted = format_table(rows, output_format)
-        return f"Found table: {row_count} rows × {col_count} columns\n\n{formatted}"
+        result = f"Found table: {row_count} rows × {col_count} columns\n\n{formatted}"
+
+        if include_schema:
+            types = infer_column_types(rows)
+            if types:
+                headers = list(rows[0]) if rows else []
+                # Pad headers if table is wider than the header row
+                while len(headers) < len(types):
+                    headers.append(f"Col {len(headers) + 1}")
+                schema_rows = [["Column", "Type"]] + [
+                    [h, t] for h, t in zip(headers, types)
+                ]
+                schema_table = format_table(schema_rows, "markdown")
+                result += f"\n\n**Column types:**\n\n{schema_table}"
+
+        return result
 
     # Non-tabular: prefer extracted HTML text if HTML was available
     content = ""

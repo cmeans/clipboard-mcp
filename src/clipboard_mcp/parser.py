@@ -10,6 +10,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
+from datetime import datetime
 from html.parser import HTMLParser
 from typing import Literal
 
@@ -188,6 +190,118 @@ def detect_content_type(text: str) -> ContentType:
         return "code"
 
     return "text"
+
+
+# ---------------------------------------------------------------------------
+# Table schema inference
+# ---------------------------------------------------------------------------
+
+ColumnType = Literal["integer", "float", "currency", "percentage", "date", "boolean", "text"]
+
+_BOOLEAN_VALUES = frozenset({"true", "false", "yes", "no"})
+_INTEGER_RE = re.compile(r"^[+-]?(\d{1,3}(,\d{3})*|\d+)$")
+_FLOAT_RE = re.compile(r"^[+-]?\d*\.\d+$|^[+-]?\d+\.\d+$")
+_CURRENCY_RE = re.compile(
+    r"^[£$€¥]\s*-?\d{1,3}(,\d{3})*(\.\d{1,2})?$"
+    r"|^-?\d{1,3}(,\d{3})*(\.\d{1,2})?\s*[£$€¥]$"
+)
+_PERCENTAGE_RE = re.compile(r"^-?\d+(\.\d+)?%$")
+
+_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%m/%d/%Y",
+    "%d/%m/%Y",
+    "%m/%d/%y",
+    "%d/%m/%y",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+)
+
+
+def _classify_cell(value: str) -> ColumnType:
+    """Classify a single non-empty cell value as the most specific type."""
+    v = value.strip()
+
+    if v.lower() in _BOOLEAN_VALUES:
+        return "boolean"
+
+    # Percentage before float/integer (ends with %)
+    if _PERCENTAGE_RE.match(v):
+        return "percentage"
+
+    # Currency before integer/float (starts/ends with symbol)
+    if _CURRENCY_RE.match(v):
+        return "currency"
+
+    # Integer before float (no decimal point)
+    if _INTEGER_RE.match(v):
+        return "integer"
+
+    if _FLOAT_RE.match(v):
+        return "float"
+
+    # Date: ISO format first, then common regional formats
+    try:
+        datetime.fromisoformat(v)
+        return "date"
+    except ValueError:
+        pass
+
+    for fmt in _DATE_FORMATS:
+        try:
+            datetime.strptime(v, fmt)
+            return "date"
+        except ValueError:
+            continue
+
+    return "text"
+
+
+def infer_column_types(rows: list[list[str]]) -> list[ColumnType]:
+    """Infer the data type of each column from a table.
+
+    The first row is treated as a header and excluded from inference.
+    Empty cells are skipped. Majority-wins: if more than half of the
+    non-empty cells in a column match a specific type, that type is
+    used; otherwise the column is typed as ``text``.
+
+    Returns one :data:`ColumnType` per column (based on the widest row),
+    or an empty list when there are fewer than 2 rows (no data to infer from).
+    """
+    if len(rows) < 2:
+        return []
+
+    data_rows = rows[1:]
+    num_cols = max(len(row) for row in rows)
+
+    result: list[ColumnType] = []
+    for col_idx in range(num_cols):
+        type_counts: dict[str, int] = {}
+        non_empty = 0
+
+        for row in data_rows:
+            if col_idx >= len(row):
+                continue
+            cell = row[col_idx].strip()
+            if not cell:
+                continue
+            non_empty += 1
+            col_type = _classify_cell(cell)
+            type_counts[col_type] = type_counts.get(col_type, 0) + 1
+
+        if not non_empty:
+            result.append("text")
+            continue
+
+        best_type = max(type_counts, key=lambda t: type_counts[t])
+        if type_counts[best_type] > non_empty / 2:
+            result.append(best_type)  # type: ignore[arg-type]
+        else:
+            result.append("text")
+
+    return result
 
 
 # ---------------------------------------------------------------------------

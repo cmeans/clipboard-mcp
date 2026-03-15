@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## [1.2.0] - 2026-03-15
+
+### Added
+- Table schema inference: new `infer_column_types(rows)` in `parser.py` infers a data type per column (integer, float, currency, percentage, date, boolean, text); majority-wins per column; empty cells skipped; header excluded
+- `clipboard_paste` gains `include_schema: bool = False` parameter — when `True` and the clipboard contains a table, a **Column types** table is appended after the data
+- Date detection supports ISO 8601 (`datetime.fromisoformat`) plus common regional formats (`MM/DD/YYYY`, `DD/MM/YYYY`, `Month DD, YYYY`, etc.)
+- Currency detection handles `$`, `£`, `€`, `¥` prefix and suffix forms with optional thousands separators
+
 ## [1.1.0] - 2026-03-15
 
 ### Added

@@ -25,7 +25,7 @@ can copy results back for you to paste elsewhere.
 
 | Tool | Description |
 |------|-------------|
-| `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; images are returned as image content; other content is returned with smart formatting. |
+| `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types (integer, float, currency, percentage, date, boolean, text). Images are returned as image content; other content is returned with smart formatting. |
 | `clipboard_copy` | Write text to the system clipboard |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type — supports text formats plus `image/svg+xml`, `application/json`, `application/xml`, `application/xhtml+xml` (diagnostic) |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard |
@@ -230,6 +230,7 @@ a Claude Desktop project), you can reinforce the behavior:
 | **JSON** | Pretty-printed in a JSON code block |
 | **Code** | Returned in a fenced code block |
 | **URL** | Returned cleanly as a URL |
+| **Rich text / RTF** | Returned as raw RTF markup in a code block |
 | **Rich HTML** (no table) | HTML tags stripped, readable text returned |
 | **Plain text** | Returned as-is |
 | **Images** (PNG, etc.) | Returned as image content — Claude can see and analyze the image |
@@ -243,6 +244,14 @@ When the clipboard contains tabular data, `output_format` controls the format:
 - **Markdown** (default) — renders as a table in the conversation
 - **JSON** — array of objects keyed by the header row (single-column: flat array)
 - **CSV** — comma-separated values
+
+### Table schema inference
+
+Add `include_schema=true` to get a column-type summary alongside the table:
+
+> "Read my clipboard with schema"
+
+Inferred types: **integer**, **float**, **currency**, **percentage**, **date**, **boolean**, **text**. Uses majority-wins per column — if no type accounts for more than half the non-empty cells, the column is typed as `text`. Empty cells are skipped; the header row is excluded from inference.
 
 ## Development
 

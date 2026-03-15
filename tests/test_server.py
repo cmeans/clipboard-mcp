@@ -126,6 +126,42 @@ async def test_paste_format_invalid():
     assert "Unknown output_format" in result
 
 
+@pytest.mark.asyncio
+async def test_paste_with_schema():
+    """clipboard_paste appends column-type schema when include_schema=True."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="markdown", include_schema=True)
+
+    assert "3 rows × 3 columns" in result
+    assert "Column types" in result
+    assert "| Name" in result
+    assert "| Age" in result
+    # Age column should be integer
+    assert "integer" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_without_schema_default():
+    """clipboard_paste does not include schema by default."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="markdown")
+
+    assert "Column types" not in result
+
+
+@pytest.mark.asyncio
+async def test_paste_schema_not_appended_for_non_table():
+    """include_schema is ignored when clipboard has no table."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html="", text="hello world")):
+        result = await clipboard_paste(output_format="markdown", include_schema=True)
+
+    assert "Column types" not in result
+    assert "hello world" in result
+
+
 # ---------------------------------------------------------------------------
 # 2. clipboard_paste: TSV fallback
 # ---------------------------------------------------------------------------

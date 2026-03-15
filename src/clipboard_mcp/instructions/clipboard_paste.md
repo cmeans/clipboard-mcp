@@ -29,6 +29,9 @@ Args:
         - "markdown" (default): GitHub-flavored Markdown table
         - "json": Array of objects keyed by header row
         - "csv": Comma-separated values
+    include_schema: When True and the clipboard contains a table, append a
+        column-type schema table after the data. Inferred types: integer, float,
+        currency, percentage, date, boolean, text. Defaults to False.
 
 Returns:
     The clipboard content, formatted appropriately for the content type.
