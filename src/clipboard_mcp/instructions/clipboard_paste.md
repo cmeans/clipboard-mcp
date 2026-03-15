@@ -29,6 +29,11 @@ Args:
         - "markdown" (default): GitHub-flavored Markdown table
         - "json": Array of objects keyed by header row
         - "csv": Comma-separated values
+        - "slack": *bold* header + space-aligned data in a monospace code block
+        - "jira": ||Header|| / |Cell| wiki markup (also works for Confluence)
+        - "confluence": same as jira
+        - "html": <table> with <thead>/<th>/<tbody>/<td>
+        - "notion": GFM pipe table (Notion renders these natively)
     include_schema: When True and the clipboard contains a table, append a
         column-type schema table after the data. Inferred types: integer, float,
         currency, percentage, date, boolean, text. Defaults to False.

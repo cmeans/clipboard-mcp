@@ -73,7 +73,7 @@ mcp = FastMCP(
 )
 
 
-_VALID_FORMATS = {"markdown", "json", "csv"}
+_VALID_FORMATS = {"markdown", "json", "csv", "slack", "jira", "confluence", "html", "notion"}
 _MAX_CONTENT_LEN = 50_000
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
 _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
@@ -175,7 +175,7 @@ async def clipboard_paste(
     if output_format not in _VALID_FORMATS:
         return (
             f"Unknown output_format: {output_format!r}. "
-            f"Valid options: markdown, json, csv"
+            f"Valid options: markdown, json, csv, slack, jira, confluence, html, notion"
         )
 
     logger.debug(

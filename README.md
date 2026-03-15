@@ -245,6 +245,26 @@ When the clipboard contains tabular data, `output_format` controls the format:
 - **JSON** — array of objects keyed by the header row (single-column: flat array)
 - **CSV** — comma-separated values
 
+### Destination-aware output formats
+
+Use `output_format` to target specific tools:
+
+| Format | Destination | What you get |
+|--------|-------------|--------------|
+| `markdown` | Claude, GitHub, most tools | GFM pipe table (default) |
+| `notion` | Notion | GFM pipe table (Notion renders these natively) |
+| `slack` | Slack | `*bold*` header + space-aligned data in a monospace code block |
+| `jira` | Jira | `\|\|Header\|\|` / `\|Cell\|` wiki markup |
+| `confluence` | Confluence | same as `jira` (shared wiki syntax) |
+| `html` | Email, web, rich-text editors | `<table>` with `<thead>`/`<th>`/`<tbody>`/`<td>` |
+| `json` | APIs, code | Array of objects keyed by header row |
+| `csv` | Excel, data tools | Comma-separated values |
+
+**Examples:**
+- "Read my clipboard as Slack" → `output_format=slack`
+- "Convert my clipboard to Jira table" → `output_format=jira`
+- "Give me that as HTML" → `output_format=html`
+
 ### Table schema inference
 
 Add `include_schema=true` to get a column-type summary alongside the table:

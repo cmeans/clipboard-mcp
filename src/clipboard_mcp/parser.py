@@ -308,7 +308,7 @@ def infer_column_types(rows: list[list[str]]) -> list[ColumnType]:
 # Formatting
 # ---------------------------------------------------------------------------
 
-OutputFormat = Literal["markdown", "json", "csv"]
+OutputFormat = Literal["markdown", "json", "csv", "slack", "jira", "confluence", "html", "notion"]
 
 
 def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
@@ -339,6 +339,18 @@ def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
         writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
         writer.writerows(rows)
         return buf.getvalue()
+
+    elif fmt == "slack":
+        return _format_slack(rows)
+
+    elif fmt in ("jira", "confluence"):
+        return _format_jira(rows)
+
+    elif fmt == "html":
+        return _format_html(rows)
+
+    elif fmt == "notion":
+        return _format_markdown(rows)  # Notion renders standard GFM pipe tables natively
 
     else:  # markdown
         return _format_markdown(rows)
@@ -378,5 +390,66 @@ def _format_markdown(rows: list[list[str]]) -> str:
             row[c].ljust(widths[c]) for c in range(max_cols)
         ) + " |"
         lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _format_slack(rows: list[list[str]]) -> str:
+    """Render rows for Slack: *bold* header followed by space-aligned data in a code block."""
+    if not rows:
+        return ""
+
+    max_cols = max(len(row) for row in rows)
+    normalized = [row + [""] * (max_cols - len(row)) for row in rows]
+
+    widths = [
+        max(len(normalized[r][c]) for r in range(len(normalized)))
+        for c in range(max_cols)
+    ]
+    widths = [max(w, 1) for w in widths]
+
+    # Header: *bold* cells (outside the code block so Slack renders the markup)
+    header = "  ".join(f"*{normalized[0][c]}*" for c in range(max_cols))
+
+    # Data rows: space-aligned inside a monospace code block
+    data_lines = [
+        "  ".join(row[c].ljust(widths[c]) for c in range(max_cols)).rstrip()
+        for row in normalized[1:]
+    ]
+
+    return f"{header}\n```\n" + "\n".join(data_lines) + "\n```"
+
+
+def _format_jira(rows: list[list[str]]) -> str:
+    """Render rows as Jira/Confluence wiki markup: ||Header|| / |Cell| syntax."""
+    if not rows:
+        return ""
+
+    max_cols = max(len(row) for row in rows)
+    normalized = [row + [""] * (max_cols - len(row)) for row in rows]
+
+    lines = ["||" + "||".join(normalized[0]) + "||"]
+    for row in normalized[1:]:
+        lines.append("|" + "|".join(row) + "|")
+
+    return "\n".join(lines)
+
+
+def _format_html(rows: list[list[str]]) -> str:
+    """Render rows as an HTML table with thead/tbody."""
+    if not rows:
+        return ""
+
+    max_cols = max(len(row) for row in rows)
+    normalized = [row + [""] * (max_cols - len(row)) for row in rows]
+
+    lines = ["<table>", "  <thead>"]
+    lines.append("    <tr>" + "".join(f"<th>{cell}</th>" for cell in normalized[0]) + "</tr>")
+    lines.append("  </thead>")
+    lines.append("  <tbody>")
+    for row in normalized[1:]:
+        lines.append("    <tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
+    lines.append("  </tbody>")
+    lines.append("</table>")
 
     return "\n".join(lines)
