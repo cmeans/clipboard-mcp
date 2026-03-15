@@ -13,6 +13,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import get_args
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
@@ -26,6 +27,7 @@ from .clipboard import (
     write_clipboard,
 )
 from .parser import (
+    OutputFormat,
     detect_content_type,
     extract_html_text,
     format_table,
@@ -73,7 +75,7 @@ mcp = FastMCP(
 )
 
 
-_VALID_FORMATS = {"markdown", "json", "csv"}
+_VALID_FORMATS = set(get_args(OutputFormat))
 _MAX_CONTENT_LEN = 50_000
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
 _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
@@ -175,7 +177,7 @@ async def clipboard_paste(
     if output_format not in _VALID_FORMATS:
         return (
             f"Unknown output_format: {output_format!r}. "
-            f"Valid options: markdown, json, csv"
+            f"Valid options: {', '.join(sorted(_VALID_FORMATS))}"
         )
 
     logger.debug(

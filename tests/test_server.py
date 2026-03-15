@@ -162,6 +162,76 @@ async def test_paste_schema_not_appended_for_non_table():
     assert "hello world" in result
 
 
+@pytest.mark.asyncio
+async def test_paste_slack_format():
+    """clipboard_paste returns Slack-formatted table."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="slack")
+
+    assert result.startswith("Found table:")
+    assert "```" in result
+    assert "|" not in result  # no pipe characters anywhere
+    assert "Name" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_jira_format():
+    """clipboard_paste returns Jira wiki markup."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="jira")
+
+    assert "||Name||" in result
+    assert "|Alice|" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_confluence_format():
+    """clipboard_paste returns Confluence wiki markup (same as Jira)."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result_jira = await clipboard_paste(output_format="jira")
+        result_confluence = await clipboard_paste(output_format="confluence")
+
+    # Strip the "Found table: N rows × N columns" prefix — it's identical
+    assert result_jira == result_confluence
+
+
+@pytest.mark.asyncio
+async def test_paste_html_format():
+    """clipboard_paste returns HTML table markup."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="html")
+
+    assert "<table>" in result
+    assert "<th>Name</th>" in result
+    assert "<td>Alice</td>" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_notion_format():
+    """clipboard_paste returns GFM pipe table for Notion."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result_notion = await clipboard_paste(output_format="notion")
+        result_markdown = await clipboard_paste(output_format="markdown")
+
+    assert result_notion == result_markdown
+
+
+@pytest.mark.asyncio
+async def test_paste_format_invalid_unknown():
+    """clipboard_paste rejects formats not in the valid set."""
+    with patch("clipboard_mcp.server.read_clipboard",
+               side_effect=_mock_read(html=SAMPLE_HTML)):
+        result = await clipboard_paste(output_format="xml")
+
+    assert "Unknown output_format" in result
+    assert "slack" in result  # error message lists valid options
+
+
 # ---------------------------------------------------------------------------
 # 2. clipboard_paste: TSV fallback
 # ---------------------------------------------------------------------------

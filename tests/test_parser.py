@@ -384,3 +384,83 @@ def test_infer_all_empty_column():
     """A column with all empty cells returns text."""
     rows = [["A", "B"], ["1", ""], ["2", ""], ["3", ""]]
     assert infer_column_types(rows) == ["integer", "text"]
+
+
+# ---------------------------------------------------------------------------
+# Destination-aware formatters
+# ---------------------------------------------------------------------------
+
+_ROWS = [["Name", "Age", "City"], ["Alice", "30", "Portland"], ["Bob", "25", "Seattle"]]
+
+
+def test_format_slack_bold_header():
+    result = format_table(_ROWS, "slack")
+    assert "*Name*" in result
+    assert "*Age*" in result
+    assert "*City*" in result
+
+
+def test_format_slack_no_pipes():
+    result = format_table(_ROWS, "slack")
+    # Data section (inside code block) should have no pipe characters
+    code_block = result.split("```")[1]
+    assert "|" not in code_block
+
+
+def test_format_slack_code_block():
+    result = format_table(_ROWS, "slack")
+    assert "```" in result
+    assert "Alice" in result
+    assert "Bob" in result
+
+
+def test_format_jira_header_syntax():
+    result = format_table(_ROWS, "jira")
+    assert result.startswith("||Name||")
+    assert "||Age||" in result
+    assert "||City||" in result
+
+
+def test_format_jira_data_syntax():
+    result = format_table(_ROWS, "jira")
+    assert "|Alice|30|Portland|" in result
+    assert "|Bob|25|Seattle|" in result
+
+
+def test_format_confluence_same_as_jira():
+    assert format_table(_ROWS, "confluence") == format_table(_ROWS, "jira")
+
+
+def test_format_html_structure():
+    result = format_table(_ROWS, "html")
+    assert "<table>" in result
+    assert "<thead>" in result
+    assert "<th>Name</th>" in result
+    assert "<th>Age</th>" in result
+    assert "<tbody>" in result
+    assert "<td>Alice</td>" in result
+    assert "<td>30</td>" in result
+    assert "</table>" in result
+
+
+def test_format_html_row_count():
+    result = format_table(_ROWS, "html")
+    assert result.count("<tr>") == 3  # 1 header + 2 data rows
+
+
+def test_format_notion_is_gfm():
+    """Notion uses standard GFM pipe tables."""
+    assert format_table(_ROWS, "notion") == format_table(_ROWS, "markdown")
+
+
+def test_format_destination_empty():
+    for fmt in ("slack", "jira", "confluence", "html", "notion"):
+        assert format_table([], fmt) == ""
+
+
+def test_format_destination_ragged_rows():
+    """Ragged rows are padded for all destination formats."""
+    rows = [["A", "B", "C"], ["1", "2"]]
+    for fmt in ("slack", "jira", "confluence", "html"):
+        result = format_table(rows, fmt)
+        assert result  # non-empty

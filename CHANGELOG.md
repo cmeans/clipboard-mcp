@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented here.
 
+## [1.3.0] - 2026-03-15
+
+### Added
+- Five new `output_format` values for destination-aware table formatting:
+  - `slack` — `*bold*` header line followed by space-aligned data in a monospace code block
+  - `jira` — `||Header||` / `|Cell|` Jira wiki markup
+  - `confluence` — same as `jira` (shared Atlassian wiki syntax)
+  - `html` — `<table>` with `<thead>`/`<th>`/`<tbody>`/`<td>`
+  - `notion` — standard GFM pipe table (Notion renders these natively; same output as `markdown`)
+- README: new "Destination-aware output formats" section with format/destination table and example phrases
+
 ## [1.2.0] - 2026-03-15
 
 ### Added
