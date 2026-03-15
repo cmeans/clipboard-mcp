@@ -265,7 +265,7 @@ Use `output_format` to target specific tools:
 |--------|-------------|--------------|
 | `markdown` | Claude, GitHub, most tools | GFM pipe table (default) |
 | `notion` | Notion | GFM pipe table (Notion renders these natively) |
-| `slack` | Slack | monospace code block with separator line — renders on paste without extra steps |
+| `slack` | Slack | `*bold*` header + space-aligned data in a monospace code block |
 | `jira` | Jira | `\|\|Header\|\|` / `\|Cell\|` wiki markup |
 | `confluence` | Confluence | same as `jira` (shared wiki syntax) |
 | `html` | Email, web, rich-text editors | `<table>` with `<thead>`/`<th>`/`<tbody>`/`<td>` |

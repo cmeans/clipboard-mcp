@@ -393,33 +393,23 @@ def test_infer_all_empty_column():
 _ROWS = [["Name", "Age", "City"], ["Alice", "30", "Portland"], ["Bob", "25", "Seattle"]]
 
 
-def test_format_slack_code_block():
+def test_format_slack_bold_header():
     result = format_table(_ROWS, "slack")
-    assert result.startswith("```")
-    assert result.endswith("```")
-
-
-def test_format_slack_header_and_separator():
-    result = format_table(_ROWS, "slack")
-    lines = result.strip().split("\n")
-    # lines[0] = opening ```, lines[1] = header, lines[2] = separator, lines[-1] = closing ```
-    assert lines[1].startswith("Name")
-    assert set(lines[2].replace(" ", "")) == {"-"}  # separator is all dashes
-
-
-def test_format_slack_no_bold_markers():
-    """Header should not use *bold* markers — they don't render when pasted."""
-    result = format_table(_ROWS, "slack")
-    assert "*Name*" not in result
+    assert "*Name*" in result
+    assert "*Age*" in result
+    assert "*City*" in result
 
 
 def test_format_slack_no_pipes():
     result = format_table(_ROWS, "slack")
-    assert "|" not in result
+    # Data section (inside code block) should have no pipe characters
+    code_block = result.split("```")[1]
+    assert "|" not in code_block
 
 
-def test_format_slack_data_present():
+def test_format_slack_code_block():
     result = format_table(_ROWS, "slack")
+    assert "```" in result
     assert "Alice" in result
     assert "Bob" in result
 

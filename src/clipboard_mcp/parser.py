@@ -395,11 +395,11 @@ def _format_markdown(rows: list[list[str]]) -> str:
 
 
 def _format_slack(rows: list[list[str]]) -> str:
-    """Render rows for Slack: a monospace code block with a separator line under the header.
+    """Render rows for Slack: *bold* header followed by space-aligned data in a code block.
 
-    Everything is inside the code block so the output renders correctly when
-    pasted — Slack only interprets mrkdwn (*bold*, etc.) when text is typed
-    in the composer, not when pasted.
+    On first paste into Slack, a one-time "Apply formatting" prompt appears.
+    After accepting (or clicking "Don't ask again"), subsequent pastes apply
+    the bold and code block formatting automatically.
     """
     if not rows:
         return ""
@@ -411,17 +411,18 @@ def _format_slack(rows: list[list[str]]) -> str:
         max(len(normalized[r][c]) for r in range(len(normalized)))
         for c in range(max_cols)
     ]
-    widths = [max(w, 3) for w in widths]
+    widths = [max(w, 1) for w in widths]
 
-    def fmt_row(row: list[str]) -> str:
-        return "  ".join(row[c].ljust(widths[c]) for c in range(max_cols)).rstrip()
+    # Header: *bold* cells (outside the code block so Slack renders the markup)
+    header = "  ".join(f"*{normalized[0][c]}*" for c in range(max_cols))
 
-    header = fmt_row(normalized[0])
-    separator = "  ".join("-" * widths[c] for c in range(max_cols))
-    data_lines = [fmt_row(row) for row in normalized[1:]]
+    # Data rows: space-aligned inside a monospace code block
+    data_lines = [
+        "  ".join(row[c].ljust(widths[c]) for c in range(max_cols)).rstrip()
+        for row in normalized[1:]
+    ]
 
-    lines = [header, separator] + data_lines
-    return "```\n" + "\n".join(lines) + "\n```"
+    return f"{header}\n```\n" + "\n".join(data_lines) + "\n```"
 
 
 def _format_jira(rows: list[list[str]]) -> str:
