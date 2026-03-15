@@ -224,13 +224,19 @@ a Claude Desktop project), you can reinforce the behavior:
 
 ### Content handling
 
+Copying data into Claude's chat input destroys structure — spreadsheet cells
+arrive as a flat string, images can't be pasted at all, and rich text loses its
+formatting. This server reads the clipboard directly, preserving each content
+type in its most useful form and keeping token consumption low by returning only
+what Claude needs to understand the data.
+
 | Content type | What happens |
 |--------------|-------------|
 | **Spreadsheet table** | Parsed from HTML/TSV, returned as Markdown, JSON, or CSV (controlled by `output_format`) |
 | **JSON** | Pretty-printed in a JSON code block |
 | **Code** | Returned in a fenced code block |
 | **URL** | Returned cleanly as a URL |
-| **Rich text / RTF** | Returned as raw RTF markup in a code block |
+| **Rich text / RTF** | Returned as raw RTF markup in a code block — useful when content comes from Word, Pages, or email clients that don't expose plain text |
 | **Rich HTML** (no table) | HTML tags stripped, readable text returned |
 | **Plain text** | Returned as-is |
 | **Images** (PNG, etc.) | Returned as image content — Claude can see and analyze the image |
@@ -246,6 +252,12 @@ When the clipboard contains tabular data, `output_format` controls the format:
 - **CSV** — comma-separated values
 
 ### Destination-aware output formats
+
+Each tool has its own table syntax. Without destination-aware formatting, the
+workflow is: read → Claude formats in Markdown → you ask Claude to reformat →
+Claude consumes tokens reformatting → you copy the result. With `output_format`,
+that round-trip collapses to a single read — you get paste-ready output for your
+target tool immediately, with no extra tokens spent on reformatting.
 
 Use `output_format` to target specific tools:
 
@@ -266,6 +278,13 @@ Use `output_format` to target specific tools:
 - "Give me that as HTML" → `output_format=html`
 
 ### Table schema inference
+
+When sharing tabular data with Claude for analysis, code generation, or database
+work, column types are often implicit — Claude has to infer them by reading every
+row, spending tokens and sometimes guessing wrong. `include_schema=true` makes
+types explicit upfront: Claude immediately knows which columns are integers, dates,
+or currency values and can write correct SQL `CREATE TABLE` statements, Pandas
+`dtype` mappings, or validation rules without re-reading the data.
 
 Add `include_schema=true` to get a column-type summary alongside the table:
 
