@@ -169,9 +169,10 @@ async def test_paste_slack_format():
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="slack")
 
-    assert "*Name*" in result
+    assert result.startswith("Found table:")
     assert "```" in result
-    assert "|" not in result.split("```")[1]  # no pipes in data block
+    assert "|" not in result  # no pipe characters anywhere
+    assert "Name" in result
 
 
 @pytest.mark.asyncio
