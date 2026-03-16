@@ -26,7 +26,7 @@ can copy results back for you to paste elsewhere.
 | Tool | Description |
 |------|-------------|
 | `clipboard_paste` | **Primary tool.** Read any clipboard content — tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types (integer, float, currency, percentage, date, boolean, text). Images are returned as image content; other content is returned with smart formatting. |
-| `clipboard_copy` | Write text to the system clipboard |
+| `clipboard_copy` | Write content to the system clipboard. Accepts an optional `mime_type` parameter (`text/plain` by default; also `text/html`, `text/rtf`, or any `text/*` on Wayland/X11) |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type — supports text formats plus `image/svg+xml`, `application/json`, `application/xml`, `application/xhtml+xml` (diagnostic) |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard |
 
@@ -198,6 +198,8 @@ non-standard socket path, or a containerized environment):
 - "Copy that to my clipboard"
 - "Put the cleaned-up JSON on my clipboard"
 - "Copy just the SQL query"
+- "Copy that as HTML" (writes `text/html` so rich-text apps paste with formatting)
+- "Put the RTF on my clipboard" (writes `text/rtf`)
 
 ### Tips for reliable triggering
 
@@ -322,8 +324,8 @@ clipboard-mcp/
 ├── src/clipboard_mcp/
 │   ├── __init__.py          # Package version
 │   ├── server.py            # MCP server, tool definitions & debug logging setup
-│   ├── clipboard.py         # Platform-agnostic clipboard backend (Wayland auto-detection)
-│   ├── parser.py            # HTML table parser, formatters, content detection
+│   ├── clipboard.py         # Platform-agnostic clipboard backend (read, write, typed write)
+│   ├── parser.py            # HTML table parser, formatters, schema inference, content detection
 │   └── instructions/        # Tool & server descriptions (loaded at startup)
 │       ├── server.md        # Server-level MCP instructions
 │       ├── clipboard_paste.md
@@ -331,9 +333,14 @@ clipboard-mcp/
 │       ├── clipboard_read_raw.md
 │       └── clipboard_list_formats.md
 ├── tests/
-│   ├── test_parser.py       # Parser & formatter tests
+│   ├── test_parser.py       # Parser, formatter & schema inference tests
 │   └── test_server.py       # MCP server, clipboard backend & Wayland detection tests
+├── .github/workflows/
+│   ├── publish.yml          # PyPI publish on v* tags (OIDC trusted publisher)
+│   └── test-publish.yml     # TestPyPI publish on test-v* tags
 ├── pyproject.toml           # Project metadata, dependencies & pytest config
+├── glama.json               # Glama MCP directory ownership claim
+├── CHANGELOG.md             # Version history
 ├── CLAUDE.md                # Claude Code guidance
 ├── LICENSE                  # MIT
 └── README.md
@@ -401,8 +408,8 @@ The server writes text to the clipboard using the platform's clipboard tool
 
 - **Audio and video are not supported.** If the clipboard contains audio or video,
   the server will report what format is present but cannot return the content.
-- **Clipboard write is text-only.** `clipboard_copy` writes plain text. Writing images
-  or other binary data is not yet supported.
+- **Clipboard write supports text MIME types only.** `clipboard_copy` can write `text/plain`, `text/html`, and `text/rtf`. Writing images or other binary data is not supported.
+- **Single-MIME write on Wayland/X11.** Writing multiple MIME types atomically (e.g. both `text/html` and `text/plain` in one clipboard operation) is not supported — doing so requires owning the clipboard selection process.
 - **Text content is truncated at 50KB** to avoid overwhelming the model's context
   window.
 - **macOS and Windows are untested** (see [Platform status](#prerequisites)).

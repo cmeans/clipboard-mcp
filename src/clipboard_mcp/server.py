@@ -25,6 +25,7 @@ from .clipboard import (
     read_clipboard,
     read_clipboard_image,
     write_clipboard,
+    write_clipboard_typed,
 )
 from .parser import (
     OutputFormat,
@@ -362,13 +363,23 @@ async def clipboard_list_formats() -> str:
 )
 async def clipboard_copy(
     content: str,
+    mime_type: str = "text/plain",
 ) -> str:
+    mime_type = mime_type.strip().lower()
+    if any(mime_type.startswith(p) for p in _BINARY_MIME_PREFIXES) or mime_type in _BINARY_MIME_EXACT:
+        return (
+            f"Cannot write binary MIME type {mime_type!r} to clipboard. "
+            "clipboard_copy supports text content only."
+        )
     try:
-        await write_clipboard(content)
+        if mime_type == "text/plain":
+            await write_clipboard(content)
+        else:
+            await write_clipboard_typed(content, mime_type)
     except ClipboardError as e:
         return f"Error writing to clipboard: {e}"
 
-    return f"Copied {len(content)} characters to clipboard."
+    return f"Copied {len(content)} characters to clipboard as {mime_type}."
 
 
 def main() -> None:

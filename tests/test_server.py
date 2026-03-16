@@ -16,11 +16,17 @@ from clipboard_mcp.clipboard import (
     read_clipboard,
     read_clipboard_image,
     write_clipboard,
+    write_clipboard_typed,
     list_clipboard_formats,
     _find_wayland_display,
     _wayland_env,
     _detect_backend,
     _get_backend,
+    _wayland_write_typed,
+    _x11_write_typed,
+    _macos_write_typed,
+    _windows_write_typed,
+    _windows_html_clipboard_wrap,
 )
 from clipboard_mcp.server import (
     clipboard_paste,
@@ -1929,3 +1935,238 @@ async def test_detect_backend_x11_fallback():
                 result = _detect_backend()
 
     assert result == "x11"
+
+
+# ---------------------------------------------------------------------------
+# 26. Typed write — platform backends
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_typed_plain():
+    """_wayland_write_typed passes --type for text/plain."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_typed("hello", "text/plain")
+
+    cmd = mock.call_args[0][0]
+    assert "--type" in cmd
+    assert "text/plain" in cmd
+    assert mock.call_args[0][1] == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_typed_html():
+    """_wayland_write_typed passes --type text/html."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_typed("<b>hi</b>", "text/html")
+
+    cmd = mock.call_args[0][0]
+    assert "--type" in cmd
+    assert "text/html" in cmd
+    assert mock.call_args[0][1] == b"<b>hi</b>"
+
+
+@pytest.mark.asyncio
+async def test_x11_write_typed_plain():
+    """_x11_write_typed passes -target for text/plain."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_typed("hello", "text/plain")
+
+    cmd = mock.call_args[0][0]
+    assert "-target" in cmd
+    assert "text/plain" in cmd
+    assert mock.call_args[0][1] == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_x11_write_typed_html():
+    """_x11_write_typed passes -target text/html."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_typed("<p>hello</p>", "text/html")
+
+    cmd = mock.call_args[0][0]
+    assert "-target" in cmd
+    assert "text/html" in cmd
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_plain():
+    """_macos_write_typed uses pbcopy for text/plain."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_typed("hello", "text/plain")
+
+    cmd = mock.call_args[0][0]
+    assert cmd == ["pbcopy"]
+    assert mock.call_args[0][1] == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_html():
+    """_macos_write_typed uses osascript with public.html UTI for text/html."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed("<b>hello</b>", "text/html")
+
+    script = mock.call_args[0][0][-1]
+    assert "public.html" in script
+    assert "NSPasteboard" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_rtf():
+    """_macos_write_typed uses osascript with public.rtf UTI for text/rtf."""
+    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed(r"{\rtf1 hello}", "text/rtf")
+
+    script = mock.call_args[0][0][-1]
+    assert "public.rtf" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_unsupported():
+    """_macos_write_typed raises ClipboardError for unsupported MIME types."""
+    with pytest.raises(ClipboardError, match="macOS"):
+        await _macos_write_typed("data", "text/csv")
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_plain():
+    """_windows_write_typed uses Set-Clipboard for text/plain."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed("hello", "text/plain")
+
+    cmd = mock.call_args[0][0]
+    assert "powershell" in cmd[0].lower()
+    assert mock.call_args[0][1] == b"hello"
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_html():
+    """_windows_write_typed wraps HTML in CF_HTML format for text/html."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed("<b>hello</b>", "text/html")
+
+    data = mock.call_args[0][1]
+    text = data.decode("utf-8")
+    # CF_HTML header must be present
+    assert "Version:0.9" in text
+    assert "StartHTML:" in text
+    assert "StartFragment:" in text
+    assert "<!--StartFragment-->" in text
+    assert "<b>hello</b>" in text
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_rtf():
+    """_windows_write_typed passes RTF content for text/rtf."""
+    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed(r"{\rtf1 hi}", "text/rtf")
+
+    cmd = mock.call_args[0][0]
+    assert "Rtf" in " ".join(cmd)
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_unsupported():
+    """_windows_write_typed raises ClipboardError for unsupported MIME types."""
+    with pytest.raises(ClipboardError, match="Windows"):
+        await _windows_write_typed("data", "text/csv")
+
+
+# ---------------------------------------------------------------------------
+# 27. _windows_html_clipboard_wrap unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_windows_html_clipboard_wrap_contains_header():
+    result = _windows_html_clipboard_wrap("<p>Hello</p>")
+    assert result.startswith("Version:0.9")
+    assert "StartHTML:" in result
+    assert "EndHTML:" in result
+    assert "StartFragment:" in result
+    assert "EndFragment:" in result
+
+
+def test_windows_html_clipboard_wrap_contains_content():
+    result = _windows_html_clipboard_wrap("<p>Hello</p>")
+    assert "<p>Hello</p>" in result
+    assert "<!--StartFragment-->" in result
+    assert "<!--EndFragment-->" in result
+
+
+def test_windows_html_clipboard_wrap_offsets_are_valid():
+    """Byte offsets in the CF_HTML header must point to correct positions."""
+    html = "<p>Test</p>"
+    result = _windows_html_clipboard_wrap(html)
+    result_bytes = result.encode("utf-8")
+
+    import re
+    start_html = int(re.search(r"StartHTML:(\d+)", result).group(1))
+    end_html = int(re.search(r"EndHTML:(\d+)", result).group(1))
+    start_frag = int(re.search(r"StartFragment:(\d+)", result).group(1))
+    end_frag = int(re.search(r"EndFragment:(\d+)", result).group(1))
+
+    assert result_bytes[start_html:start_html + 6] == b"<html>"
+    assert result_bytes[start_frag:start_frag + len(html)] == html.encode("utf-8")
+    assert end_html == start_html + len(result_bytes[start_html:])
+    assert end_frag == start_frag + len(html.encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# 28. write_clipboard_typed dispatch + server clipboard_copy with mime_type
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_typed_dispatches():
+    """write_clipboard_typed dispatches to the correct backend."""
+    mock_writer = AsyncMock()
+    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("clipboard_mcp.clipboard._TYPED_WRITERS", {"wayland": mock_writer}):
+            await write_clipboard_typed("<b>hi</b>", "text/html")
+
+    mock_writer.assert_called_once_with("<b>hi</b>", "text/html")
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_with_mime_type_html():
+    """clipboard_copy with mime_type=text/html uses write_clipboard_typed."""
+    with patch("clipboard_mcp.server.write_clipboard_typed", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy("<b>hello</b>", mime_type="text/html")
+
+    mock.assert_called_once_with("<b>hello</b>", "text/html")
+    assert "text/html" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_default_mime_type():
+    """clipboard_copy defaults to text/plain and uses write_clipboard."""
+    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy("hello")
+
+    mock.assert_called_once_with("hello")
+    assert "text/plain" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_rejects_binary_mime():
+    """clipboard_copy rejects binary MIME types."""
+    result = await clipboard_copy("data", mime_type="image/png")
+    assert "Cannot write binary" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_rejects_audio_mime():
+    """clipboard_copy rejects audio/* MIME types."""
+    result = await clipboard_copy("data", mime_type="audio/mp3")
+    assert "Cannot write binary" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_typed_error():
+    """clipboard_copy surfaces ClipboardError from write_clipboard_typed."""
+    with patch("clipboard_mcp.server.write_clipboard_typed",
+               side_effect=ClipboardError("unsupported")):
+        result = await clipboard_copy("<b>hi</b>", mime_type="text/html")
+
+    assert "Error" in result
+    assert "unsupported" in result
