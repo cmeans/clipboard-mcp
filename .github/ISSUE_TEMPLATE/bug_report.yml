@@ -1,0 +1,66 @@
+name: Bug Report
+description: Report something that isn't working correctly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in as much as you can.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `pip show mcp-clipboard` or commit hash
+      placeholder: "2.0.0 or abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (Wayland)
+        - Linux (X11)
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP Client
+      options:
+        - Claude Desktop
+        - Claude Code
+        - Claude.ai (web/mobile)
+        - Cursor
+        - ChatGPT
+        - Other (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Copy something to clipboard
+        2. Ask Claude to "paste my clipboard"
+        3. See error ...
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      description: Run with MCP_CLIPBOARD_DEBUG=1 and paste any error messages or server logs.
+      render: shell
+    validations:
+      required: false

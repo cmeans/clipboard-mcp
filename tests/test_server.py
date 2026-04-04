@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from mcp.server.fastmcp.utilities.types import Image
 
-from clipboard_mcp.clipboard import (
+from mcp_clipboard.clipboard import (
     ClipboardError,
     read_clipboard,
     read_clipboard_image,
@@ -28,7 +28,7 @@ from clipboard_mcp.clipboard import (
     _windows_write_typed,
     _windows_html_clipboard_wrap,
 )
-from clipboard_mcp.server import (
+from mcp_clipboard.server import (
     clipboard_paste,
     clipboard_copy,
     clipboard_read_raw,
@@ -76,7 +76,7 @@ def _mock_read_error(msg: str = "Command not found: wl-paste"):
 @pytest.mark.asyncio
 async def test_paste_table_from_html():
     """clipboard_paste extracts and formats table data from HTML clipboard."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="markdown")
 
@@ -89,7 +89,7 @@ async def test_paste_table_from_html():
 @pytest.mark.asyncio
 async def test_paste_table_json():
     """clipboard_paste returns valid JSON for tables when requested."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="json")
 
@@ -104,7 +104,7 @@ async def test_paste_table_json():
 @pytest.mark.asyncio
 async def test_paste_table_csv():
     """clipboard_paste returns CSV for tables when requested."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="csv")
 
@@ -117,7 +117,7 @@ async def test_paste_table_csv():
 async def test_paste_format_case_insensitive():
     """clipboard_paste accepts output_format in any case."""
     for fmt in ("JSON", "Json", "jSoN", " json ", "CSV", "Csv", "MARKDOWN"):
-        with patch("clipboard_mcp.server.read_clipboard",
+        with patch("mcp_clipboard.server.read_clipboard",
                    side_effect=_mock_read(html=SAMPLE_HTML)):
             result = await clipboard_paste(output_format=fmt)
         assert "3 rows × 3 columns" in result, f"Failed for format {fmt!r}"
@@ -126,7 +126,7 @@ async def test_paste_format_case_insensitive():
 @pytest.mark.asyncio
 async def test_paste_format_invalid():
     """clipboard_paste returns error message for unknown format."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="xml")
     assert "Unknown output_format" in result
@@ -135,7 +135,7 @@ async def test_paste_format_invalid():
 @pytest.mark.asyncio
 async def test_paste_with_schema():
     """clipboard_paste appends column-type schema when include_schema=True."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="markdown", include_schema=True)
 
@@ -150,7 +150,7 @@ async def test_paste_with_schema():
 @pytest.mark.asyncio
 async def test_paste_without_schema_default():
     """clipboard_paste does not include schema by default."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="markdown")
 
@@ -160,7 +160,7 @@ async def test_paste_without_schema_default():
 @pytest.mark.asyncio
 async def test_paste_schema_not_appended_for_non_table():
     """include_schema is ignored when clipboard has no table."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text="hello world")):
         result = await clipboard_paste(output_format="markdown", include_schema=True)
 
@@ -171,7 +171,7 @@ async def test_paste_schema_not_appended_for_non_table():
 @pytest.mark.asyncio
 async def test_paste_slack_format():
     """clipboard_paste returns Slack-formatted table."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="slack")
 
@@ -184,7 +184,7 @@ async def test_paste_slack_format():
 @pytest.mark.asyncio
 async def test_paste_jira_format():
     """clipboard_paste returns Jira wiki markup."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="jira")
 
@@ -195,7 +195,7 @@ async def test_paste_jira_format():
 @pytest.mark.asyncio
 async def test_paste_confluence_format():
     """clipboard_paste returns Confluence wiki markup (same as Jira)."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result_jira = await clipboard_paste(output_format="jira")
         result_confluence = await clipboard_paste(output_format="confluence")
@@ -207,7 +207,7 @@ async def test_paste_confluence_format():
 @pytest.mark.asyncio
 async def test_paste_html_format():
     """clipboard_paste returns HTML table markup."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="html")
 
@@ -219,7 +219,7 @@ async def test_paste_html_format():
 @pytest.mark.asyncio
 async def test_paste_notion_format():
     """clipboard_paste returns GFM pipe table for Notion."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result_notion = await clipboard_paste(output_format="notion")
         result_markdown = await clipboard_paste(output_format="markdown")
@@ -230,7 +230,7 @@ async def test_paste_notion_format():
 @pytest.mark.asyncio
 async def test_paste_format_invalid_unknown():
     """clipboard_paste rejects formats not in the valid set."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="xml")
 
@@ -246,7 +246,7 @@ async def test_paste_format_invalid_unknown():
 @pytest.mark.asyncio
 async def test_paste_tsv_fallback():
     """clipboard_paste falls back to TSV when no HTML is available."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text=SAMPLE_TSV)):
         result = await clipboard_paste(output_format="markdown")
 
@@ -263,7 +263,7 @@ async def test_paste_tsv_when_html_errors():
             raise ClipboardError("No HTML available")
         return SAMPLE_TSV
 
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=_mixed_read):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=_mixed_read):
         result = await clipboard_paste(output_format="markdown")
 
     assert "3 rows × 3 columns" in result
@@ -278,7 +278,7 @@ async def test_paste_tsv_when_html_errors():
 @pytest.mark.asyncio
 async def test_paste_plain_text():
     """clipboard_paste returns plain text when no table is found."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text="Hello, this is plain text.")):
         result = await clipboard_paste()
 
@@ -290,7 +290,7 @@ async def test_paste_plain_text():
 async def test_paste_json_content():
     """clipboard_paste detects and pretty-prints JSON."""
     json_text = '{"name": "Alice", "age": 30}'
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text=json_text)):
         result = await clipboard_paste()
 
@@ -302,7 +302,7 @@ async def test_paste_json_content():
 @pytest.mark.asyncio
 async def test_paste_url():
     """clipboard_paste detects and returns URLs cleanly."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text="https://example.com/path?q=1")):
         result = await clipboard_paste()
 
@@ -314,7 +314,7 @@ async def test_paste_url():
 async def test_paste_code_snippet():
     """clipboard_paste detects code and wraps it in a code block."""
     code = "def hello():\n    print('hello world')\n\nhello()"
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text=code)):
         result = await clipboard_paste()
 
@@ -327,7 +327,7 @@ async def test_paste_code_snippet():
 async def test_paste_html_without_table():
     """clipboard_paste extracts text from HTML that has no table."""
     html = "<p>This is a <b>rich text</b> paragraph.</p><p>Second paragraph.</p>"
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html=html, text="This is a rich text paragraph. Second paragraph.")):
         result = await clipboard_paste()
 
@@ -338,9 +338,9 @@ async def test_paste_html_without_table():
 @pytest.mark.asyncio
 async def test_paste_empty_clipboard():
     """clipboard_paste returns empty message when clipboard is empty."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[]):
             result = await clipboard_paste()
 
     assert "Clipboard is empty" in result
@@ -349,8 +349,8 @@ async def test_paste_empty_clipboard():
 @pytest.mark.asyncio
 async def test_paste_both_fail():
     """clipboard_paste returns empty message when both reads fail."""
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=_mock_read_error()):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read_error()):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[]):
             result = await clipboard_paste()
 
     assert "Clipboard is empty" in result
@@ -360,7 +360,7 @@ async def test_paste_both_fail():
 async def test_paste_large_content_truncated():
     """clipboard_paste truncates content over 50KB."""
     huge = "x" * 100_000
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text=huge)):
         result = await clipboard_paste()
 
@@ -378,7 +378,7 @@ async def test_list_formats_with_html():
     """clipboard_list_formats highlights HTML availability."""
     mock_formats = ["text/html", "text/plain", "UTF8_STRING", "TARGETS"]
 
-    with patch("clipboard_mcp.server.list_clipboard_formats", return_value=mock_formats):
+    with patch("mcp_clipboard.server.list_clipboard_formats", return_value=mock_formats):
         result = await clipboard_list_formats()
 
     assert "4 format(s)" in result
@@ -392,7 +392,7 @@ async def test_list_formats_text_only():
     """clipboard_list_formats works when only plain text is available."""
     mock_formats = ["text/plain", "UTF8_STRING"]
 
-    with patch("clipboard_mcp.server.list_clipboard_formats", return_value=mock_formats):
+    with patch("mcp_clipboard.server.list_clipboard_formats", return_value=mock_formats):
         result = await clipboard_list_formats()
 
     assert "2 format(s)" in result
@@ -404,7 +404,7 @@ async def test_list_formats_text_only():
 @pytest.mark.asyncio
 async def test_list_formats_empty():
     """clipboard_list_formats handles empty clipboard."""
-    with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+    with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[]):
         result = await clipboard_list_formats()
 
     assert "empty" in result.lower()
@@ -413,7 +413,7 @@ async def test_list_formats_empty():
 @pytest.mark.asyncio
 async def test_list_formats_error():
     """clipboard_list_formats handles ClipboardError gracefully."""
-    with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.list_clipboard_formats",
                side_effect=ClipboardError("No clipboard tool")):
         result = await clipboard_list_formats()
 
@@ -429,8 +429,8 @@ async def test_list_formats_error():
 @pytest.mark.asyncio
 async def test_read_clipboard_command_not_found():
     """read_clipboard raises ClipboardError when the clipboard tool isn't installed."""
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch("clipboard_mcp.clipboard._run",
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch("mcp_clipboard.clipboard._run",
                    side_effect=ClipboardError("Command not found: wl-paste")):
             with pytest.raises(ClipboardError, match="Command not found"):
                 await read_clipboard("text/html")
@@ -439,8 +439,8 @@ async def test_read_clipboard_command_not_found():
 @pytest.mark.asyncio
 async def test_read_clipboard_timeout():
     """read_clipboard raises ClipboardError on timeout."""
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch("clipboard_mcp.clipboard._run",
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch("mcp_clipboard.clipboard._run",
                    side_effect=ClipboardError("Clipboard command timed out")):
             with pytest.raises(ClipboardError, match="timed out"):
                 await read_clipboard("text/html")
@@ -449,7 +449,7 @@ async def test_read_clipboard_timeout():
 @pytest.mark.asyncio
 async def test_read_raw_returns_content():
     """clipboard_read_raw returns the raw content for a given MIME type."""
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                return_value="<table><tr><td>hi</td></tr></table>"):
         result = await clipboard_read_raw(mime_type="text/html")
 
@@ -461,7 +461,7 @@ async def test_read_raw_returns_content():
 async def test_read_raw_truncates_large_content():
     """clipboard_read_raw truncates very large clipboard content."""
     huge = "x" * 100_000
-    with patch("clipboard_mcp.server.read_clipboard", return_value=huge):
+    with patch("mcp_clipboard.server.read_clipboard", return_value=huge):
         result = await clipboard_read_raw(mime_type="text/plain")
 
     assert "truncated" in result.lower()
@@ -472,7 +472,7 @@ async def test_read_raw_truncates_large_content():
 @pytest.mark.asyncio
 async def test_read_raw_error():
     """clipboard_read_raw handles ClipboardError gracefully."""
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=ClipboardError("fail")):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=ClipboardError("fail")):
         result = await clipboard_read_raw(mime_type="text/html")
 
     assert "Error" in result
@@ -482,7 +482,7 @@ async def test_read_raw_error():
 @pytest.mark.asyncio
 async def test_read_raw_empty():
     """clipboard_read_raw handles empty content for a MIME type."""
-    with patch("clipboard_mcp.server.read_clipboard", return_value=""):
+    with patch("mcp_clipboard.server.read_clipboard", return_value=""):
         result = await clipboard_read_raw(mime_type="text/html")
 
     assert "No content available" in result
@@ -518,7 +518,7 @@ async def test_read_raw_rejects_video_mime():
 async def test_read_raw_allows_svg():
     """clipboard_read_raw allows image/svg+xml as text-readable."""
     svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
-    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
         result = await clipboard_read_raw(mime_type="image/svg+xml")
 
     assert "circle" in result
@@ -529,7 +529,7 @@ async def test_read_raw_allows_svg():
 async def test_read_raw_allows_application_json():
     """clipboard_read_raw allows application/json as text-readable."""
     json_str = '{"key": "value"}'
-    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=json_str):
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=json_str):
         result = await clipboard_read_raw(mime_type="application/json")
 
     assert "key" in result
@@ -545,10 +545,10 @@ async def test_read_raw_allows_application_json():
 async def test_paste_returns_image():
     """clipboard_paste returns Image when clipboard has image data."""
     fake_png = b"\x89PNG\r\n\x1a\nfakedata"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/png", "image/tiff"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png):
                 result = await clipboard_paste()
 
@@ -559,8 +559,8 @@ async def test_paste_returns_image():
 @pytest.mark.asyncio
 async def test_paste_empty_clipboard_no_binary():
     """clipboard_paste returns 'empty' when clipboard has no text and no binary."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[]):
             result = await clipboard_paste()
 
     assert "empty" in result.lower()
@@ -654,9 +654,9 @@ def test_wayland_env_injects_runtime_dir(tmp_path):
     with patch.dict("os.environ", {"WAYLAND_DISPLAY": "wayland-0"}, clear=False):
         import os
         os.environ.pop("XDG_RUNTIME_DIR", None)
-        with patch("clipboard_mcp.clipboard.os.getuid", return_value=1000):
+        with patch("mcp_clipboard.clipboard.os.getuid", return_value=1000):
             # Point the fallback path at our tmp_path with real sockets
-            with patch("clipboard_mcp.clipboard.Path") as mock_path:
+            with patch("mcp_clipboard.clipboard.Path") as mock_path:
                 mock_path.return_value.is_dir.return_value = True
                 # Use the real tmp_path for the env value
                 env = _wayland_env()
@@ -672,12 +672,12 @@ def test_wayland_env_injects_both_when_neither_set(tmp_path):
         import os
         os.environ.pop("WAYLAND_DISPLAY", None)
         os.environ.pop("XDG_RUNTIME_DIR", None)
-        with patch("clipboard_mcp.clipboard.os.getuid", return_value=1000):
-            with patch("clipboard_mcp.clipboard.Path") as mock_path:
+        with patch("mcp_clipboard.clipboard.os.getuid", return_value=1000):
+            with patch("mcp_clipboard.clipboard.Path") as mock_path:
                 # Make Path(xdg_runtime).is_dir() return True
                 mock_path.return_value.is_dir.return_value = True
                 # But use real _find_wayland_display with the actual tmp_path
-                with patch("clipboard_mcp.clipboard._find_wayland_display", return_value="wayland-0"):
+                with patch("mcp_clipboard.clipboard._find_wayland_display", return_value="wayland-0"):
                     env = _wayland_env()
 
     assert env is not None
@@ -706,10 +706,10 @@ def test_detect_backend_wayland_via_socket(tmp_path):
         import os
         os.environ.pop("WAYLAND_DISPLAY", None)
         os.environ.pop("XDG_SESSION_TYPE", None)
-        with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
-            with patch("clipboard_mcp.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
+        with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
+            with patch("mcp_clipboard.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
                 # Clear cached backend
-                import clipboard_mcp.clipboard as cb
+                import mcp_clipboard.clipboard as cb
                 cb._backend = None
                 result = _detect_backend()
 
@@ -719,9 +719,9 @@ def test_detect_backend_wayland_via_socket(tmp_path):
 def test_detect_backend_prefers_env_var_over_socket():
     """_detect_backend uses WAYLAND_DISPLAY env var without needing socket scan."""
     with patch.dict("os.environ", {"WAYLAND_DISPLAY": "wayland-0"}, clear=False):
-        with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
-            with patch("clipboard_mcp.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
-                import clipboard_mcp.clipboard as cb
+        with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
+            with patch("mcp_clipboard.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
+                import mcp_clipboard.clipboard as cb
                 cb._backend = None
                 result = _detect_backend()
 
@@ -732,7 +732,7 @@ def test_detect_backend_prefers_env_var_over_socket():
 # 8. macOS backend
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import (
+from mcp_clipboard.clipboard import (
     _x11_read,
     _x11_list_formats,
     _macos_read,
@@ -747,7 +747,7 @@ from clipboard_mcp.clipboard import (
 @pytest.mark.asyncio
 async def test_macos_read_html():
     """_macos_read uses osascript for text/html."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
         result = await _macos_read("text/html")
 
     assert result == "<b>hi</b>"
@@ -758,7 +758,7 @@ async def test_macos_read_html():
 @pytest.mark.asyncio
 async def test_macos_read_plain():
     """_macos_read uses pbpaste for text/plain."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
         result = await _macos_read("text/plain")
 
     assert result == "hello"
@@ -777,7 +777,7 @@ async def test_macos_read_unsupported_returns_empty():
 async def test_macos_read_rtf():
     """_macos_read uses osascript for text/rtf."""
     rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
         result = await _macos_read("text/rtf")
 
     assert result == rtf_content
@@ -790,7 +790,7 @@ async def test_macos_read_rtf():
 async def test_macos_list_formats_maps_uti_to_mime():
     """_macos_list_formats maps known UTIs to MIME types."""
     raw_output = "public.html\npublic.utf8-plain-text\npublic.png\n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _macos_list_formats()
 
     assert result == ["text/html", "text/plain", "image/png"]
@@ -800,7 +800,7 @@ async def test_macos_list_formats_maps_uti_to_mime():
 async def test_macos_list_formats_passthrough_unknown():
     """_macos_list_formats passes through unknown UTIs as-is."""
     raw_output = "public.html\ncom.apple.something-custom\n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _macos_list_formats()
 
     assert result == ["text/html", "com.apple.something-custom"]
@@ -814,7 +814,7 @@ async def test_macos_list_formats_passthrough_unknown():
 @pytest.mark.asyncio
 async def test_windows_read_html():
     """_windows_read uses PowerShell HTML clipboard for text/html."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
         result = await _windows_read("text/html")
 
     assert result == "<b>hi</b>"
@@ -826,7 +826,7 @@ async def test_windows_read_html():
 @pytest.mark.asyncio
 async def test_windows_read_plain():
     """_windows_read uses Get-Clipboard for text/plain."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
         result = await _windows_read("text/plain")
 
     assert result == "hello"
@@ -845,7 +845,7 @@ async def test_windows_read_unsupported_returns_empty():
 async def test_windows_read_rtf():
     """_windows_read uses PowerShell RTF clipboard for text/rtf."""
     rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=rtf_content) as mock_run:
         result = await _windows_read("text/rtf")
 
     assert result == rtf_content
@@ -858,7 +858,7 @@ async def test_windows_read_rtf():
 async def test_windows_list_formats_maps_names_to_mime():
     """_windows_list_formats maps known Windows format names to MIME types."""
     raw_output = "HTML Format\nText\nUnicodeText\nPNG\n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _windows_list_formats()
 
     assert result == ["text/html", "text/plain", "text/plain", "image/png"]
@@ -868,7 +868,7 @@ async def test_windows_list_formats_maps_names_to_mime():
 async def test_windows_list_formats_passthrough_unknown():
     """_windows_list_formats passes through unknown format names as-is."""
     raw_output = "HTML Format\nSystem.String\n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _windows_list_formats()
 
     assert result == ["text/html", "System.String"]
@@ -882,7 +882,7 @@ async def test_windows_list_formats_passthrough_unknown():
 @pytest.mark.asyncio
 async def test_x11_read_html():
     """_x11_read calls xclip with correct target for text/html."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>") as mock_run:
         result = await _x11_read("text/html")
 
     assert result == "<b>hi</b>"
@@ -893,7 +893,7 @@ async def test_x11_read_html():
 @pytest.mark.asyncio
 async def test_x11_read_plain():
     """_x11_read calls xclip with correct target for text/plain."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="hello") as mock_run:
         result = await _x11_read("text/plain")
 
     assert result == "hello"
@@ -905,7 +905,7 @@ async def test_x11_read_plain():
 async def test_x11_list_formats():
     """_x11_list_formats calls xclip with TARGETS and parses output."""
     raw_output = "text/html\ntext/plain\nimage/png\n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output) as mock_run:
         result = await _x11_list_formats()
 
     assert result == ["text/html", "text/plain", "image/png"]
@@ -917,7 +917,7 @@ async def test_x11_list_formats():
 async def test_x11_list_formats_strips_whitespace():
     """_x11_list_formats strips whitespace and skips blank lines."""
     raw_output = "  text/html  \n\n  text/plain  \n"
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _x11_list_formats()
 
     assert result == ["text/html", "text/plain"]
@@ -950,8 +950,8 @@ def test_load_instruction_missing_file():
 
 def test_detect_backend_darwin():
     """_detect_backend returns 'macos' on Darwin."""
-    with patch("clipboard_mcp.clipboard.platform.system", return_value="Darwin"):
-        import clipboard_mcp.clipboard as cb
+    with patch("mcp_clipboard.clipboard.platform.system", return_value="Darwin"):
+        import mcp_clipboard.clipboard as cb
         cb._backend = None
         result = _detect_backend()
 
@@ -960,8 +960,8 @@ def test_detect_backend_darwin():
 
 def test_detect_backend_windows():
     """_detect_backend returns 'windows' on Windows."""
-    with patch("clipboard_mcp.clipboard.platform.system", return_value="Windows"):
-        import clipboard_mcp.clipboard as cb
+    with patch("mcp_clipboard.clipboard.platform.system", return_value="Windows"):
+        import mcp_clipboard.clipboard as cb
         cb._backend = None
         result = _detect_backend()
 
@@ -970,8 +970,8 @@ def test_detect_backend_windows():
 
 def test_detect_backend_unsupported():
     """_detect_backend raises ClipboardError on unsupported platforms."""
-    with patch("clipboard_mcp.clipboard.platform.system", return_value="FreeBSD"):
-        import clipboard_mcp.clipboard as cb
+    with patch("mcp_clipboard.clipboard.platform.system", return_value="FreeBSD"):
+        import mcp_clipboard.clipboard as cb
         cb._backend = None
         with pytest.raises(ClipboardError, match="Unsupported platform: FreeBSD"):
             _detect_backend()
@@ -979,10 +979,10 @@ def test_detect_backend_unsupported():
 
 def test_detect_backend_linux_no_tools():
     """_detect_backend raises ClipboardError when no clipboard tools are installed."""
-    with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
-        with patch("clipboard_mcp.clipboard.shutil.which", return_value=None):
+    with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
+        with patch("mcp_clipboard.clipboard.shutil.which", return_value=None):
             with patch.dict("os.environ", {}, clear=True):
-                import clipboard_mcp.clipboard as cb
+                import mcp_clipboard.clipboard as cb
                 cb._backend = None
                 with pytest.raises(ClipboardError, match="No clipboard tool found"):
                     _detect_backend()
@@ -997,8 +997,8 @@ def test_detect_backend_linux_no_tools():
 async def test_read_clipboard_dispatches_to_wayland():
     """read_clipboard calls the wayland reader when backend is wayland."""
     mock_reader = AsyncMock(return_value="hello")
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"wayland": mock_reader}):
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
@@ -1009,8 +1009,8 @@ async def test_read_clipboard_dispatches_to_wayland():
 async def test_read_clipboard_dispatches_to_x11():
     """read_clipboard calls the x11 reader when backend is x11."""
     mock_reader = AsyncMock(return_value="hello")
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"x11": mock_reader}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"x11": mock_reader}):
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
@@ -1021,8 +1021,8 @@ async def test_read_clipboard_dispatches_to_x11():
 async def test_read_clipboard_dispatches_to_macos():
     """read_clipboard calls the macos reader when backend is macos."""
     mock_reader = AsyncMock(return_value="hello")
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"macos": mock_reader}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="macos"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"macos": mock_reader}):
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
@@ -1033,8 +1033,8 @@ async def test_read_clipboard_dispatches_to_macos():
 async def test_read_clipboard_dispatches_to_windows():
     """read_clipboard calls the windows reader when backend is windows."""
     mock_reader = AsyncMock(return_value="hello")
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"windows": mock_reader}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="windows"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"windows": mock_reader}):
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
@@ -1045,8 +1045,8 @@ async def test_read_clipboard_dispatches_to_windows():
 async def test_list_clipboard_formats_dispatches_to_backend():
     """list_clipboard_formats calls the correct backend lister."""
     mock_lister = AsyncMock(return_value=["text/plain"])
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
-        with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"x11": mock_lister}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
+        with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"x11": mock_lister}):
             result = await list_clipboard_formats()
 
     assert result == ["text/plain"]
@@ -1062,10 +1062,10 @@ async def test_list_clipboard_formats_dispatches_to_backend():
 async def test_paste_image_prefers_png():
     """clipboard_paste prefers image/png when multiple image formats available."""
     fake_png = b"\x89PNG\r\n\x1a\n"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/tiff", "image/png"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png) as mock_img:
                 result = await clipboard_paste()
 
@@ -1077,10 +1077,10 @@ async def test_paste_image_prefers_png():
 async def test_paste_image_falls_back_to_first():
     """clipboard_paste uses first image format when PNG not available."""
     fake_tiff = b"TIFF_DATA"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/tiff", "image/jpeg"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_tiff) as mock_img:
                 result = await clipboard_paste()
 
@@ -1091,8 +1091,8 @@ async def test_paste_image_falls_back_to_first():
 @pytest.mark.asyncio
 async def test_paste_audio_still_reports_text():
     """clipboard_paste returns text message for audio/video (not image)."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["audio/mpeg"]):
             result = await clipboard_paste()
 
@@ -1104,10 +1104,10 @@ async def test_paste_audio_still_reports_text():
 @pytest.mark.asyncio
 async def test_paste_image_read_failure_graceful():
     """clipboard_paste handles image read failure gracefully."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/png"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        side_effect=ClipboardError("read failed")):
                 result = await clipboard_paste()
 
@@ -1118,10 +1118,10 @@ async def test_paste_image_read_failure_graceful():
 @pytest.mark.asyncio
 async def test_paste_image_empty_data():
     """clipboard_paste handles empty image data (format listed but no data)."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/png"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=b""):
                 result = await clipboard_paste()
 
@@ -1133,7 +1133,7 @@ async def test_paste_image_empty_data():
 # 15. Image read backends
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import (
+from mcp_clipboard.clipboard import (
     _wayland_read_image,
     _x11_read_image,
     _macos_read_image,
@@ -1145,7 +1145,7 @@ from clipboard_mcp.clipboard import (
 async def test_wayland_read_image():
     """_wayland_read_image calls wl-paste with correct type flag."""
     fake_data = b"\x89PNG\r\n\x1a\n"
-    with patch("clipboard_mcp.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
+    with patch("mcp_clipboard.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
         result = await _wayland_read_image("image/png")
 
     assert result == fake_data
@@ -1157,7 +1157,7 @@ async def test_wayland_read_image():
 async def test_x11_read_image():
     """_x11_read_image calls xclip with correct target for binary."""
     fake_data = b"\x89PNG\r\n\x1a\n"
-    with patch("clipboard_mcp.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
+    with patch("mcp_clipboard.clipboard._run_binary", new_callable=AsyncMock, return_value=fake_data) as mock:
         result = await _x11_read_image("image/png")
 
     assert result == fake_data
@@ -1171,7 +1171,7 @@ async def test_macos_read_image():
     import base64
     fake_data = b"\x89PNG\r\n\x1a\n"
     b64_text = base64.b64encode(fake_data).decode()
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
         result = await _macos_read_image("image/png")
 
     assert result == fake_data
@@ -1180,7 +1180,7 @@ async def test_macos_read_image():
 @pytest.mark.asyncio
 async def test_macos_read_image_empty():
     """_macos_read_image returns empty bytes when no image available."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=""):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=""):
         result = await _macos_read_image("image/png")
 
     assert result == b""
@@ -1192,7 +1192,7 @@ async def test_windows_read_image():
     import base64
     fake_data = b"\x89PNG\r\n\x1a\n"
     b64_text = base64.b64encode(fake_data).decode()
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text):
         result = await _windows_read_image("image/png")
 
     assert result == fake_data
@@ -1202,8 +1202,8 @@ async def test_windows_read_image():
 async def test_read_clipboard_image_dispatches():
     """read_clipboard_image dispatches to the correct backend."""
     mock_reader = AsyncMock(return_value=b"IMG")
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
-        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"x11": mock_reader}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"x11": mock_reader}):
             result = await read_clipboard_image("image/png")
 
     assert result == b"IMG"
@@ -1214,7 +1214,7 @@ async def test_read_clipboard_image_dispatches():
 # 16. Clipboard copy
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import (
+from mcp_clipboard.clipboard import (
     _wayland_write,
     _x11_write,
     _macos_write,
@@ -1225,7 +1225,7 @@ from clipboard_mcp.clipboard import (
 @pytest.mark.asyncio
 async def test_clipboard_copy_success():
     """clipboard_copy writes content and returns confirmation."""
-    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock):
+    with patch("mcp_clipboard.server.write_clipboard", new_callable=AsyncMock):
         result = await clipboard_copy("hello world")
 
     assert "11 characters" in result
@@ -1234,7 +1234,7 @@ async def test_clipboard_copy_success():
 @pytest.mark.asyncio
 async def test_clipboard_copy_error():
     """clipboard_copy returns error message on failure."""
-    with patch("clipboard_mcp.server.write_clipboard",
+    with patch("mcp_clipboard.server.write_clipboard",
                side_effect=ClipboardError("write failed")):
         result = await clipboard_copy("hello")
 
@@ -1245,7 +1245,7 @@ async def test_clipboard_copy_error():
 @pytest.mark.asyncio
 async def test_wayland_write():
     """_wayland_write pipes content to wl-copy."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _wayland_write("hello")
 
     cmd = mock.call_args[0][0]
@@ -1257,7 +1257,7 @@ async def test_wayland_write():
 @pytest.mark.asyncio
 async def test_x11_write():
     """_x11_write pipes content to xclip."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _x11_write("hello")
 
     cmd = mock.call_args[0][0]
@@ -1269,7 +1269,7 @@ async def test_x11_write():
 @pytest.mark.asyncio
 async def test_macos_write():
     """_macos_write pipes content to pbcopy."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write("hello")
 
     cmd = mock.call_args[0][0]
@@ -1281,7 +1281,7 @@ async def test_macos_write():
 @pytest.mark.asyncio
 async def test_windows_write():
     """_windows_write pipes content to PowerShell Set-Clipboard."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write("hello")
 
     cmd = mock.call_args[0][0]
@@ -1294,8 +1294,8 @@ async def test_windows_write():
 async def test_write_clipboard_dispatches():
     """write_clipboard dispatches to the correct backend."""
     mock_writer = AsyncMock()
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"wayland": mock_writer}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._WRITERS", {"wayland": mock_writer}):
             await write_clipboard("hello")
 
     mock_writer.assert_called_once_with("hello")
@@ -1305,7 +1305,7 @@ async def test_write_clipboard_dispatches():
 # MIME type parameter handling
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import base_mime_type
+from mcp_clipboard.clipboard import base_mime_type
 
 
 def test_base_mime_type_strips_params():
@@ -1332,9 +1332,9 @@ async def test_read_clipboard_falls_back_to_suffixed_mime():
     async def mock_list():
         return ["text/plain;charset=utf-8", "text/html"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"wayland": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
                 result = await read_clipboard("text/plain")
 
     assert result == "hello from charset"
@@ -1355,9 +1355,9 @@ async def test_read_clipboard_no_fallback_when_exact_match_works():
         list_called = True
         return []
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"wayland": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"wayland": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
                 result = await read_clipboard("text/plain")
 
     assert result == "direct content"
@@ -1377,9 +1377,9 @@ async def test_read_clipboard_no_fallback_on_macos():
         list_called = True
         return ["text/plain;charset=utf-8"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
-        with patch.dict("clipboard_mcp.clipboard._READERS", {"macos": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="macos"):
+        with patch.dict("mcp_clipboard.clipboard._READERS", {"macos": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
                 result = await read_clipboard("text/plain")
 
     assert result == ""
@@ -1399,9 +1399,9 @@ async def test_read_clipboard_image_falls_back_to_suffixed_mime():
     async def mock_list():
         return ["image/png;charset=binary"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
-        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"x11": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"x11": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"x11": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"x11": mock_list}):
                 result = await read_clipboard_image("image/png")
 
     assert result == b"\x89PNG"
@@ -1411,7 +1411,7 @@ async def test_read_clipboard_image_falls_back_to_suffixed_mime():
 async def test_read_raw_allows_svg_with_params():
     """clipboard_read_raw allows image/svg+xml with parameter suffix."""
     svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="50"/></svg>'
-    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=svg):
         result = await clipboard_read_raw(
             mime_type='image/svg+xml;windows_formatname="image/svg+xml"'
         )
@@ -1432,10 +1432,10 @@ async def test_read_raw_rejects_binary_with_params():
 async def test_paste_image_prefers_png_with_params():
     """clipboard_paste prefers PNG even when format has parameter suffix."""
     fake_png = b"\x89PNG\r\n\x1a\n"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/tiff", "image/png;charset=binary"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png) as mock_img:
                 result = await clipboard_paste()
 
@@ -1453,7 +1453,7 @@ async def test_paste_text_with_suffixed_mime():
     """
     # read_clipboard already handles fallback resolution in clipboard.py,
     # so from server.py's perspective, the mock just returns the content.
-    with patch("clipboard_mcp.server.read_clipboard",
+    with patch("mcp_clipboard.server.read_clipboard",
                side_effect=_mock_read(html="", text="Hello from Claude")):
         result = await clipboard_paste()
 
@@ -1464,7 +1464,7 @@ async def test_paste_text_with_suffixed_mime():
 # 18. _run_binary() error handling
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import _run_binary
+from mcp_clipboard.clipboard import _run_binary
 
 
 @pytest.mark.asyncio
@@ -1506,7 +1506,7 @@ async def test_run_binary_returns_raw_bytes():
 # 19. _run_with_stdin() error handling
 # ---------------------------------------------------------------------------
 
-from clipboard_mcp.clipboard import _run_with_stdin
+from mcp_clipboard.clipboard import _run_with_stdin
 
 
 @pytest.mark.asyncio
@@ -1546,10 +1546,10 @@ async def test_run_with_stdin_success():
 async def test_paste_image_format_field_png():
     """clipboard_paste sets Image.format to 'png' for image/png."""
     fake_png = b"\x89PNG\r\n\x1a\n"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/png"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png):
                 result = await clipboard_paste()
 
@@ -1561,10 +1561,10 @@ async def test_paste_image_format_field_png():
 async def test_paste_image_format_field_jpeg():
     """clipboard_paste sets Image.format to 'jpeg' for image/jpeg."""
     fake_jpeg = b"\xff\xd8\xff"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/jpeg"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_jpeg):
                 result = await clipboard_paste()
 
@@ -1576,10 +1576,10 @@ async def test_paste_image_format_field_jpeg():
 async def test_paste_image_format_field_with_params():
     """clipboard_paste strips MIME params before extracting format."""
     fake_png = b"\x89PNG"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["image/png;charset=binary"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png):
                 result = await clipboard_paste()
 
@@ -1590,8 +1590,8 @@ async def test_paste_image_format_field_with_params():
 @pytest.mark.asyncio
 async def test_paste_list_formats_error_falls_through():
     """clipboard_paste handles ClipboardError from list_clipboard_formats gracefully."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    side_effect=ClipboardError("no clipboard")):
             result = await clipboard_paste()
 
@@ -1603,10 +1603,10 @@ async def test_paste_list_formats_error_falls_through():
 async def test_paste_mixed_image_and_audio():
     """clipboard_paste returns image when both image and audio formats are present."""
     fake_png = b"\x89PNG"
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["audio/mpeg", "image/png"]):
-            with patch("clipboard_mcp.server.read_clipboard_image",
+            with patch("mcp_clipboard.server.read_clipboard_image",
                        return_value=fake_png):
                 result = await clipboard_paste()
 
@@ -1616,8 +1616,8 @@ async def test_paste_mixed_image_and_audio():
 @pytest.mark.asyncio
 async def test_paste_video_reports_binary():
     """clipboard_paste reports video MIME types as unsupported binary."""
-    with patch("clipboard_mcp.server.read_clipboard", _mock_read(html="", text="")):
-        with patch("clipboard_mcp.server.list_clipboard_formats",
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats",
                    return_value=["video/mp4"]):
             result = await clipboard_paste()
 
@@ -1636,8 +1636,8 @@ async def test_paste_rtf_fallback():
             return rtf_content
         return ""
 
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=["text/rtf"]):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=mock_read):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["text/rtf"]):
             result = await clipboard_paste()
 
     assert isinstance(result, str)
@@ -1655,8 +1655,8 @@ async def test_paste_rtf_truncated():
             return rtf_content
         return ""
 
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=["text/rtf"]):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=mock_read):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["text/rtf"]):
             result = await clipboard_paste()
 
     assert "truncated" in result
@@ -1673,7 +1673,7 @@ async def test_paste_rtf_skipped_when_text_present():
             raise AssertionError("RTF should not be read when plain text is present")
         return ""
 
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=mock_read):
         result = await clipboard_paste()
 
     assert "hello world" in result
@@ -1687,8 +1687,8 @@ async def test_paste_rtf_error_falls_through():
             raise ClipboardError("rtf not available")
         return ""
 
-    with patch("clipboard_mcp.server.read_clipboard", side_effect=mock_read):
-        with patch("clipboard_mcp.server.list_clipboard_formats", return_value=[]):
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=mock_read):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[]):
             result = await clipboard_paste()
 
     assert "empty" in result.lower()
@@ -1712,9 +1712,9 @@ async def test_read_clipboard_image_no_fallback_on_macos():
         list_called = True
         return ["image/png;charset=binary"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
-        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"macos": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="macos"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"macos": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"macos": mock_list}):
                 result = await read_clipboard_image("image/png")
 
     assert result == b""
@@ -1734,9 +1734,9 @@ async def test_read_clipboard_image_no_fallback_on_windows():
         list_called = True
         return ["image/png;charset=binary"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
-        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"windows": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"windows": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="windows"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"windows": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"windows": mock_list}):
                 result = await read_clipboard_image("image/png")
 
     assert result == b""
@@ -1752,9 +1752,9 @@ async def test_read_clipboard_image_fallback_no_match():
     async def mock_list():
         return ["image/tiff", "text/plain"]
 
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._IMAGE_READERS", {"wayland": mock_reader}):
-            with patch.dict("clipboard_mcp.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"wayland": mock_reader}):
+            with patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"wayland": mock_list}):
                 result = await read_clipboard_image("image/png")
 
     assert result == b""
@@ -1769,8 +1769,8 @@ async def test_read_clipboard_image_fallback_no_match():
 async def test_write_clipboard_dispatches_to_x11():
     """write_clipboard dispatches to x11 backend."""
     mock_writer = AsyncMock()
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="x11"):
-        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"x11": mock_writer}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
+        with patch.dict("mcp_clipboard.clipboard._WRITERS", {"x11": mock_writer}):
             await write_clipboard("test")
 
     mock_writer.assert_called_once_with("test")
@@ -1780,8 +1780,8 @@ async def test_write_clipboard_dispatches_to_x11():
 async def test_write_clipboard_dispatches_to_macos():
     """write_clipboard dispatches to macos backend."""
     mock_writer = AsyncMock()
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="macos"):
-        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"macos": mock_writer}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="macos"):
+        with patch.dict("mcp_clipboard.clipboard._WRITERS", {"macos": mock_writer}):
             await write_clipboard("test")
 
     mock_writer.assert_called_once_with("test")
@@ -1791,8 +1791,8 @@ async def test_write_clipboard_dispatches_to_macos():
 async def test_write_clipboard_dispatches_to_windows():
     """write_clipboard dispatches to windows backend."""
     mock_writer = AsyncMock()
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="windows"):
-        with patch.dict("clipboard_mcp.clipboard._WRITERS", {"windows": mock_writer}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="windows"):
+        with patch.dict("mcp_clipboard.clipboard._WRITERS", {"windows": mock_writer}):
             await write_clipboard("test")
 
     mock_writer.assert_called_once_with("test")
@@ -1807,7 +1807,7 @@ async def test_write_clipboard_dispatches_to_windows():
 async def test_read_raw_allows_application_xml():
     """clipboard_read_raw allows application/xml as text-readable."""
     xml_str = '<?xml version="1.0"?><root/>'
-    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=xml_str):
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=xml_str):
         result = await clipboard_read_raw(mime_type="application/xml")
 
     assert "root" in result
@@ -1818,7 +1818,7 @@ async def test_read_raw_allows_application_xml():
 async def test_read_raw_allows_application_xhtml():
     """clipboard_read_raw allows application/xhtml+xml as text-readable."""
     xhtml = '<html xmlns="http://www.w3.org/1999/xhtml"><body>hi</body></html>'
-    with patch("clipboard_mcp.server.read_clipboard", new_callable=AsyncMock, return_value=xhtml):
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=xhtml):
         result = await clipboard_read_raw(mime_type="application/xhtml+xml")
 
     assert "hi" in result
@@ -1841,7 +1841,7 @@ async def test_read_raw_rejects_octet_stream():
 @pytest.mark.asyncio
 async def test_clipboard_copy_empty_string():
     """clipboard_copy handles empty string input."""
-    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock):
+    with patch("mcp_clipboard.server.write_clipboard", new_callable=AsyncMock):
         result = await clipboard_copy("")
 
     assert "0 characters" in result
@@ -1850,7 +1850,7 @@ async def test_clipboard_copy_empty_string():
 @pytest.mark.asyncio
 async def test_clipboard_copy_unicode():
     """clipboard_copy handles unicode content correctly."""
-    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.server.write_clipboard", new_callable=AsyncMock) as mock:
         result = await clipboard_copy("Hello \U0001f30d \u4f60\u597d")
 
     mock.assert_called_once_with("Hello \U0001f30d \u4f60\u597d")
@@ -1865,7 +1865,7 @@ async def test_clipboard_copy_unicode():
 @pytest.mark.asyncio
 async def test_windows_read_image_empty():
     """_windows_read_image returns empty bytes when no image on clipboard."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=""):
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=""):
         result = await _windows_read_image("image/png")
 
     assert result == b""
@@ -1875,8 +1875,8 @@ async def test_windows_read_image_empty():
 async def test_wayland_write_passes_env():
     """_wayland_write passes env from _wayland_env() to _run_with_stdin."""
     fake_env = {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"}
-    with patch("clipboard_mcp.clipboard._wayland_env", return_value=fake_env):
-        with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._wayland_env", return_value=fake_env):
+        with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
             await _wayland_write("hello")
 
     assert mock.call_args.kwargs["env"] == fake_env
@@ -1888,7 +1888,7 @@ async def test_macos_read_image_jpeg_uti():
     import base64
     fake_data = b"\xff\xd8\xff"
     b64_text = base64.b64encode(fake_data).decode()
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
         result = await _macos_read_image("image/jpeg")
 
     assert result == fake_data
@@ -1903,7 +1903,7 @@ async def test_macos_read_image_unknown_mime_passthrough():
     import base64
     fake_data = b"WEBP_DATA"
     b64_text = base64.b64encode(fake_data).decode()
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
         result = await _macos_read_image("image/webp")
 
     assert result == fake_data
@@ -1927,10 +1927,10 @@ async def test_detect_backend_x11_fallback():
             return "/usr/bin/xclip"
         return None  # wl-paste not found
 
-    with patch("clipboard_mcp.clipboard.platform.system", return_value="Linux"):
-        with patch("clipboard_mcp.clipboard.shutil.which", side_effect=mock_which):
+    with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
+        with patch("mcp_clipboard.clipboard.shutil.which", side_effect=mock_which):
             with patch.dict("os.environ", {}, clear=True):
-                import clipboard_mcp.clipboard as cb
+                import mcp_clipboard.clipboard as cb
                 cb._backend = None
                 result = _detect_backend()
 
@@ -1945,7 +1945,7 @@ async def test_detect_backend_x11_fallback():
 @pytest.mark.asyncio
 async def test_wayland_write_typed_plain():
     """_wayland_write_typed passes --type for text/plain."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _wayland_write_typed("hello", "text/plain")
 
     cmd = mock.call_args[0][0]
@@ -1957,7 +1957,7 @@ async def test_wayland_write_typed_plain():
 @pytest.mark.asyncio
 async def test_wayland_write_typed_html():
     """_wayland_write_typed passes --type text/html."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _wayland_write_typed("<b>hi</b>", "text/html")
 
     cmd = mock.call_args[0][0]
@@ -1969,7 +1969,7 @@ async def test_wayland_write_typed_html():
 @pytest.mark.asyncio
 async def test_x11_write_typed_plain():
     """_x11_write_typed passes -target for text/plain."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _x11_write_typed("hello", "text/plain")
 
     cmd = mock.call_args[0][0]
@@ -1981,7 +1981,7 @@ async def test_x11_write_typed_plain():
 @pytest.mark.asyncio
 async def test_x11_write_typed_html():
     """_x11_write_typed passes -target text/html."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _x11_write_typed("<p>hello</p>", "text/html")
 
     cmd = mock.call_args[0][0]
@@ -1992,7 +1992,7 @@ async def test_x11_write_typed_html():
 @pytest.mark.asyncio
 async def test_macos_write_typed_plain():
     """_macos_write_typed uses pbcopy for text/plain."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed("hello", "text/plain")
 
     cmd = mock.call_args[0][0]
@@ -2003,7 +2003,7 @@ async def test_macos_write_typed_plain():
 @pytest.mark.asyncio
 async def test_macos_write_typed_html():
     """_macos_write_typed uses osascript with public.html UTI for text/html."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
         await _macos_write_typed("<b>hello</b>", "text/html")
 
     script = mock.call_args[0][0][-1]
@@ -2014,7 +2014,7 @@ async def test_macos_write_typed_html():
 @pytest.mark.asyncio
 async def test_macos_write_typed_rtf():
     """_macos_write_typed uses osascript with public.rtf UTI for text/rtf."""
-    with patch("clipboard_mcp.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
         await _macos_write_typed(r"{\rtf1 hello}", "text/rtf")
 
     script = mock.call_args[0][0][-1]
@@ -2031,7 +2031,7 @@ async def test_macos_write_typed_unsupported():
 @pytest.mark.asyncio
 async def test_windows_write_typed_plain():
     """_windows_write_typed uses Set-Clipboard for text/plain."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write_typed("hello", "text/plain")
 
     cmd = mock.call_args[0][0]
@@ -2042,7 +2042,7 @@ async def test_windows_write_typed_plain():
 @pytest.mark.asyncio
 async def test_windows_write_typed_html():
     """_windows_write_typed wraps HTML in CF_HTML format for text/html."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write_typed("<b>hello</b>", "text/html")
 
     data = mock.call_args[0][1]
@@ -2058,7 +2058,7 @@ async def test_windows_write_typed_html():
 @pytest.mark.asyncio
 async def test_windows_write_typed_rtf():
     """_windows_write_typed passes RTF content for text/rtf."""
-    with patch("clipboard_mcp.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write_typed(r"{\rtf1 hi}", "text/rtf")
 
     cmd = mock.call_args[0][0]
@@ -2120,8 +2120,8 @@ def test_windows_html_clipboard_wrap_offsets_are_valid():
 async def test_write_clipboard_typed_dispatches():
     """write_clipboard_typed dispatches to the correct backend."""
     mock_writer = AsyncMock()
-    with patch("clipboard_mcp.clipboard._get_backend", return_value="wayland"):
-        with patch.dict("clipboard_mcp.clipboard._TYPED_WRITERS", {"wayland": mock_writer}):
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._TYPED_WRITERS", {"wayland": mock_writer}):
             await write_clipboard_typed("<b>hi</b>", "text/html")
 
     mock_writer.assert_called_once_with("<b>hi</b>", "text/html")
@@ -2130,7 +2130,7 @@ async def test_write_clipboard_typed_dispatches():
 @pytest.mark.asyncio
 async def test_clipboard_copy_with_mime_type_html():
     """clipboard_copy with mime_type=text/html uses write_clipboard_typed."""
-    with patch("clipboard_mcp.server.write_clipboard_typed", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.server.write_clipboard_typed", new_callable=AsyncMock) as mock:
         result = await clipboard_copy("<b>hello</b>", mime_type="text/html")
 
     mock.assert_called_once_with("<b>hello</b>", "text/html")
@@ -2140,7 +2140,7 @@ async def test_clipboard_copy_with_mime_type_html():
 @pytest.mark.asyncio
 async def test_clipboard_copy_default_mime_type():
     """clipboard_copy defaults to text/plain and uses write_clipboard."""
-    with patch("clipboard_mcp.server.write_clipboard", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.server.write_clipboard", new_callable=AsyncMock) as mock:
         result = await clipboard_copy("hello")
 
     mock.assert_called_once_with("hello")
@@ -2164,7 +2164,7 @@ async def test_clipboard_copy_rejects_audio_mime():
 @pytest.mark.asyncio
 async def test_clipboard_copy_typed_error():
     """clipboard_copy surfaces ClipboardError from write_clipboard_typed."""
-    with patch("clipboard_mcp.server.write_clipboard_typed",
+    with patch("mcp_clipboard.server.write_clipboard_typed",
                side_effect=ClipboardError("unsupported")):
         result = await clipboard_copy("<b>hi</b>", mime_type="text/html")
 

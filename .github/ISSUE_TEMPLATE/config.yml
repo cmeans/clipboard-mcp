@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: README / Setup Guide
+    url: https://github.com/cmeans/mcp-clipboard#setup
+    about: Installation and configuration instructions

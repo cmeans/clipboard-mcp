@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## [2.0.0] - 2026-04-04
+
+### Changed
+- **Breaking**: Renamed PyPI package from `clipboard-mcp-server` to `mcp-clipboard`
+- **Breaking**: Renamed Python package from `clipboard_mcp` to `mcp_clipboard`
+- **Breaking**: CLI command renamed from `clipboard-mcp` to `mcp-clipboard`
+- **Breaking**: Debug env var renamed from `CLIPBOARD_MCP_DEBUG` to `MCP_CLIPBOARD_DEBUG`
+- License changed from MIT to Apache 2.0
+- README rewritten with Claude Code clipboard padding workaround as key feature
+
 ## [1.4.0] - 2026-03-15
 
 ### Added
@@ -116,7 +126,7 @@ All notable changes to this project will be documented here.
 
 ### Fixed
 - `uvx` and `pipx` install instructions corrected to use `--from clipboard-mcp-server`
-  with the `clipboard-mcp` command name (the package name and command name differ)
+  with the `clipboard-mcp` command name
 
 ## [0.1.0] - 2026-02-15
 

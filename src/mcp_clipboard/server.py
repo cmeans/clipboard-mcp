@@ -41,18 +41,18 @@ logger = logging.getLogger(__name__)
 
 
 def _is_debug() -> bool:
-    """Check if debug mode is enabled via --debug flag or CLIPBOARD_MCP_DEBUG env var."""
-    return "--debug" in sys.argv or os.environ.get("CLIPBOARD_MCP_DEBUG", "") == "1"
+    """Check if debug mode is enabled via --debug flag or MCP_CLIPBOARD_DEBUG env var."""
+    return "--debug" in sys.argv or os.environ.get("MCP_CLIPBOARD_DEBUG", "") == "1"
 
 
 def _configure_logging() -> None:
-    """Configure root logging for the clipboard_mcp package."""
+    """Configure root logging for the mcp_clipboard package."""
     level = logging.DEBUG if _is_debug() else logging.WARNING
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logging.getLogger("clipboard_mcp").setLevel(level)
+    logging.getLogger("mcp_clipboard").setLevel(level)
 
 
 _INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
@@ -66,12 +66,12 @@ def _load_instruction(name: str) -> str:
     except FileNotFoundError:
         raise RuntimeError(
             f"Missing instruction file: {path}. "
-            "The clipboard-mcp package may be installed incorrectly."
+            "The mcp-clipboard package may be installed incorrectly."
         ) from None
 
 
 mcp = FastMCP(
-    "clipboard_mcp",
+    "mcp_clipboard",
     instructions=_load_instruction("server"),
 )
 
@@ -383,7 +383,7 @@ async def clipboard_copy(
 
 
 def main() -> None:
-    """Entry point for the clipboard-mcp command."""
+    """Entry point for the mcp-clipboard command."""
     _configure_logging()
     # Strip --debug before FastMCP sees argv
     sys.argv = [a for a in sys.argv if a != "--debug"]

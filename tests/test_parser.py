@@ -1,6 +1,6 @@
 """Tests for the HTML/TSV parser, formatters, and content detection."""
 
-from clipboard_mcp.parser import (
+from mcp_clipboard.parser import (
     detect_content_type,
     extract_html_text,
     format_table,
