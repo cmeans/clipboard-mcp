@@ -60,7 +60,7 @@ All notable changes to this project will be documented here.
 - `_run()` and `_run_binary()` refactored to share a common `_run_subprocess()`
   core, eliminating ~20 lines of duplicated error handling
 - `_configure_logging()` moved from module import time into `main()` so that
-  importing `clipboard_mcp.server` no longer configures root logging as a side
+  importing `mcp_clipboard.server` no longer configures root logging as a side
   effect
 - Added basic MIME type format validation in `clipboard_read_raw` to reject
   malformed input before passing it to a subprocess
@@ -116,12 +116,12 @@ All notable changes to this project will be documented here.
 
 ### Fixed
 - `uvx` and `pipx` install instructions corrected to use `--from clipboard-mcp-server`
-  with the `clipboard-mcp` command name (the package name and command name differ)
+  with the `clipboard-mcp` command name (package renamed to `mcp-clipboard` in v1.5.0)
 
 ## [0.1.0] - 2026-02-15
 
 ### Added
-- Initial PyPI release as `clipboard-mcp-server`
+- Initial PyPI release as `clipboard-mcp-server` (renamed to `mcp-clipboard` in v1.5.0)
 - GitHub Actions trusted publisher workflows for PyPI and TestPyPI
 - `clipboard_paste` — read tables (HTML/TSV → Markdown/JSON/CSV), JSON, URLs, code,
   and plain text from the clipboard

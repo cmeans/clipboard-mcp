@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clipboard-mcp-server"
+name = "mcp-clipboard"
 version = "1.4.0"
 description = "MCP server that reads and writes the system clipboard — tables, text, code, JSON, URLs, images, and more."
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Chris Means", email = "chris.a.means@gmail.com"},
 ]
@@ -16,7 +16,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -30,12 +30,12 @@ dependencies = [
 ]
 
 [project.scripts]
-clipboard-mcp = "clipboard_mcp.server:main"
+mcp-clipboard = "mcp_clipboard.server:main"
 
 [project.urls]
-Homepage = "https://github.com/cmeans/clipboard-mcp"
-Repository = "https://github.com/cmeans/clipboard-mcp"
-Issues = "https://github.com/cmeans/clipboard-mcp/issues"
+Homepage = "https://github.com/cmeans/mcp-clipboard"
+Repository = "https://github.com/cmeans/mcp-clipboard"
+Issues = "https://github.com/cmeans/mcp-clipboard/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -44,8 +44,8 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/clipboard_mcp"]
-artifacts = ["src/clipboard_mcp/instructions/*.md"]
+packages = ["src/mcp_clipboard"]
+artifacts = ["src/mcp_clipboard/instructions/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

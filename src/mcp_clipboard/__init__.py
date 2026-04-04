@@ -2,4 +2,4 @@
 
 from importlib.metadata import version
 
-__version__ = version("clipboard-mcp-server")
+__version__ = version("mcp-clipboard")

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-clipboard-mcp is an MCP (Model Context Protocol) server that reads and writes the system clipboard — tables, plain text, code, JSON, URLs, images, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Images on the clipboard are returned as viewable content; audio and video are detected and reported but not returned.
+mcp-clipboard is an MCP (Model Context Protocol) server that reads and writes the system clipboard — tables, plain text, code, JSON, URLs, images, and more. Preserves structure when possible (e.g. spreadsheet row/column layout from HTML) and returns non-tabular content with smart formatting. Images on the clipboard are returned as viewable content; audio and video are detected and reported but not returned.
 
 ## Commands
 
@@ -22,14 +22,14 @@ uv run pytest tests/test_parser.py
 uv run pytest tests/test_parser.py::test_parse_google_sheets_html
 
 # Run the MCP server (stdio mode)
-uv run clipboard-mcp
+uv run mcp-clipboard
 
 # Run with debug logging
-uv run clipboard-mcp --debug
-# or: CLIPBOARD_MCP_DEBUG=1 uv run clipboard-mcp
+uv run mcp-clipboard --debug
+# or: MCP_CLIPBOARD_DEBUG=1 uv run mcp-clipboard
 
 # Test interactively with MCP Inspector
-uv run mcp dev src/clipboard_mcp/server.py
+uv run mcp dev src/mcp_clipboard/server.py
 
 # Build wheel (to verify packaging)
 uv build --wheel
@@ -43,7 +43,7 @@ git tag test-v0.1.x && git push origin test-v0.1.x  # triggers test-publish.yml 
 
 Three-layer design with clean separation:
 
-- **server.py** — MCP server (`FastMCP`, name `clipboard_mcp`) exposing 4 tools:
+- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 4 tools:
   - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Images are returned as base64-encoded image content. Audio/video are detected and reported.
   - `clipboard_copy(content)` — Writes text to the system clipboard.
   - `clipboard_read_raw(mime_type)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types.
@@ -59,7 +59,7 @@ Three-layer design with clean separation:
 
 ## Testing
 
-Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config is in `pyproject.toml` (`[tool.pytest.ini_options]`). Server tests mock clipboard operations via `unittest.mock.patch` on `clipboard_mcp.server.clipboard`. Parser tests are pure unit tests with no mocking needed. Platform-specific backend tests (macOS, Windows) mock `clipboard_mcp.clipboard._run`.
+Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config is in `pyproject.toml` (`[tool.pytest.ini_options]`). Server tests mock clipboard operations via `unittest.mock.patch` on `mcp_clipboard.server.clipboard`. Parser tests are pure unit tests with no mocking needed. Platform-specific backend tests (macOS, Windows) mock `mcp_clipboard.clipboard._run`.
 
 ## Key Details
 
@@ -67,14 +67,14 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - Only runtime dependency: `mcp[cli]>=1.2.0`
 - HTML parsing uses stdlib `html.parser` (no BeautifulSoup)
 - Pytest config is in `pyproject.toml` (no separate pytest.ini)
-- Entry point: `clipboard_mcp.server:main()`
-- Tool descriptions live in `src/clipboard_mcp/instructions/*.md` — edit those files to change what the host model sees
+- Entry point: `mcp_clipboard.server:main()`
+- Tool descriptions live in `src/mcp_clipboard/instructions/*.md` — edit those files to change what the host model sees
 - `pyproject.toml` `artifacts` setting ensures instruction `.md` files are included in the wheel
-- PyPI package name is `clipboard-mcp-server` (the command and import name remain `clipboard-mcp` / `clipboard_mcp`)
+- PyPI package name, command, and import are all `mcp-clipboard` / `mcp_clipboard`
 - Linux with Wayland is tested on real hardware; X11 has unit tests but is unverified on live hardware; macOS and Windows are complete but untested
 - `clipboard_paste` intentionally has no return type annotation — adding `-> str | Image` causes FastMCP to fail Pydantic schema generation for `Image`
 
 ## Packaging Feature Branches
 
-- **`feature/homebrew-tap`** (local only) — Homebrew formula, update script, and CI template for a `cmeans/homebrew-clipboard-mcp` tap. Formula resource stanzas need populating via `brew update-python-resources` on macOS before the tap can be published. Has 36 transitive dependencies from `mcp[cli]`.
+- **`feature/homebrew-tap`** (local only) — Homebrew formula, update script, and CI template for a `cmeans/homebrew-mcp-clipboard` tap. Formula resource stanzas need populating via `brew update-python-resources` on macOS before the tap can be published. Has 36 transitive dependencies from `mcp[cli]`.
 - **`feature/aur-package`** (pushed to origin) — PKGBUILD for Arch Linux AUR. Ready to test in an Arch VM or Docker container. Note: depends on `python-mcp` which may need its own AUR package first. Test with `makepkg -si` in a VM or Docker build validation per `packaging/aur/README.md`.
