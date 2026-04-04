@@ -292,4 +292,4 @@ catching stale docs, and filling test coverage gaps across every commit.
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-Copyright © 2026 Chris Means
+© 2026 Chris Means
