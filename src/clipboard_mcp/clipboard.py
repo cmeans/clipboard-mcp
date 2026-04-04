@@ -459,6 +459,138 @@ async def _windows_write(content: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Backend typed writers (MIME-aware)
+# ---------------------------------------------------------------------------
+
+
+async def _wayland_write_typed(content: str, mime_type: str) -> None:
+    await _run_with_stdin(
+        ["wl-copy", "--type", mime_type], content.encode(), env=_wayland_env()
+    )
+
+
+async def _x11_write_typed(content: str, mime_type: str) -> None:
+    await _run_with_stdin(
+        ["xclip", "-selection", "clipboard", "-target", mime_type],
+        content.encode(),
+    )
+
+
+async def _macos_write_typed(content: str, mime_type: str) -> None:
+    if mime_type == "text/plain":
+        await _run_with_stdin(["pbcopy"], content.encode())
+        return
+
+    if mime_type in ("text/html", "text/rtf"):
+        uti = "public.html" if mime_type == "text/html" else "public.rtf"
+        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        script = (
+            'use framework "AppKit"\n'
+            'use framework "Foundation"\n'
+            f'set b64 to "{b64}"\n'
+            "set decoded to (current application's NSData's alloc()'s "
+            "initWithBase64EncodedString:b64 options:0)\n"
+            "set pb to current application's NSPasteboard's generalPasteboard()\n"
+            "pb's clearContents()\n"
+            f"pb's setData:decoded forType:\"{uti}\"\n"
+        )
+        await _run(["osascript", "-e", script], allow_empty_exit=False)
+        return
+
+    raise ClipboardError(
+        f"macOS clipboard write does not support MIME type {mime_type!r}. "
+        "Supported: text/plain, text/html, text/rtf"
+    )
+
+
+def _windows_html_clipboard_wrap(html: str) -> str:
+    """Wrap HTML in the Windows CF_HTML clipboard format.
+
+    The CF_HTML format requires a plain-text header containing byte offsets
+    to the start/end of the HTML document and the selected fragment within it.
+    Byte offsets are calculated after encoding to UTF-8.
+    """
+    marker_start = "<!--StartFragment-->"
+    marker_end = "<!--EndFragment-->"
+    body = f"<html><body>{marker_start}{html}{marker_end}</body></html>"
+
+    header_template = (
+        "Version:0.9\r\n"
+        "StartHTML:{start_html:08d}\r\n"
+        "EndHTML:{end_html:08d}\r\n"
+        "StartFragment:{start_frag:08d}\r\n"
+        "EndFragment:{end_frag:08d}\r\n"
+    )
+    # Measure header length using placeholder values (all same digit count)
+    placeholder = header_template.format(
+        start_html=0, end_html=0, start_frag=0, end_frag=0
+    )
+    header_len = len(placeholder.encode("utf-8"))
+    body_bytes = body.encode("utf-8")
+
+    start_html = header_len
+    start_frag = header_len + len(
+        f"<html><body>{marker_start}".encode("utf-8")
+    )
+    end_frag = header_len + body_bytes.index(marker_end.encode("utf-8"))
+    end_html = header_len + len(body_bytes)
+
+    header = header_template.format(
+        start_html=start_html,
+        end_html=end_html,
+        start_frag=start_frag,
+        end_frag=end_frag,
+    )
+    return header + body
+
+
+async def _windows_write_typed(content: str, mime_type: str) -> None:
+    if mime_type == "text/plain":
+        await _run_with_stdin(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+            ],
+            content.encode(),
+        )
+        return
+
+    if mime_type == "text/html":
+        cf_html = _windows_html_clipboard_wrap(content)
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$content = [Console]::In.ReadToEnd(); "
+            "$data = New-Object System.Windows.Forms.DataObject; "
+            "$data.SetData([System.Windows.Forms.DataFormats]::Html, $content); "
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+        )
+        await _run_with_stdin(
+            ["powershell", "-NoProfile", "-Command", script],
+            cf_html.encode("utf-8"),
+        )
+        return
+
+    if mime_type == "text/rtf":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$content = [Console]::In.ReadToEnd(); "
+            "$data = New-Object System.Windows.Forms.DataObject; "
+            "$data.SetData([System.Windows.Forms.DataFormats]::Rtf, $content); "
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+        )
+        await _run_with_stdin(
+            ["powershell", "-NoProfile", "-Command", script],
+            content.encode("utf-8"),
+        )
+        return
+
+    raise ClipboardError(
+        f"Windows clipboard write does not support MIME type {mime_type!r}. "
+        "Supported: text/plain, text/html, text/rtf"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -500,6 +632,13 @@ _WRITERS = {
     "x11": _x11_write,
     "macos": _macos_write,
     "windows": _windows_write,
+}
+
+_TYPED_WRITERS = {
+    "wayland": _wayland_write_typed,
+    "x11": _x11_write_typed,
+    "macos": _macos_write_typed,
+    "windows": _windows_write_typed,
 }
 
 
@@ -560,6 +699,23 @@ async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
 
 
 async def write_clipboard(content: str) -> None:
-    """Write text content to the system clipboard."""
+    """Write plain text to the system clipboard."""
     backend = _get_backend()
     await _WRITERS[backend](content)
+
+
+async def write_clipboard_typed(content: str, mime_type: str) -> None:
+    """Write content to the system clipboard with an explicit MIME type.
+
+    On Wayland and X11, any text MIME type is passed through to the
+    underlying tool (``wl-copy --type`` / ``xclip -target``).  On macOS
+    and Windows, only ``text/plain``, ``text/html``, and ``text/rtf`` are
+    supported; other types raise :exc:`ClipboardError`.
+
+    Note: Wayland and X11 write a single MIME type per call.  Writing
+    multiple types atomically (e.g. both ``text/html`` and ``text/plain``)
+    requires owning the clipboard selection across calls, which is not
+    supported by this implementation.
+    """
+    backend = _get_backend()
+    await _TYPED_WRITERS[backend](content, mime_type)

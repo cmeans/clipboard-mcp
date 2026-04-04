@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented here.
 
+## [1.4.0] - 2026-03-15
+
+### Added
+- `clipboard_copy` gains a `mime_type` parameter (default: `text/plain`) for writing typed clipboard content
+- Wayland and X11: any `text/*` MIME type is passed through to `wl-copy --type` / `xclip -target`
+- macOS: `text/html` written via NSPasteboard (`public.html` UTI); `text/rtf` via `public.rtf` UTI; both use base64 encoding to safely pass content through `osascript`
+- Windows: `text/html` written with the CF_HTML byte-offset header format; `text/rtf` written via `DataFormats::Rtf`
+- Binary MIME types (`image/*`, `audio/*`, `video/*`, `application/octet-stream`) are rejected with a clear error message
+- New `write_clipboard_typed(content, mime_type)` in `clipboard.py`; `_windows_html_clipboard_wrap()` helper for CF_HTML formatting
+
+### Limitations
+- Writing multiple MIME types atomically (e.g. both `text/html` and `text/plain`) in a single clipboard operation is not supported on Wayland/X11 — doing so requires owning the clipboard selection across calls
+
 ## [1.3.0] - 2026-03-15
 
 ### Added
