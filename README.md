@@ -30,6 +30,14 @@ This has been reported repeatedly on the claude-code repo (issues #4686, #6827, 
 
 Claude Code calls `clipboard_copy`, writes the clean text directly to your system clipboard, and you paste it wherever you need it. No padding, no hard wraps, no cleanup.
 
+**Tip:** To make this automatic, add a line to your project or global `CLAUDE.md`:
+
+```
+When you produce a shell command for the user to run, also copy it to the clipboard using clipboard_copy.
+```
+
+Claude Code will then copy every command it suggests without you having to ask.
+
 ## Tools
 
 | Tool | Description |
@@ -284,4 +292,4 @@ catching stale docs, and filling test coverage gaps across every commit.
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-Copyright 2026 Chris Means
+Copyright © 2026 Chris Means

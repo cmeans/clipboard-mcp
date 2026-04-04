@@ -1,0 +1,67 @@
+name: Platform Test Report
+description: Report results from testing on macOS, Windows, or X11
+labels: ["testing", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us verify platform support! Report what works (or doesn't) on your setup.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Windows
+        - Linux (X11)
+        - Linux (Wayland)
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version
+      placeholder: "e.g., macOS 15.3, Windows 11 24H2, Fedora 43"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP Client
+      options:
+        - Claude Desktop
+        - Claude Code
+        - Claude.ai (web/mobile)
+        - Cursor
+        - ChatGPT
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: install_method
+    attributes:
+      label: Install method
+      placeholder: "e.g., uvx, pipx, pip install"
+    validations:
+      required: false
+  - type: checkboxes
+    id: features
+    attributes:
+      label: What worked?
+      options:
+        - label: "clipboard_paste — plain text"
+        - label: "clipboard_paste — table from spreadsheet (HTML)"
+        - label: "clipboard_paste — table from TSV"
+        - label: "clipboard_paste — image"
+        - label: "clipboard_paste — JSON / URL / code detection"
+        - label: "clipboard_copy — write text"
+        - label: "clipboard_copy — write typed content (text/html, text/rtf)"
+        - label: "clipboard_read_raw — read specific MIME type"
+        - label: "clipboard_list_formats — list available formats"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else — quirks, workarounds, error messages, debug logs.
+    validations:
+      required: false
