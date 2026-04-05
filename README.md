@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="128">
+    <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="128">
+    <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="mcp-clipboard logo" width="128">
+  </picture>
+</p>
+
 # mcp-clipboard
 
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
@@ -68,7 +76,7 @@ You also need a platform-specific clipboard tool:
 ### Claude Code
 
 ```bash
-claude mcp add clipboard -- uvx mcp-clipboard
+claude mcp add clipboard --scope user -- uvx mcp-clipboard
 ```
 
 ### Claude Desktop
@@ -260,18 +268,23 @@ mcp-clipboard/
 │   ├── server.py            # MCP server, tool definitions, debug logging
 │   ├── clipboard.py         # Platform-agnostic clipboard backend
 │   ├── parser.py            # HTML table parser, formatters, content detection
-│   └── instructions/        # Tool and server descriptions (loaded at startup)
-│       ├── server.md
-│       ├── clipboard_copy.md
-│       ├── clipboard_paste.md
-│       ├── clipboard_read_raw.md
-│       └── clipboard_list_formats.md
+│   ├── instructions/        # Tool and server descriptions (loaded at startup)
+│   │   ├── server.md
+│   │   ├── clipboard_copy.md
+│   │   ├── clipboard_paste.md
+│   │   ├── clipboard_read_raw.md
+│   │   └── clipboard_list_formats.md
+│   └── icons/               # SVG icons for MCP client display (light/dark)
+│       ├── mcp-clipboard-logo-light.svg
+│       └── mcp-clipboard-logo-dark.svg
 ├── tests/
 │   ├── test_parser.py       # Parser and formatter tests
 │   └── test_server.py       # Server, backend, and Wayland detection tests
-├── .github/workflows/
-│   ├── publish.yml          # PyPI publish on v* tags (OIDC trusted publisher)
-│   └── test-publish.yml     # TestPyPI publish on test-v* tags
+├── .github/
+│   ├── workflows/
+│   │   ├── publish.yml      # PyPI publish on v* tags (OIDC trusted publisher)
+│   │   └── test-publish.yml # TestPyPI publish on test-v* tags
+│   └── ISSUE_TEMPLATE/      # Bug report, feature request, platform test forms
 ├── pyproject.toml
 ├── CHANGELOG.md
 ├── CLAUDE.md                # Claude Code project guidance
@@ -292,4 +305,8 @@ catching stale docs, and filling test coverage gaps across every commit.
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-© 2026 Chris Means
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="24">
+  <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="24">
+  <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="" width="24" align="top">
+</picture> © 2026 Chris Means
