@@ -950,21 +950,15 @@ def test_load_instruction_missing_file():
 
 
 def test_load_icons_returns_icons():
-    """_load_icons returns Icon objects with data URIs for light and dark themes."""
+    """_load_icons returns Icon objects with GitHub URLs for light and dark themes."""
     icons = _load_icons()
     assert len(icons) == 2
     themes = {icon.theme for icon in icons}
     assert themes == {"light", "dark"}
     for icon in icons:
-        assert icon.src.startswith("data:image/svg+xml;base64,")
+        assert icon.src.startswith("https://raw.githubusercontent.com/")
+        assert icon.src.endswith(".svg")
         assert icon.mimeType == "image/svg+xml"
-
-
-def test_load_icons_missing_dir(tmp_path):
-    """_load_icons returns empty list when icons directory doesn't exist."""
-    with patch("mcp_clipboard.server._ICONS_DIR", tmp_path / "nonexistent"):
-        icons = _load_icons()
-    assert icons == []
 
 
 # ---------------------------------------------------------------------------

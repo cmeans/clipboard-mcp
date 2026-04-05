@@ -7,7 +7,6 @@ spreadsheet row/column layout) and returns non-tabular content cleanly.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
@@ -58,7 +57,7 @@ def _configure_logging() -> None:
 
 
 _INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
-_ICONS_DIR = Path(__file__).parent / "icons"
+_ICON_BASE_URL = "https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons"
 
 
 def _load_instruction(name: str) -> str:
@@ -74,18 +73,15 @@ def _load_instruction(name: str) -> str:
 
 
 def _load_icons() -> list[Icon]:
-    """Load SVG icons as base64 data URIs for MCP client display."""
+    """Return Icon objects pointing to hosted SVGs on GitHub."""
     icons = []
     theme_map = {"light": "mcp-clipboard-logo-light.svg", "dark": "mcp-clipboard-logo-dark.svg"}
     for theme, filename in theme_map.items():
-        path = _ICONS_DIR / filename
-        if path.exists():
-            data = base64.b64encode(path.read_bytes()).decode("ascii")
-            icons.append(Icon(
-                src=f"data:image/svg+xml;base64,{data}",
-                mimeType="image/svg+xml",
-                theme=theme,
-            ))
+        icons.append(Icon(
+            src=f"{_ICON_BASE_URL}/{filename}",
+            mimeType="image/svg+xml",
+            theme=theme,
+        ))
     return icons
 
 
