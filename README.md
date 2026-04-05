@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="128">
-    <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="128">
-    <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="mcp-clipboard logo" width="128">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="128">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="128">
+    <img src="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="mcp-clipboard logo" width="128">
   </picture>
 </p>
 
@@ -12,6 +12,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
 [![License](https://img.shields.io/pypi/l/mcp-clipboard)](https://github.com/cmeans/mcp-clipboard/blob/main/LICENSE)
 [![Tests](https://img.shields.io/github/actions/workflow/status/cmeans/mcp-clipboard/test.yml?label=tests)](https://github.com/cmeans/mcp-clipboard/actions/workflows/test.yml)
+[![Coverage](https://codecov.io/gh/cmeans/mcp-clipboard/graph/badge.svg)](https://codecov.io/gh/cmeans/mcp-clipboard)
 [![Downloads](https://img.shields.io/pypi/dm/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
 
@@ -311,7 +312,7 @@ catching stale docs, and filling test coverage gaps across every commit.
 Apache 2.0. See [LICENSE](LICENSE).
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="24">
-  <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="24">
-  <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="" width="24" align="top">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="24">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="24">
+  <img src="https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="" width="24" align="top">
 </picture> © 2026 Chris Means
