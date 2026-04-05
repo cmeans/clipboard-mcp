@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="128">
+    <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="128">
+    <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="mcp-clipboard logo" width="128">
+  </picture>
+</p>
+
 # mcp-clipboard
 
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
@@ -297,4 +305,8 @@ catching stale docs, and filling test coverage gaps across every commit.
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-© 2026 Chris Means
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-dark.svg" width="24">
+  <source media="(prefers-color-scheme: light)" srcset="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" width="24">
+  <img src="src/mcp_clipboard/icons/mcp-clipboard-logo-light.svg" alt="" width="24" align="top">
+</picture> © 2026 Chris Means
