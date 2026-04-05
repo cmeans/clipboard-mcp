@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-clipboard"
-version = "2.0.1"
+version = "2.0.2"
 description = "MCP server that reads and writes the system clipboard — tables, text, code, JSON, URLs, images, and more."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -41,6 +41,7 @@ Issues = "https://github.com/cmeans/mcp-clipboard/issues"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=7.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -51,3 +52,10 @@ artifacts = ["src/mcp_clipboard/instructions/*.md", "src/mcp_clipboard/icons/*.s
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["mcp_clipboard"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## [2.0.2] - 2026-04-05
+
+### Added
+- Test coverage reporting via pytest-cov and Codecov (96% coverage)
+- Coverage badge in README
+- PyPI, CI, license, and download badges in README
+
+### Fixed
+- README images now use absolute GitHub URLs so logos render on PyPI
+
 ## [2.0.1] - 2026-04-04
 
 ### Added
