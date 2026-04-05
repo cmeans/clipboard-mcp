@@ -6,8 +6,6 @@ All notable changes to this project will be documented here.
 
 ### Added
 - Server icons (light/dark SVG) embedded as data URIs via FastMCP `icons` parameter
-- GitHub issue templates (bug report, feature request, platform test report)
-- Social preview image for GitHub repository
 
 ### Fixed
 - Claude Code install command now uses `--scope user` for global availability

@@ -269,7 +269,6 @@ mcp-clipboard/
 │   └── icons/               # SVG icons for MCP client display (light/dark)
 │       ├── mcp-clipboard-logo-light.svg
 │       └── mcp-clipboard-logo-dark.svg
-├── assets/icons/            # Source icons, favicons, and social preview
 ├── tests/
 │   ├── test_parser.py       # Parser and formatter tests
 │   └── test_server.py       # Server, backend, and Wayland detection tests
