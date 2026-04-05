@@ -1,0 +1,27 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1280" height="640" fill="#0c1929"/>
+
+  <!-- Icon (centered, scaled to ~280px tall) -->
+  <g transform="translate(340, 100) scale(0.55)">
+    <!-- Clipboard body -->
+    <rect x="120" y="100" width="272" height="332" rx="24" fill="#1c3654"/>
+    <!-- Clipboard clip -->
+    <rect x="168" y="68" width="176" height="48" rx="20" fill="#7dd3fc"/>
+    <!-- Text lines -->
+    <line x1="176" y1="196" x2="336" y2="196" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round"/>
+    <line x1="176" y1="244" x2="304" y2="244" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round"/>
+    <line x1="176" y1="292" x2="320" y2="292" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round"/>
+    <line x1="176" y1="340" x2="280" y2="340" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round"/>
+    <!-- Right arrow -->
+    <path d="M424 220 L472 220 L456 204 M472 220 L456 236" fill="none" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Left arrow -->
+    <path d="M88 300 L40 300 L56 284 M40 300 L56 316" fill="none" stroke="#7dd3fc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Project name -->
+  <text x="640" y="520" font-family="system-ui, -apple-system, sans-serif" font-size="64" font-weight="600" fill="#7dd3fc" text-anchor="middle">mcp-clipboard</text>
+
+  <!-- Tagline -->
+  <text x="640" y="575" font-family="system-ui, -apple-system, sans-serif" font-size="28" fill="#7dd3fc" fill-opacity="0.6" text-anchor="middle">Clipboard MCP server for AI assistants</text>
+</svg>

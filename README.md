@@ -68,7 +68,7 @@ You also need a platform-specific clipboard tool:
 ### Claude Code
 
 ```bash
-claude mcp add clipboard -- uvx mcp-clipboard
+claude mcp add clipboard --scope user -- uvx mcp-clipboard
 ```
 
 ### Claude Desktop
@@ -260,18 +260,24 @@ mcp-clipboard/
 │   ├── server.py            # MCP server, tool definitions, debug logging
 │   ├── clipboard.py         # Platform-agnostic clipboard backend
 │   ├── parser.py            # HTML table parser, formatters, content detection
-│   └── instructions/        # Tool and server descriptions (loaded at startup)
-│       ├── server.md
-│       ├── clipboard_copy.md
-│       ├── clipboard_paste.md
-│       ├── clipboard_read_raw.md
-│       └── clipboard_list_formats.md
+│   ├── instructions/        # Tool and server descriptions (loaded at startup)
+│   │   ├── server.md
+│   │   ├── clipboard_copy.md
+│   │   ├── clipboard_paste.md
+│   │   ├── clipboard_read_raw.md
+│   │   └── clipboard_list_formats.md
+│   └── icons/               # SVG icons for MCP client display (light/dark)
+│       ├── mcp-clipboard-logo-light.svg
+│       └── mcp-clipboard-logo-dark.svg
+├── assets/icons/            # Source icons, favicons, and social preview
 ├── tests/
 │   ├── test_parser.py       # Parser and formatter tests
 │   └── test_server.py       # Server, backend, and Wayland detection tests
-├── .github/workflows/
-│   ├── publish.yml          # PyPI publish on v* tags (OIDC trusted publisher)
-│   └── test-publish.yml     # TestPyPI publish on test-v* tags
+├── .github/
+│   ├── workflows/
+│   │   ├── publish.yml      # PyPI publish on v* tags (OIDC trusted publisher)
+│   │   └── test-publish.yml # TestPyPI publish on test-v* tags
+│   └── ISSUE_TEMPLATE/      # Bug report, feature request, platform test forms
 ├── pyproject.toml
 ├── CHANGELOG.md
 ├── CLAUDE.md                # Claude Code project guidance

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## [2.0.1] - 2026-04-04
+
+### Added
+- Server icons (light/dark SVG) embedded as data URIs via FastMCP `icons` parameter
+- GitHub issue templates (bug report, feature request, platform test report)
+- Social preview image for GitHub repository
+
+### Fixed
+- Claude Code install command now uses `--scope user` for global availability
+
 ## [2.0.0] - 2026-04-04
 
 ### Changed
