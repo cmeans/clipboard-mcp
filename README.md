@@ -11,7 +11,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
 [![Python versions](https://img.shields.io/pypi/pyversions/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
 [![License](https://img.shields.io/pypi/l/mcp-clipboard)](https://github.com/cmeans/mcp-clipboard/blob/main/LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/cmeans/mcp-clipboard/test.yml?label=tests)](https://github.com/cmeans/mcp-clipboard/actions/workflows/test.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/cmeans/mcp-clipboard/ci.yml?label=CI)](https://github.com/cmeans/mcp-clipboard/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/cmeans/mcp-clipboard/graph/badge.svg)](https://codecov.io/gh/cmeans/mcp-clipboard)
 [![Downloads](https://img.shields.io/pypi/dm/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
