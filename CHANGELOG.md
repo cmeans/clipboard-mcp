@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented here.
 
+## [Unreleased]
+
+### Added
+- QA workflow labels and `pr-labels` / `qa-gate` automation, matching
+  `mcp-synology` and `mcp-awareness`. Adds `Dev Active`, `Awaiting CI`,
+  `Ready for QA`, `QA Active`, `Ready for QA Signoff`, `QA Failed`,
+  `QA Approved`, `CI Failed`, `merge-order: 0`–`3`, and `dependencies`
+  labels. New workflows: `pr-labels.yml`, `pr-labels-ci.yml`,
+  `qa-gate.yml`.
+
+### Changed
+- Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow
+  `name:` from `Tests` to `CI` for cross-repo consistency. README
+  badge URL updated to match.
+
 ## [2.0.2] - 2026-04-05
 
 ### Added
