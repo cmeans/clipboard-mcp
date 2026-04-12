@@ -24,6 +24,11 @@ All notable changes to this project will be documented here.
   titled `Conduct` as a workaround for GitHub's lack of a general
   private-contact channel. Closes #25.
 
+### Fixed
+- Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the
+  `markdown` and `notion` output formats, preventing column-structure corruption
+  in rendered tables. Closes #16.
+
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow
   `name:` from `Tests` to `CI` for cross-repo consistency. README

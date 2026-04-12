@@ -1,5 +1,7 @@
 """Tests for the HTML/TSV parser, formatters, and content detection."""
 
+import re
+
 from mcp_clipboard.parser import (
     detect_content_type,
     extract_html_text,
@@ -464,3 +466,82 @@ def test_format_destination_ragged_rows():
     for fmt in ("slack", "jira", "confluence", "html"):
         result = format_table(rows, fmt)
         assert result  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# Markdown/Notion escaping (#16)
+# ---------------------------------------------------------------------------
+
+
+def test_format_markdown_escapes_pipe_in_data():
+    """Pipe in a data cell must not break column structure."""
+    rows = [["Cmd", "Desc"], ["cat | grep", "filter"]]
+    result = format_table(rows, "markdown")
+    lines = result.strip().split("\n")
+    # Header + separator + 1 data row
+    assert len(lines) == 3
+    # Every line must have the same number of unescaped pipe delimiters
+    # (escaped pipes \| do not count as delimiters)
+    # 2-column table: | col1 | col2 | = 3 unescaped pipes per line
+    for line in lines:
+        # Count unescaped pipes: pipes not preceded by backslash
+        delimiters = len(re.findall(r"(?<!\\)\|", line))
+        assert delimiters == 3, f"Expected 3 pipe delimiters, got {delimiters} in: {line}"
+    # The escaped pipe must appear in the output
+    assert r"cat \| grep" in result
+
+
+def test_format_markdown_escapes_pipe_in_header():
+    """Pipe in a header cell must not break column structure."""
+    rows = [["A|B", "C"], ["1", "2"]]
+    result = format_table(rows, "markdown")
+    lines = result.strip().split("\n")
+    assert len(lines) == 3
+    assert r"A\|B" in result
+
+
+def test_format_markdown_escapes_double_pipe():
+    """Double pipe || must not create extra columns."""
+    rows = [["X", "Y"], ["a||b", "c"]]
+    result = format_table(rows, "markdown")
+    for line in result.strip().split("\n"):
+        delimiters = len(re.findall(r"(?<!\\)\|", line))
+        assert delimiters == 3  # 2-column table: | col1 | col2 | = 3 unescaped pipes
+
+
+def test_format_markdown_escapes_backslash():
+    r"""Backslash must be escaped so \| in source doesn't become a bare pipe."""
+    rows = [["Val"], [r"a\b"]]
+    result = format_table(rows, "markdown")
+    assert r"a\\b" in result
+
+
+def test_format_markdown_escapes_backslash_pipe():
+    r"""Source \| must become \\| (escaped backslash + escaped pipe)."""
+    rows = [["Val"], [r"a\|b"]]
+    result = format_table(rows, "markdown")
+    assert r"a\\\|b" in result
+
+
+def test_format_markdown_leading_trailing_pipe():
+    """Leading/trailing pipes in cell values must be escaped."""
+    rows = [["Col"], ["|leading"], ["trailing|"], ["|both|"]]
+    result = format_table(rows, "markdown")
+    lines = result.strip().split("\n")
+    # header + sep + 3 data rows = 5 lines
+    assert len(lines) == 5
+    for line in lines:
+        delimiters = len(re.findall(r"(?<!\\)\|", line))
+        assert delimiters == 2  # single column: | cell |
+    assert r"\|leading" in result
+    assert r"trailing\|" in result
+    assert r"\|both\|" in result
+
+
+def test_format_notion_escapes_pipe():
+    """Notion uses _format_markdown, so escaping must apply there too."""
+    rows = [["A", "B"], ["x|y", "z"]]
+    md_result = format_table(rows, "markdown")
+    notion_result = format_table(rows, "notion")
+    assert md_result == notion_result
+    assert r"x\|y" in notion_result
