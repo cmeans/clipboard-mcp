@@ -28,16 +28,17 @@ All notable changes to this project will be documented here.
 - Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the
   `markdown` and `notion` output formats, preventing column-structure corruption
   in rendered tables. Closes #16.
-
-### Changed
-- Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow
-  `name:` from `Tests` to `CI` for cross-repo consistency. README
-  badge URL updated to match.
-
-### Fixed
 - Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the
   `jira` and `confluence` output formats, preventing cell-boundary corruption
   and accidental header syntax. Closes #17.
+- Added parametrized escaping test matrix covering special characters
+  (pipes, backslashes, angle brackets, quotes, backticks, newlines,
+  multibyte) across all 8 output formats. Closes #18.
+
+### Changed
+- Renamed `.github/workflows/test.yml` -> `ci.yml` and the workflow
+  `name:` from `Tests` to `CI` for cross-repo consistency. README
+  badge URL updated to match.
 
 ## [2.0.2] - 2026-04-05
 
