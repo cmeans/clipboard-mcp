@@ -214,7 +214,7 @@ async def clipboard_paste(
         row_count = len(rows)
         col_count = max(len(r) for r in rows) if rows else 0
         formatted = format_table(rows, output_format)  # type: ignore[arg-type]
-        result = f"Found table: {row_count} rows x {col_count} columns\n\n{formatted}"
+        result = f"Found table: {row_count} rows \u00d7 {col_count} columns\n\n{formatted}"
 
         if include_schema:
             types = infer_column_types(rows)

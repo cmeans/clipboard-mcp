@@ -81,7 +81,7 @@ async def test_paste_table_from_html():
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="markdown")
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     assert "| Name" in result
     assert "| Alice" in result
     assert "| Bob" in result
@@ -93,7 +93,7 @@ async def test_paste_table_json():
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="json")
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     import json
 
     json_part = result.split("\n\n", 1)[1]
@@ -108,7 +108,7 @@ async def test_paste_table_csv():
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="csv")
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     assert '"Name","Age","City"' in result
     assert '"Alice","30","Portland"' in result
 
@@ -119,7 +119,7 @@ async def test_paste_format_case_insensitive():
     for fmt in ("JSON", "Json", "jSoN", " json ", "CSV", "Csv", "MARKDOWN"):
         with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=SAMPLE_HTML)):
             result = await clipboard_paste(output_format=fmt)
-        assert "3 rows x 3 columns" in result, f"Failed for format {fmt!r}"
+        assert "3 rows \u00d7 3 columns" in result, f"Failed for format {fmt!r}"
 
 
 @pytest.mark.asyncio
@@ -136,7 +136,7 @@ async def test_paste_with_schema():
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=SAMPLE_HTML)):
         result = await clipboard_paste(output_format="markdown", include_schema=True)
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     assert "Column types" in result
     assert "| Name" in result
     assert "| Age" in result
@@ -194,7 +194,7 @@ async def test_paste_confluence_format():
         result_jira = await clipboard_paste(output_format="jira")
         result_confluence = await clipboard_paste(output_format="confluence")
 
-    # Strip the "Found table: N rows x N columns" prefix — it's identical
+    # Strip the "Found table: N rows \u00d7 N columns" prefix — it's identical
     assert result_jira == result_confluence
 
 
@@ -242,7 +242,7 @@ async def test_paste_tsv_fallback():
     ):
         result = await clipboard_paste(output_format="markdown")
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     assert "| Name" in result
     assert "| Alice" in result
 
@@ -259,7 +259,7 @@ async def test_paste_tsv_when_html_errors():
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mixed_read):
         result = await clipboard_paste(output_format="markdown")
 
-    assert "3 rows x 3 columns" in result
+    assert "3 rows \u00d7 3 columns" in result
     assert "| Alice" in result
 
 
