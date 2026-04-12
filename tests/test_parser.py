@@ -545,3 +545,64 @@ def test_format_notion_escapes_pipe():
     notion_result = format_table(rows, "notion")
     assert md_result == notion_result
     assert r"x\|y" in notion_result
+
+
+# ---------------------------------------------------------------------------
+# Jira/Confluence escaping (#17)
+# ---------------------------------------------------------------------------
+
+
+def test_format_jira_escapes_pipe_in_data():
+    """Pipe in a data cell must not break cell boundaries."""
+    rows = [["Cmd", "Desc"], ["cat | grep", "filter"]]
+    result = format_table(rows, "jira")
+    lines = result.strip().split("\n")
+    assert len(lines) == 2  # 1 header + 1 data row
+    # Header line has 3 cells: ||Cmd||Desc||
+    assert lines[0].count("||") == 3  # opening + between + closing = 3 occurrences for 2 columns
+    # Data line: |cat \| grep|filter|
+    assert r"cat \| grep" in result
+
+
+def test_format_jira_escapes_pipe_in_header():
+    """Pipe in a header cell must not create extra columns."""
+    rows = [["A|B", "C"], ["1", "2"]]
+    result = format_table(rows, "jira")
+    lines = result.strip().split("\n")
+    assert len(lines) == 2
+    assert r"A\|B" in result
+
+
+def test_format_jira_escapes_double_pipe():
+    """|| in a data cell must not create accidental header markup."""
+    rows = [["X", "Y"], ["a||b", "c"]]
+    result = format_table(rows, "jira")
+    lines = result.strip().split("\n")
+    # Data row should still have exactly 2 cells
+    data_line = lines[1]
+    # The || should be escaped to \|\|
+    assert r"a\|\|b" in data_line
+
+
+def test_format_jira_escapes_backslash():
+    r"""Backslash must be escaped to avoid swallowing the next character."""
+    rows = [["Val"], [r"a\b"]]
+    result = format_table(rows, "jira")
+    assert r"a\\b" in result
+
+
+def test_format_jira_leading_trailing_pipe():
+    """Leading/trailing pipes in cell values must be escaped."""
+    rows = [["Col"], ["|leading"], ["trailing|"]]
+    result = format_table(rows, "jira")
+    lines = result.strip().split("\n")
+    assert len(lines) == 3  # 1 header + 2 data rows
+    assert r"\|leading" in result
+    assert r"trailing\|" in result
+
+
+def test_format_confluence_escapes_same_as_jira():
+    """Confluence uses _format_jira, so escaping must apply."""
+    rows = [["A"], ["x|y"]]
+    assert format_table(rows, "confluence") == format_table(rows, "jira")
+    assert r"x\|y" in format_table(rows, "confluence")
