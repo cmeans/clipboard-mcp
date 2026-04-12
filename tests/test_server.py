@@ -2270,3 +2270,28 @@ async def test_clipboard_copy_typed_error():
 
     assert "Error" in result
     assert "unsupported" in result
+
+
+# ---------------------------------------------------------------------------
+# __version__ resilience (#28)
+# ---------------------------------------------------------------------------
+
+
+def test_version_fallback_when_not_installed():
+    """__version__ should not crash when the package is not installed."""
+    from importlib.metadata import PackageNotFoundError
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch(
+        "importlib.metadata.version", side_effect=PackageNotFoundError("mcp-clipboard")
+    ):
+        # Re-import to trigger the version lookup
+        import importlib
+
+        import mcp_clipboard
+
+        importlib.reload(mcp_clipboard)
+        assert mcp_clipboard.__version__ == "0.0.0+dev"
+
+    # Restore the real version
+    importlib.reload(mcp_clipboard)
