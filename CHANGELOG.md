@@ -13,6 +13,9 @@ All notable changes to this project will be documented here.
   always returning PNG. Maps `image/jpeg`, `image/bmp`, `image/gif`,
   and `image/tiff` to their .NET `ImageFormat` equivalents. Rejects
   unsupported types with `ClipboardError`. Closes #34.
+- Truncation message now says "50,000 characters" instead of "50KB".
+  The limit is a character count, not a byte count. Constant renamed
+  from `_MAX_CONTENT_LEN` to `_MAX_CONTENT_CHARS`. Closes #37.
 
 ## [2.1.0] - 2026-04-12
 

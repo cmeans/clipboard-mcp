@@ -97,7 +97,7 @@ mcp = FastMCP(
 
 
 _VALID_FORMATS = set(get_args(OutputFormat))
-_MAX_CONTENT_LEN = 50_000
+_MAX_CONTENT_CHARS = 50_000
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
 _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
 
@@ -145,8 +145,8 @@ def _format_non_tabular(text: str) -> str:
 
     # Truncate large content
     truncated = False
-    if len(text) > _MAX_CONTENT_LEN:
-        text = text[:_MAX_CONTENT_LEN]
+    if len(text) > _MAX_CONTENT_CHARS:
+        text = text[:_MAX_CONTENT_CHARS]
         truncated = True
 
     content_type = detect_content_type(text)
@@ -168,7 +168,7 @@ def _format_non_tabular(text: str) -> str:
         result = f"Clipboard content:\n\n{text}"
 
     if truncated:
-        result += "\n\n... [truncated at 50KB]"
+        result += "\n\n... [truncated at 50,000 characters]"
 
     return result
 
@@ -243,11 +243,11 @@ async def clipboard_paste(
         try:
             rtf = await read_clipboard("text/rtf")
             if rtf.strip():
-                truncated = len(rtf) > _MAX_CONTENT_LEN
-                display = rtf[:_MAX_CONTENT_LEN]
+                truncated = len(rtf) > _MAX_CONTENT_CHARS
+                display = rtf[:_MAX_CONTENT_CHARS]
                 result = f"Clipboard contains rich text (RTF):\n\n```\n{display}\n```"
                 if truncated:
-                    result += "\n\n... [truncated at 50KB]"
+                    result += "\n\n... [truncated at 50,000 characters]"
                 return result
         except ClipboardError as e:
             logger.debug("RTF clipboard read failed: %s", e)
@@ -327,10 +327,10 @@ async def clipboard_read_raw(
         return f"No content available for MIME type: {mime_type}"
 
     # Truncate very large content to avoid overwhelming the context
-    if len(content) > _MAX_CONTENT_LEN:
+    if len(content) > _MAX_CONTENT_CHARS:
         return (
-            f"Content ({len(content)} chars, truncated to {_MAX_CONTENT_LEN}):\n\n"
-            f"{content[:_MAX_CONTENT_LEN]}\n\n... [truncated]"
+            f"Content ({len(content)} chars, truncated to {_MAX_CONTENT_CHARS}):\n\n"
+            f"{content[:_MAX_CONTENT_CHARS]}\n\n... [truncated]"
         )
 
     return f"Content ({len(content)} chars):\n\n{content}"
