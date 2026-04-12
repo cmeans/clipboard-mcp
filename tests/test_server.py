@@ -2282,7 +2282,9 @@ def test_version_fallback_when_not_installed():
     from importlib.metadata import PackageNotFoundError
     from unittest.mock import patch as mock_patch
 
-    with mock_patch("importlib.metadata.version", side_effect=PackageNotFoundError("mcp-clipboard")):
+    with mock_patch(
+        "importlib.metadata.version", side_effect=PackageNotFoundError("mcp-clipboard")
+    ):
         # Re-import to trigger the version lookup
         import importlib
 
