@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented here.
 
-## [Unreleased]
+## [2.1.1] - 2026-04-12
 
 ### Fixed
 - `detect_content_type` no longer false-positives on prose containing
