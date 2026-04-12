@@ -98,6 +98,7 @@ mcp = FastMCP(
 
 _VALID_FORMATS = set(get_args(OutputFormat))
 _MAX_CONTENT_CHARS = 50_000
+_MAX_WRITE_BYTES = int(os.environ.get("MCP_CLIPBOARD_MAX_WRITE_BYTES", 1_048_576))
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
 _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
 
@@ -387,6 +388,13 @@ async def clipboard_copy(
     mime_type: str = "text/plain",
 ) -> str:
     mime_type = mime_type.strip().lower()
+    content_bytes = len(content.encode())
+    if content_bytes > _MAX_WRITE_BYTES:
+        return (
+            f"Content exceeds clipboard write limit "
+            f"({content_bytes:,} bytes, max {_MAX_WRITE_BYTES:,}). "
+            f"Set MCP_CLIPBOARD_MAX_WRITE_BYTES to increase."
+        )
     is_binary = (
         any(mime_type.startswith(p) for p in _BINARY_MIME_PREFIXES)
         or mime_type in _BINARY_MIME_EXACT
