@@ -23,8 +23,6 @@ All notable changes to this project will be documented here.
   reference; reports route through a Private Security Advisory
   titled `Conduct` as a workaround for GitHub's lack of a general
   private-contact channel. Closes #25.
-
-### Added
 - Parametrized escaping test matrix covering special characters
   (pipes, backslashes, angle brackets, quotes, backticks, newlines,
   multibyte) across all 8 output formats. Closes #18.
