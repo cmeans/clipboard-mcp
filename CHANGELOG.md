@@ -16,6 +16,9 @@ All notable changes to this project will be documented here.
 - Truncation message now says "50,000 characters" instead of "50KB".
   The limit is a character count, not a byte count. Constant renamed
   from `_MAX_CONTENT_LEN` to `_MAX_CONTENT_CHARS`. Closes #37.
+- `__version__` no longer crashes with `PackageNotFoundError` when
+  running from source without installing. Falls back to `"0.0.0+dev"`.
+  Closes #28.
 
 ## [2.1.0] - 2026-04-12
 
