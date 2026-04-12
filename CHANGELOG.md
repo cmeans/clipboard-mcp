@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here.
 
+## [Unreleased]
+
+### Added
+- Opt-in integration test suite (`tests/test_integration.py`) that
+  exercises real clipboard tools. Skipped by default; run with
+  `uv run pytest -m integration`. Covers text round-trip, unicode,
+  multiline, special characters, format listing, and unavailable
+  MIME types. Closes #23.
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed

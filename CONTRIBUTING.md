@@ -60,10 +60,13 @@ For anything bigger than a one-line fix:
 
 ```bash
 uv sync --extra dev    # install runtime + dev dependencies
-uv run pytest          # run the full test suite
+uv run pytest          # run the full test suite (mocked, no clipboard needed)
 uv run pytest tests/test_parser.py           # single test file
 uv run pytest -k "test_format_html"          # single test by name
+uv run pytest -m integration               # integration tests (real clipboard)
 ```
+
+**Integration tests** (`tests/test_integration.py`) exercise real clipboard tools (`wl-paste`, `xclip`, `pbpaste`, etc.) and are skipped by default. Run them with `-m integration` if you have a clipboard daemon available. These are especially useful for platform testers (#5, #10).
 
 Requires **Python 3.11+**. See the [`README → Development`](README.md#development) section for additional commands (build, debug logging, MCP Inspector).
 

@@ -12,7 +12,7 @@ mcp-clipboard is an MCP (Model Context Protocol) server that reads and writes th
 # Install dependencies
 uv sync
 
-# Run all tests
+# Run all tests (mocked, no clipboard needed)
 uv run pytest
 
 # Run a single test file
@@ -20,6 +20,9 @@ uv run pytest tests/test_parser.py
 
 # Run a single test function
 uv run pytest tests/test_parser.py::test_parse_google_sheets_html
+
+# Run integration tests (requires real clipboard daemon)
+uv run pytest -m integration
 
 # Run the MCP server (stdio mode)
 uv run mcp-clipboard
