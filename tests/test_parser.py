@@ -221,6 +221,15 @@ def test_extract_html_text_strips_script_style():
     assert "alert" not in text
 
 
+def test_extract_html_text_consecutive_skip_tags():
+    """Consecutive script/style tags should each be fully skipped."""
+    html = "<style>css{}</style><script>js()</script><p>Visible</p>"
+    text = extract_html_text(html)
+    assert "Visible" in text
+    assert "css" not in text
+    assert "js" not in text
+
+
 def test_extract_html_text_br_newlines():
     html = "Line one<br>Line two<br/>Line three"
     text = extract_html_text(html)

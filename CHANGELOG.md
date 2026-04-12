@@ -13,6 +13,12 @@ All notable changes to this project will be documented here.
 - `py.typed` PEP 561 marker so downstream type checkers (mypy, pyright)
   see the package's type annotations. Closes #33.
 
+### Fixed
+- `_TextExtractor` now uses a depth counter instead of a boolean for
+  skipping `<script>`/`<style>` content. Prevents `</style>` from
+  prematurely re-enabling text extraction when inside a `<script>` tag
+  (and vice versa). Closes #36.
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed
