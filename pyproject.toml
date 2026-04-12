@@ -74,7 +74,6 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 module = "mcp.*"
 ignore_missing_imports = true
-ignore_errors = true
 
 [tool.coverage.run]
 source = ["mcp_clipboard"]
