@@ -57,7 +57,9 @@ def _configure_logging() -> None:
 
 
 _INSTRUCTIONS_DIR = Path(__file__).parent / "instructions"
-_ICON_BASE_URL = "https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons"
+_ICON_BASE_URL = (
+    "https://raw.githubusercontent.com/cmeans/mcp-clipboard/main/src/mcp_clipboard/icons"
+)
 
 
 def _load_instruction(name: str) -> str:
@@ -77,11 +79,13 @@ def _load_icons() -> list[Icon]:
     icons = []
     theme_map = {"light": "mcp-clipboard-logo-light.svg", "dark": "mcp-clipboard-logo-dark.svg"}
     for theme, filename in theme_map.items():
-        icons.append(Icon(
-            src=f"{_ICON_BASE_URL}/{filename}",
-            mimeType="image/svg+xml",
-            theme=theme,
-        ))
+        icons.append(
+            Icon(  # type: ignore[call-arg]
+                src=f"{_ICON_BASE_URL}/{filename}",
+                mimeType="image/svg+xml",
+                theme=theme,
+            )
+        )
     return icons
 
 
@@ -172,7 +176,7 @@ def _format_non_tabular(text: str) -> str:
 @mcp.tool(
     name="clipboard_paste",
     description=_load_instruction("clipboard_paste"),
-    annotations={
+    annotations={  # type: ignore[arg-type]
         "title": "Paste Clipboard",
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -209,8 +213,8 @@ async def clipboard_paste(
     if rows:
         row_count = len(rows)
         col_count = max(len(r) for r in rows) if rows else 0
-        formatted = format_table(rows, output_format)
-        result = f"Found table: {row_count} rows × {col_count} columns\n\n{formatted}"
+        formatted = format_table(rows, output_format)  # type: ignore[arg-type]
+        result = f"Found table: {row_count} rows x {col_count} columns\n\n{formatted}"
 
         if include_schema:
             types = infer_column_types(rows)
@@ -220,7 +224,7 @@ async def clipboard_paste(
                 while len(headers) < len(types):
                     headers.append(f"Col {len(headers) + 1}")
                 schema_rows = [["Column", "Type"]] + [
-                    [h, t] for h, t in zip(headers, types)
+                    [h, t] for h, t in zip(headers, types, strict=False)
                 ]
                 schema_table = format_table(schema_rows, "markdown")
                 result += f"\n\n**Column types:**\n\n{schema_table}"
@@ -268,7 +272,8 @@ async def clipboard_paste(
                     logger.debug("Image read failed: %s", e)
             # Non-image binary (audio/video) — report but can't return
             binary = [
-                f for f in formats
+                f
+                for f in formats
                 if (f.startswith(_BINARY_MIME_PREFIXES) or f in _BINARY_MIME_EXACT)
                 and not f.startswith("image/")
             ]
@@ -287,7 +292,7 @@ async def clipboard_paste(
 @mcp.tool(
     name="clipboard_read_raw",
     description=_load_instruction("clipboard_read_raw"),
-    annotations={
+    annotations={  # type: ignore[arg-type]
         "title": "Read Raw Clipboard",
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -334,7 +339,7 @@ async def clipboard_read_raw(
 @mcp.tool(
     name="clipboard_list_formats",
     description=_load_instruction("clipboard_list_formats"),
-    annotations={
+    annotations={  # type: ignore[arg-type]
         "title": "List Clipboard Formats",
         "readOnlyHint": True,
         "destructiveHint": False,
@@ -369,7 +374,7 @@ async def clipboard_list_formats() -> str:
 @mcp.tool(
     name="clipboard_copy",
     description=_load_instruction("clipboard_copy"),
-    annotations={
+    annotations={  # type: ignore[arg-type]
         "title": "Copy to Clipboard",
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -382,7 +387,11 @@ async def clipboard_copy(
     mime_type: str = "text/plain",
 ) -> str:
     mime_type = mime_type.strip().lower()
-    if any(mime_type.startswith(p) for p in _BINARY_MIME_PREFIXES) or mime_type in _BINARY_MIME_EXACT:
+    is_binary = (
+        any(mime_type.startswith(p) for p in _BINARY_MIME_PREFIXES)
+        or mime_type in _BINARY_MIME_EXACT
+    )
+    if is_binary:
         return (
             f"Cannot write binary MIME type {mime_type!r} to clipboard. "
             "clipboard_copy supports text content only."

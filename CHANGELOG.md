@@ -26,6 +26,8 @@ All notable changes to this project will be documented here.
 - Parametrized escaping test matrix covering special characters
   (pipes, backslashes, angle brackets, quotes, backticks, newlines,
   multibyte) across all 8 output formats. Closes #18.
+- `ruff` linter/formatter and `mypy` type checker added to CI as
+  separate jobs. Configured in `pyproject.toml`. Closes #22.
 
 ### Fixed
 - Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the

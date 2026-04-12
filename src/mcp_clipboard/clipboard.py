@@ -59,7 +59,7 @@ async def _run_subprocess(
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except FileNotFoundError as fnf:
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
-    except asyncio.TimeoutError as te:
+    except TimeoutError as te:
         proc.kill()
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
@@ -80,9 +80,7 @@ async def _run(
     allow_empty_exit: bool = True,
 ) -> str:
     """Run a subprocess and return its stdout as a string."""
-    data = await _run_subprocess(
-        cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit
-    )
+    data = await _run_subprocess(cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit)
     return data.decode(errors="replace")
 
 
@@ -94,9 +92,7 @@ async def _run_binary(
     allow_empty_exit: bool = True,
 ) -> bytes:
     """Run a subprocess and return its stdout as raw bytes."""
-    return await _run_subprocess(
-        cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit
-    )
+    return await _run_subprocess(cmd, timeout=timeout, env=env, allow_empty_exit=allow_empty_exit)
 
 
 async def _run_with_stdin(
@@ -125,7 +121,7 @@ async def _run_with_stdin(
         await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
     except FileNotFoundError as fnf:
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
-    except asyncio.TimeoutError as te:
+    except TimeoutError as te:
         proc.kill()
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
@@ -208,9 +204,7 @@ def _detect_backend() -> str:
 
         # Prefer Wayland if env vars indicate it, or if a compositor socket exists
         if has_wl_paste and (
-            session_type == "wayland"
-            or wayland_display
-            or _find_wayland_display()
+            session_type == "wayland" or wayland_display or _find_wayland_display()
         ):
             return "wayland"
         if shutil.which("xclip"):
@@ -244,9 +238,7 @@ async def _wayland_list_formats() -> list[str]:
 
 async def _x11_read(mime_type: str) -> str:
     # xclip uses -target for MIME, -selection clipboard for the main clipboard
-    return await _run(
-        ["xclip", "-selection", "clipboard", "-target", mime_type, "-o"]
-    )
+    return await _run(["xclip", "-selection", "clipboard", "-target", mime_type, "-o"])
 
 
 async def _x11_list_formats() -> list[str]:
@@ -261,7 +253,7 @@ async def _macos_read(mime_type: str) -> str:
             'use framework "AppKit"\n'
             "set pb to current application's NSPasteboard's generalPasteboard()\n"
             'set htmlData to pb\'s dataForType:"public.html"\n'
-            "if htmlData is missing value then return \"\"\n"
+            'if htmlData is missing value then return ""\n'
             "set htmlString to (current application's NSString's alloc()'s "
             "initWithData:htmlData encoding:(current application's NSUTF8StringEncoding))\n"
             "return htmlString as text"
@@ -306,7 +298,7 @@ async def _macos_list_formats() -> list[str]:
         "set theTypes to pb's types() as list\n"
         'set output to ""\n'
         "repeat with t in theTypes\n"
-        '  set output to output & (t as text) & linefeed\n'
+        "  set output to output & (t as text) & linefeed\n"
         "end repeat\n"
         "return output"
     )
@@ -319,23 +311,28 @@ async def _windows_read(mime_type: str) -> str:
     if mime_type == "text/html":
         # PowerShell: Get HTML format from clipboard
         script = (
-            "[System.Windows.Forms.Clipboard]::GetData("
-            "[System.Windows.Forms.DataFormats]::Html)"
+            "[System.Windows.Forms.Clipboard]::GetData([System.Windows.Forms.DataFormats]::Html)"
         )
-        return await _run([
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            f"Add-Type -AssemblyName System.Windows.Forms; {script}",
-        ], allow_empty_exit=False)
+        return await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Add-Type -AssemblyName System.Windows.Forms; {script}",
+            ],
+            allow_empty_exit=False,
+        )
 
     if mime_type == "text/plain":
-        return await _run([
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Get-Clipboard",
-        ], allow_empty_exit=False)
+        return await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-Clipboard",
+            ],
+            allow_empty_exit=False,
+        )
 
     if mime_type == "text/rtf":
         script = (
@@ -344,12 +341,15 @@ async def _windows_read(mime_type: str) -> str:
             "[System.Windows.Forms.DataFormats]::Rtf); "
             "if ($data -eq $null) { return }; $data"
         )
-        return await _run([
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            script,
-        ], allow_empty_exit=False)
+        return await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                script,
+            ],
+            allow_empty_exit=False,
+        )
 
     # Unsupported MIME type — signal "not available" rather than returning wrong content
     return ""
@@ -370,8 +370,7 @@ async def _windows_list_formats() -> list[str]:
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()"
     )
-    raw = await _run(["powershell", "-NoProfile", "-Command", script],
-                     allow_empty_exit=False)
+    raw = await _run(["powershell", "-NoProfile", "-Command", script], allow_empty_exit=False)
     native = [line.strip() for line in raw.splitlines() if line.strip()]
     return [_WIN_TO_MIME.get(f, f) for f in native]
 
@@ -386,9 +385,7 @@ async def _wayland_read_image(mime_type: str) -> bytes:
 
 
 async def _x11_read_image(mime_type: str) -> bytes:
-    return await _run_binary(
-        ["xclip", "-selection", "clipboard", "-target", mime_type, "-o"]
-    )
+    return await _run_binary(["xclip", "-selection", "clipboard", "-target", mime_type, "-o"])
 
 
 async def _macos_read_image(mime_type: str) -> bytes:
@@ -425,8 +422,7 @@ async def _windows_read_image(mime_type: str) -> bytes:
         "$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); "
         "[Convert]::ToBase64String($ms.ToArray())"
     )
-    b64_text = await _run(["powershell", "-NoProfile", "-Command", script],
-                          allow_empty_exit=False)
+    b64_text = await _run(["powershell", "-NoProfile", "-Command", script], allow_empty_exit=False)
     if not b64_text.strip():
         return b""
     return base64.b64decode(b64_text.strip())
@@ -442,9 +438,7 @@ async def _wayland_write(content: str) -> None:
 
 
 async def _x11_write(content: str) -> None:
-    await _run_with_stdin(
-        ["xclip", "-selection", "clipboard"], content.encode()
-    )
+    await _run_with_stdin(["xclip", "-selection", "clipboard"], content.encode())
 
 
 async def _macos_write(content: str) -> None:
@@ -454,7 +448,9 @@ async def _macos_write(content: str) -> None:
 async def _windows_write(content: str) -> None:
     await _run_with_stdin(
         [
-            "powershell", "-NoProfile", "-Command",
+            "powershell",
+            "-NoProfile",
+            "-Command",
             "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
         ],
         content.encode(),
@@ -467,9 +463,7 @@ async def _windows_write(content: str) -> None:
 
 
 async def _wayland_write_typed(content: str, mime_type: str) -> None:
-    await _run_with_stdin(
-        ["wl-copy", "--type", mime_type], content.encode(), env=_wayland_env()
-    )
+    await _run_with_stdin(["wl-copy", "--type", mime_type], content.encode(), env=_wayland_env())
 
 
 async def _x11_write_typed(content: str, mime_type: str) -> None:
@@ -495,7 +489,7 @@ async def _macos_write_typed(content: str, mime_type: str) -> None:
             "initWithBase64EncodedString:b64 options:0)\n"
             "set pb to current application's NSPasteboard's generalPasteboard()\n"
             "pb's clearContents()\n"
-            f"pb's setData:decoded forType:\"{uti}\"\n"
+            f'pb\'s setData:decoded forType:"{uti}"\n'
         )
         await _run(["osascript", "-e", script], allow_empty_exit=False)
         return
@@ -525,17 +519,13 @@ def _windows_html_clipboard_wrap(html: str) -> str:
         "EndFragment:{end_frag:08d}\r\n"
     )
     # Measure header length using placeholder values (all same digit count)
-    placeholder = header_template.format(
-        start_html=0, end_html=0, start_frag=0, end_frag=0
-    )
-    header_len = len(placeholder.encode("utf-8"))
-    body_bytes = body.encode("utf-8")
+    placeholder = header_template.format(start_html=0, end_html=0, start_frag=0, end_frag=0)
+    header_len = len(placeholder.encode())
+    body_bytes = body.encode()
 
     start_html = header_len
-    start_frag = header_len + len(
-        f"<html><body>{marker_start}".encode("utf-8")
-    )
-    end_frag = header_len + body_bytes.index(marker_end.encode("utf-8"))
+    start_frag = header_len + len(f"<html><body>{marker_start}".encode())
+    end_frag = header_len + body_bytes.index(marker_end.encode())
     end_html = header_len + len(body_bytes)
 
     header = header_template.format(
@@ -551,7 +541,9 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
     if mime_type == "text/plain":
         await _run_with_stdin(
             [
-                "powershell", "-NoProfile", "-Command",
+                "powershell",
+                "-NoProfile",
+                "-Command",
                 "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
             ],
             content.encode(),
@@ -602,7 +594,7 @@ _backend: str | None = None
 
 
 def _get_backend() -> str:
-    global _backend  # noqa: PLW0603
+    global _backend
     if _backend is None:
         _backend = _detect_backend()
         logger.debug("Clipboard backend: %s", _backend)
