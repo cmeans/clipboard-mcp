@@ -10,6 +10,8 @@ All notable changes to this project will be documented here.
   `uv run pytest -m integration`. Covers text round-trip, unicode,
   multiline, special characters, format listing, and unavailable
   MIME types. Closes #23.
+- `py.typed` PEP 561 marker so downstream type checkers (mypy, pyright)
+  see the package's type annotations. Closes #33.
 
 ## [2.1.1] - 2026-04-12
 
