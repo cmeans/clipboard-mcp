@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented here.
 
-## [Unreleased]
+## [2.2.0] - 2026-04-12
 
 ### Added
 - `clipboard_copy` now enforces a write-side size limit (default 1 MiB).
