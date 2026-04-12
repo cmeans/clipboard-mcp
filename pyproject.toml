@@ -54,6 +54,8 @@ artifacts = ["src/mcp_clipboard/instructions/*.md", "src/mcp_clipboard/icons/*.s
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["integration: requires real clipboard tools (skipped by default)"]
+addopts = "-m 'not integration'"
 
 [tool.ruff]
 target-version = "py311"
