@@ -104,21 +104,24 @@ async def _run_with_stdin(
 ) -> None:
     """Run a subprocess, piping input_data to its stdin.
 
-    stdout and stderr are sent to /dev/null because clipboard write commands
-    (wl-copy, xclip) fork a background child that inherits pipe file
-    descriptors.  If those streams are piped, communicate() blocks waiting
-    for the child to close them — which only happens when another copy
-    replaces the clipboard — causing a spurious timeout.
+    stdout is always sent to /dev/null. stderr is captured when
+    MCP_CLIPBOARD_DEBUG=1 (for inclusion in error messages) but sent
+    to /dev/null otherwise -- clipboard write commands (wl-copy, xclip)
+    fork a background child that inherits pipe file descriptors, and
+    piping stderr would cause communicate() to block until the child
+    closes them.
     """
+    debug = os.environ.get("MCP_CLIPBOARD_DEBUG", "") == "1"
+    stderr_mode = asyncio.subprocess.PIPE if debug else asyncio.subprocess.DEVNULL
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=stderr_mode,
             env=env,
         )
-        await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
+        _, stderr_data = await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
     except FileNotFoundError as fnf:
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
     except TimeoutError as te:
@@ -126,7 +129,10 @@ async def _run_with_stdin(
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
     if proc.returncode != 0:
-        raise ClipboardError(f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}")
+        msg = f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}"
+        if debug and stderr_data:
+            msg += f"\nstderr: {stderr_data.decode(errors='replace').strip()}"
+        raise ClipboardError(msg)
 
 
 def _find_wayland_display() -> str | None:
