@@ -421,16 +421,28 @@ def test_infer_all_empty_column():
 _ROWS = [["Name", "Age", "City"], ["Alice", "30", "Portland"], ["Bob", "25", "Seattle"]]
 
 
-def test_format_slack_bold_header():
+def test_format_slack_header_in_code_block():
+    """Header is inside the code block as plain text (not bold)."""
     result = format_table(_ROWS, "slack")
-    assert "*Name*" in result
-    assert "*Age*" in result
-    assert "*City*" in result
+    assert result.startswith("```\n")
+    assert result.endswith("\n```")
+    # Header values appear without bold markup
+    assert "Name" in result
+    assert "*Name*" not in result
+
+
+def test_format_slack_header_underline():
+    """Header row is followed by a dashed underline separator."""
+    result = format_table(_ROWS, "slack")
+    lines = result.strip("`\n").split("\n")
+    assert len(lines) >= 2
+    # Second line should be dashes
+    assert set(lines[1].strip()).issubset({"-", " "})
 
 
 def test_format_slack_no_pipes():
     result = format_table(_ROWS, "slack")
-    # Data section (inside code block) should have no pipe characters
+    # Entire content (inside code block) should have no pipe characters
     code_block = result.split("```")[1]
     assert "|" not in code_block
 
@@ -440,6 +452,16 @@ def test_format_slack_code_block():
     assert "```" in result
     assert "Alice" in result
     assert "Bob" in result
+
+
+def test_format_slack_special_chars_preserved():
+    """Special characters are preserved literally inside the code block."""
+    rows = [["Cmd", "Note"], ["a*b", "use `code`"]]
+    result = format_table(rows, "slack")
+    assert "a*b" in result
+    assert "use `code`" in result
+    # No bold markup wrapping
+    assert "*Cmd*" not in result
 
 
 def test_format_jira_header_syntax():

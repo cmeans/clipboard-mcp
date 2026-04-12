@@ -60,9 +60,6 @@ _XFAIL_MAP: dict[tuple[str, str], str] = {}
 for _fmt in ("html",):
     for _char_id in ("angle-brackets", "ampersand", "double-quote"):
         _XFAIL_MAP[(_fmt, _char_id)] = "see #15"
-for _fmt in ("slack",):
-    for _char_id in ("asterisk", "backtick", "triple-backtick"):
-        _XFAIL_MAP[(_fmt, _char_id)] = "see #19"
 # Newlines in cells break line-based formats (markdown, jira, slack) -- no escape exists
 for _fmt in ("markdown", "notion", "jira", "confluence", "slack"):
     _XFAIL_MAP[(_fmt, "newline")] = "newlines in cells break line-based table formats"
@@ -177,10 +174,13 @@ def test_escaping_preserves_structure(fmt: str, char_id: str, char_value: str) -
         assert counter.td_count == 6, f"Expected 6 <td>, got {counter.td_count}"
 
     elif fmt == "slack":
-        header_line = result.split("\n")[0]
-        bold_count = len(re.findall(r"\*[^*]+\*", header_line))
-        assert bold_count == 3, f"Expected 3 bold headers, got {bold_count}: {header_line}"
-        assert "```" in result
+        # Entire table is inside a code block
+        assert result.startswith("```\n"), "Slack output must start with code fence"
+        assert result.endswith("\n```"), "Slack output must end with code fence"
+        # Header + separator + 2 data rows = 4 lines inside the fences
+        inner = result.strip("`\n")
+        inner_lines = inner.split("\n")
+        assert len(inner_lines) == 4, f"Expected 4 lines inside fence, got {len(inner_lines)}"
 
 
 ROUND_TRIP_FORMATS: list[OutputFormat] = ["csv", "json"]

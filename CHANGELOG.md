@@ -43,6 +43,11 @@ All notable changes to this project will be documented here.
 - `parse_tsv` now uses `csv.reader` with RFC 4180 quoting instead of
   naive `str.split("\t")`. Fields containing embedded tabs or newlines
   are preserved when wrapped in double quotes. Closes #21.
+- Slack table format now renders the entire table (header + data) inside
+  a single code block with a dashed underline separator. This avoids
+  special character corruption (`*`, `` ` ``) from Slack's mrkdwn
+  formatting and fixes header/data column misalignment from mixed
+  proportional/monospace fonts. Closes #19, closes #31.
 
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow
