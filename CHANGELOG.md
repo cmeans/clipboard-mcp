@@ -11,6 +11,17 @@ All notable changes to this project will be documented here.
   `QA Approved`, `CI Failed`, `merge-order: 0`–`3`, and `dependencies`
   labels. New workflows: `pr-labels.yml`, `pr-labels-ci.yml`,
   `qa-gate.yml`.
+- `CONTRIBUTING.md` — license of contribution (Apache-2.0 § 5
+  inbound=outbound), no-bounty policy, PR requirements, review
+  process walkthrough, and code style notes.
+- `SECURITY.md` — private disclosure via GitHub Private Security
+  Advisories (the only supported channel; no email fallback), scope,
+  and response expectations. Private vulnerability reporting enabled
+  on the repository.
+- `CODE_OF_CONDUCT.md` — adopts Contributor Covenant 2.1 by
+  reference; reports route through a Private Security Advisory
+  titled `Conduct` as a workaround for GitHub's lack of a general
+  private-contact channel. Partially closes #25.
 
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow
