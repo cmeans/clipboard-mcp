@@ -1942,6 +1942,30 @@ async def test_windows_read_image_empty():
 
 
 @pytest.mark.asyncio
+async def test_windows_read_image_jpeg():
+    """_windows_read_image uses Jpeg format for image/jpeg."""
+    import base64
+
+    fake_data = b"\xff\xd8\xff"
+    b64_text = base64.b64encode(fake_data).decode()
+    with patch(
+        "mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text
+    ) as mock_run:
+        result = await _windows_read_image("image/jpeg")
+
+    assert result == fake_data
+    script = mock_run.call_args[0][0][-1]
+    assert "ImageFormat]::Jpeg" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_read_image_unsupported():
+    """_windows_read_image rejects unsupported MIME types."""
+    with pytest.raises(ClipboardError, match="Unsupported image type"):
+        await _windows_read_image("image/webp")
+
+
+@pytest.mark.asyncio
 async def test_wayland_write_passes_env():
     """_wayland_write passes env from _wayland_env() to _run_with_stdin."""
     fake_env = {"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"}
