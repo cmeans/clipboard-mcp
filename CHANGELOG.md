@@ -34,6 +34,11 @@ All notable changes to this project will be documented here.
   `name:` from `Tests` to `CI` for cross-repo consistency. README
   badge URL updated to match.
 
+### Fixed
+- Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the
+  `jira` and `confluence` output formats, preventing cell-boundary corruption
+  and accidental header syntax. Closes #17.
+
 ## [2.0.2] - 2026-04-05
 
 ### Added
