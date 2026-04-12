@@ -168,7 +168,7 @@ def _format_non_tabular(text: str) -> str:
         result = f"Clipboard content:\n\n{text}"
 
     if truncated:
-        result += "\n\n... [truncated at 50,000 characters]"
+        result += f"\n\n... [truncated at {_MAX_CONTENT_CHARS:,} characters]"
 
     return result
 
@@ -247,7 +247,7 @@ async def clipboard_paste(
                 display = rtf[:_MAX_CONTENT_CHARS]
                 result = f"Clipboard contains rich text (RTF):\n\n```\n{display}\n```"
                 if truncated:
-                    result += "\n\n... [truncated at 50,000 characters]"
+                    result += f"\n\n... [truncated at {_MAX_CONTENT_CHARS:,} characters]"
                 return result
         except ClipboardError as e:
             logger.debug("RTF clipboard read failed: %s", e)
