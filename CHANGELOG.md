@@ -36,6 +36,9 @@ All notable changes to this project will be documented here.
   it's used as keys. When all rows have matching types, all data is
   preserved as a flat array or list of lists. Removes the undocumented
   `{"values": row}` wrapper. Closes #30.
+- `_format_html` now escapes cell values with `html.escape()`, preventing
+  XSS via injected `<script>` tags or other HTML in cell content.
+  Closes #15.
 
 ## [2.1.1] - 2026-04-12
 
