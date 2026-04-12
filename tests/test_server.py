@@ -1950,6 +1950,23 @@ async def test_clipboard_copy_unicode():
     assert "characters" in result
 
 
+@pytest.mark.asyncio
+async def test_clipboard_copy_rejects_oversized():
+    """clipboard_copy rejects content exceeding the write limit."""
+    with patch("mcp_clipboard.server._MAX_WRITE_BYTES", 10):
+        result = await clipboard_copy("x" * 100)
+    assert "exceeds clipboard write limit" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_at_limit():
+    """clipboard_copy allows content exactly at the write limit."""
+    with patch("mcp_clipboard.server._MAX_WRITE_BYTES", 5):
+        with patch("mcp_clipboard.server.write_clipboard", new_callable=AsyncMock):
+            result = await clipboard_copy("hello")  # 5 bytes
+    assert "characters" in result
+
+
 # ---------------------------------------------------------------------------
 # 25. Misc medium-priority tests
 # ---------------------------------------------------------------------------
