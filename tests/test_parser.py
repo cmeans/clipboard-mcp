@@ -150,14 +150,47 @@ def test_format_json():
     assert data[0]["Age"] == "30"
 
 
-def test_format_json_single_column():
-    """Single-column JSON should be a flat array of values."""
+def test_format_json_single_column_with_header():
+    """Single-column with detectable header uses it as a key."""
     import json
 
-    rows = [["821 W Gunnison St"], ["1283 W Victoria St"], ["5533 N Glenwood Ave"]]
+    rows = [["Count"], ["42"], ["17"], ["99"]]
     result = format_table(rows, "json")
     data = json.loads(result)
-    assert data == ["821 W Gunnison St", "1283 W Victoria St", "5533 N Glenwood Ave"]
+    # "Count" is text, data is integers -> header detected
+    assert data == {"Count": ["42", "17", "99"]}
+
+
+def test_format_json_single_column_no_header():
+    """Single-column where all rows are the same type -> flat array."""
+    import json
+
+    rows = [["Alice"], ["Bob"], ["Carol"]]
+    result = format_table(rows, "json")
+    data = json.loads(result)
+    # All text -> no header, include all values
+    assert data == ["Alice", "Bob", "Carol"]
+
+
+def test_format_json_single_row():
+    """Single row produces a flat array of values."""
+    import json
+
+    rows = [["Name", "Age", "City"]]
+    result = format_table(rows, "json")
+    data = json.loads(result)
+    assert data == ["Name", "Age", "City"]
+
+
+def test_format_json_no_header_detected():
+    """Multi-column where first row matches data types -> list of lists."""
+    import json
+
+    rows = [["Alice", "30"], ["Bob", "25"], ["Carol", "35"]]
+    result = format_table(rows, "json")
+    data = json.loads(result)
+    # First row types match data -> no header, all rows as data
+    assert data == [["Alice", "30"], ["Bob", "25"], ["Carol", "35"]]
 
 
 def test_format_csv():

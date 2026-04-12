@@ -28,11 +28,14 @@ All notable changes to this project will be documented here.
   skipping `<script>`/`<style>` content. Prevents `</style>` from
   prematurely re-enabling text extraction when inside a `<script>` tag
   (and vice versa). Closes #36.
-
-### Fixed
 - MIME type validation regex now requires type and subtype to start
   with a letter. Rejects nonsensical values like `123/456` and `_/_`.
   Also validates parameter syntax (`name=value`). Closes #35.
+- JSON output now uses type inference to detect headers. When the first
+  row's types differ from the data (e.g., text header over integer data),
+  it's used as keys. When all rows have matching types, all data is
+  preserved as a flat array or list of lists. Removes the undocumented
+  `{"values": row}` wrapper. Closes #30.
 
 ## [2.1.1] - 2026-04-12
 
