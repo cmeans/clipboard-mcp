@@ -118,21 +118,21 @@ class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self._pieces: list[str] = []
-        self._skip = False
+        self._skip_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if tag in ("script", "style"):
-            self._skip = True
-        elif tag in self._BLOCK_TAGS:
+            self._skip_depth += 1
+        elif tag in self._BLOCK_TAGS and self._skip_depth == 0:
             self._pieces.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in ("script", "style"):
-            self._skip = False
+        if tag.lower() in ("script", "style") and self._skip_depth > 0:
+            self._skip_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if not self._skip:
+        if self._skip_depth == 0:
             self._pieces.append(data)
 
 
