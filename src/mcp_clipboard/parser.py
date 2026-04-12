@@ -8,6 +8,7 @@ as arbitrary non-tabular content (plain text, code, JSON, URLs).
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import re
@@ -540,11 +541,15 @@ def _format_html(rows: list[list[str]]) -> str:
     normalized = [row + [""] * (max_cols - len(row)) for row in rows]
 
     lines = ["<table>", "  <thead>"]
-    lines.append("    <tr>" + "".join(f"<th>{cell}</th>" for cell in normalized[0]) + "</tr>")
+    lines.append(
+        "    <tr>" + "".join(f"<th>{html.escape(cell)}</th>" for cell in normalized[0]) + "</tr>"
+    )
     lines.append("  </thead>")
     lines.append("  <tbody>")
     for row in normalized[1:]:
-        lines.append("    <tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>")
+        lines.append(
+            "    <tr>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in row) + "</tr>"
+        )
     lines.append("  </tbody>")
     lines.append("</table>")
 

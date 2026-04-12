@@ -594,6 +594,28 @@ def test_format_html_row_count():
     assert result.count("<tr>") == 3  # 1 header + 2 data rows
 
 
+def test_format_html_escapes_angle_brackets():
+    """HTML cell values with < > must be escaped to prevent XSS."""
+    rows = [["Tag"], ["<script>alert('xss')</script>"]]
+    result = format_table(rows, "html")
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_format_html_escapes_ampersand():
+    """HTML cell values with & must be escaped."""
+    rows = [["Val"], ["A&B"]]
+    result = format_table(rows, "html")
+    assert "A&amp;B" in result
+
+
+def test_format_html_escapes_quotes():
+    """HTML cell values with quotes must be escaped."""
+    rows = [["Val"], ['say "hello"']]
+    result = format_table(rows, "html")
+    assert "say &quot;hello&quot;" in result
+
+
 def test_format_notion_is_gfm():
     """Notion uses standard GFM pipe tables."""
     assert format_table(_ROWS, "notion") == format_table(_ROWS, "markdown")

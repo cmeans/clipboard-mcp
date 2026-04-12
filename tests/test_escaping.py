@@ -57,9 +57,6 @@ ALL_FORMATS: list[OutputFormat] = [
 
 # Known unfixed bugs -- xfail these specific (format, char) combos
 _XFAIL_MAP: dict[tuple[str, str], str] = {}
-for _fmt in ("html",):
-    for _char_id in ("angle-brackets", "ampersand", "double-quote"):
-        _XFAIL_MAP[(_fmt, _char_id)] = "see #15"
 # Newlines in cells break line-based formats (markdown, jira, slack) -- no escape exists
 for _fmt in ("markdown", "notion", "jira", "confluence", "slack"):
     _XFAIL_MAP[(_fmt, "newline")] = "newlines in cells break line-based table formats"
