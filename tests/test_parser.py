@@ -102,6 +102,31 @@ def test_parse_tsv_single_column():
     assert rows == []
 
 
+def test_parse_tsv_quoted_tab():
+    """A quoted field containing a tab should not split the cell."""
+    text = '"has\ttab"\tplain'
+    rows = parse_tsv(text)
+    assert len(rows) == 1
+    assert rows[0] == ["has\ttab", "plain"]
+
+
+def test_parse_tsv_quoted_newline():
+    """A quoted field containing a newline should keep the cell intact."""
+    text = '"line1\nline2"\tother'
+    rows = parse_tsv(text)
+    assert len(rows) == 1
+    assert rows[0] == ["line1\nline2", "other"]
+
+
+def test_parse_tsv_mixed_quoted_unquoted():
+    """Mix of quoted and unquoted fields."""
+    text = 'Name\tDesc\nAlice\t"likes\ttabs"'
+    rows = parse_tsv(text)
+    assert len(rows) == 2
+    assert rows[0] == ["Name", "Desc"]
+    assert rows[1] == ["Alice", "likes\ttabs"]
+
+
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------

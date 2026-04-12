@@ -38,6 +38,9 @@ All notable changes to this project will be documented here.
   instead of interpolating raw caller input into an AppleScript string
   literal. Prevents potential script injection via crafted MIME types.
   Closes #24.
+- `parse_tsv` now uses `csv.reader` with RFC 4180 quoting instead of
+  naive `str.split("\t")`. Fields containing embedded tabs or newlines
+  are preserved when wrapped in double quotes. Closes #21.
 
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow

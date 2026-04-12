@@ -77,14 +77,18 @@ def parse_tsv(text: str) -> list[list[str]]:
 
     Returns an empty list if the text doesn't appear to be tabular
     (i.e., has no tabs or only a single cell).
+
+    Handles RFC 4180-style quoting so that fields containing embedded
+    tabs or newlines are kept intact when wrapped in double quotes.
     """
     if "\t" not in text:
         return []
 
     rows: list[list[str]] = []
-    for line in text.splitlines():
-        if line.strip():
-            rows.append(line.split("\t"))
+    reader = csv.reader(io.StringIO(text), delimiter="\t", quotechar='"')
+    for row in reader:
+        if any(cell.strip() for cell in row):
+            rows.append(row)
     return rows
 
 
