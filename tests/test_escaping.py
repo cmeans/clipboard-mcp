@@ -176,7 +176,10 @@ def test_escaping_preserves_structure(fmt: str, char_id: str, char_value: str) -
         assert "```" in result
 
 
-@pytest.mark.parametrize("fmt", ALL_FORMATS)
+ROUND_TRIP_FORMATS: list[OutputFormat] = ["csv", "json"]
+
+
+@pytest.mark.parametrize("fmt", ROUND_TRIP_FORMATS)
 @pytest.mark.parametrize(
     "char_id, char_value",
     SPECIAL_CHARS,
@@ -184,8 +187,6 @@ def test_escaping_preserves_structure(fmt: str, char_id: str, char_value: str) -
 )
 def test_escaping_round_trip(fmt: str, char_id: str, char_value: str) -> None:
     """For round-trippable formats (csv, json), verify the original value is recoverable."""
-    if fmt not in ("csv", "json"):
-        pytest.skip("Round-trip only applicable to csv and json")
 
     xfail_reason = _XFAIL_MAP.get((fmt, char_id))
     if xfail_reason:
