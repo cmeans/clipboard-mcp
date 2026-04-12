@@ -156,9 +156,16 @@ def test_escaping_preserves_structure(fmt: str, char_id: str, char_value: str) -
     elif fmt == "json":
         data = json.loads(result)
         assert isinstance(data, list)
-        assert len(data) == 2  # 2 data rows (header becomes keys)
-        for obj in data:
-            assert len(obj) == 3, f"Expected 3 keys, got {len(obj)}: {obj}"
+        # With header detection, all-text tables produce list-of-lists (3 rows)
+        # Tables with detectable headers produce list-of-dicts (2 data rows)
+        if data and isinstance(data[0], dict):
+            assert len(data) == 2, f"Expected 2 data rows, got {len(data)}"
+            for obj in data:
+                assert len(obj) == 3, f"Expected 3 keys, got {len(obj)}: {obj}"
+        else:
+            assert len(data) == 3, f"Expected 3 rows, got {len(data)}"
+            for row in data:
+                assert len(row) == 3, f"Expected 3 cols, got {len(row)}: {row}"
 
     elif fmt == "csv":
         reader = csv.reader(io.StringIO(result))
@@ -204,7 +211,11 @@ def test_escaping_round_trip(fmt: str, char_id: str, char_value: str) -> None:
 
     if fmt == "json":
         data = json.loads(result)
-        values = [v for obj in data for v in obj.values()]
+        # Flatten values from either list-of-dicts or list-of-lists
+        if data and isinstance(data[0], dict):
+            values = [v for obj in data for v in obj.values()]
+        else:
+            values = [v for row in data for v in (row if isinstance(row, list) else [row])]
         assert char_value in values, f"Value {char_value!r} not found in JSON output"
 
     elif fmt == "csv":

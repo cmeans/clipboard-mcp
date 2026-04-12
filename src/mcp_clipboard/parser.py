@@ -359,28 +359,58 @@ def infer_column_types(rows: list[list[str]]) -> list[ColumnType]:
 OutputFormat = Literal["markdown", "json", "csv", "slack", "jira", "confluence", "html", "notion"]
 
 
+def _has_header_row(rows: list[list[str]]) -> bool:
+    """Heuristic: does the first row look like a header?
+
+    Returns True if the first row's cell types differ from the majority
+    type in each column. A row of all-text values where the data is also
+    all-text is NOT considered a header.
+    """
+    if len(rows) < 2:
+        return False
+
+    first_row_types = [_classify_cell(cell) for cell in rows[0]]
+    data_types = infer_column_types(rows)
+
+    # Header if at least one column's first-row type differs from data type
+    for first_type, col_type in zip(first_row_types, data_types, strict=False):
+        if first_type != col_type:
+            return True
+
+    return False
+
+
 def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
     """Format parsed rows into the requested output format.
 
-    For JSON output: single-column tables produce a flat array of values;
-    multi-column tables use the first row as object keys.
+    For JSON output, the first row is treated as a header (keys) only
+    when its cell types differ from the data rows. Otherwise all rows
+    are included as data.
     """
     if not rows:
         return ""
 
     if fmt == "json":
         max_cols = max(len(r) for r in rows)
-        if max_cols == 1:
-            # Single-column: flat array of values
-            data: list = [row[0] for row in rows]
-        elif len(rows) > 1:
-            # Multi-column: use first row as header keys
+        has_header = _has_header_row(rows)
+
+        if len(rows) == 1:
+            # Single row -- flat array of values
+            result_data: list | dict = list(rows[0])
+        elif max_cols == 1 and has_header:
+            # Single-column with header: key -> values
+            result_data = {rows[0][0]: [row[0] for row in rows[1:]]}
+        elif max_cols == 1:
+            # Single-column, no header: flat array of all values
+            result_data = [row[0] for row in rows]
+        elif has_header:
+            # Multi-column with header: first row as keys
             header = rows[0]
-            data = [dict(zip(header, row, strict=False)) for row in rows[1:]]
+            result_data = [dict(zip(header, row, strict=False)) for row in rows[1:]]
         else:
-            # Single row, multiple columns
-            data = [{"values": row} for row in rows]
-        return json.dumps(data, indent=2, ensure_ascii=False)
+            # Multi-column, no header: list of lists
+            result_data = [list(row) for row in rows]
+        return json.dumps(result_data, indent=2, ensure_ascii=False)
 
     elif fmt == "csv":
         buf = io.StringIO()
