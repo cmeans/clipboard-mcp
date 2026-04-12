@@ -11,6 +11,11 @@ All notable changes to this project will be documented here.
   multiline, special characters, format listing, and unavailable
   MIME types. Closes #23.
 
+### Fixed
+- MIME type validation regex now requires type and subtype to start
+  with a letter. Rejects nonsensical values like `123/456` and `_/_`.
+  Also validates parameter syntax (`name=value`). Closes #35.
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed
