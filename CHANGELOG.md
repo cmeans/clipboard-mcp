@@ -8,6 +8,9 @@ All notable changes to this project will be documented here.
 - `clipboard_copy` now enforces a write-side size limit (default 1 MiB).
   Rejects oversized content with a clear error message. Override via
   `MCP_CLIPBOARD_MAX_WRITE_BYTES` env var. Closes #27.
+- `MCP_CLIPBOARD_BACKEND` env var to override auto-detected clipboard
+  backend. Valid values: `wayland`, `x11`, `macos`, `windows`. Useful
+  for debugging wrong-backend issues. Closes #29.
 - Opt-in integration test suite (`tests/test_integration.py`) that
   exercises real clipboard tools. Skipped by default; run with
   `uv run pytest -m integration`. Covers text round-trip, unicode,

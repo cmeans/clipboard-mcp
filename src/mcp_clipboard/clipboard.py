@@ -606,12 +606,24 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
 # Cache the detected backend for the process lifetime
 _backend: str | None = None
 
+_VALID_BACKENDS = frozenset({"wayland", "x11", "macos", "windows"})
+
 
 def _get_backend() -> str:
     global _backend
     if _backend is None:
-        _backend = _detect_backend()
-        logger.debug("Clipboard backend: %s", _backend)
+        override = os.environ.get("MCP_CLIPBOARD_BACKEND", "").strip().lower()
+        if override:
+            if override not in _VALID_BACKENDS:
+                raise ClipboardError(
+                    f"Invalid MCP_CLIPBOARD_BACKEND={override!r}. "
+                    f"Valid values: {', '.join(sorted(_VALID_BACKENDS))}"
+                )
+            _backend = override
+            logger.debug("Clipboard backend (override): %s", _backend)
+        else:
+            _backend = _detect_backend()
+            logger.debug("Clipboard backend: %s", _backend)
     return _backend
 
 

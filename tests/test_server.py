@@ -1042,6 +1042,43 @@ def test_detect_backend_linux_no_tools():
                     _detect_backend()
 
 
+def test_get_backend_env_override():
+    """MCP_CLIPBOARD_BACKEND env var overrides auto-detection."""
+    import mcp_clipboard.clipboard as cb
+
+    cb._backend = None
+    with patch.dict("os.environ", {"MCP_CLIPBOARD_BACKEND": "x11"}):
+        result = cb._get_backend()
+    assert result == "x11"
+    cb._backend = None  # reset
+
+
+def test_get_backend_env_override_invalid():
+    """MCP_CLIPBOARD_BACKEND with invalid value raises ClipboardError."""
+    import mcp_clipboard.clipboard as cb
+
+    cb._backend = None
+    with patch.dict("os.environ", {"MCP_CLIPBOARD_BACKEND": "invalid"}):
+        with pytest.raises(ClipboardError, match="Invalid MCP_CLIPBOARD_BACKEND"):
+            cb._get_backend()
+    cb._backend = None  # reset
+
+
+def test_get_backend_auto_detect_when_no_override():
+    """Without MCP_CLIPBOARD_BACKEND, _get_backend uses auto-detection."""
+    import mcp_clipboard.clipboard as cb
+
+    cb._backend = None
+    with patch.dict("os.environ", {}, clear=False):
+        import os
+
+        os.environ.pop("MCP_CLIPBOARD_BACKEND", None)
+        with patch("mcp_clipboard.clipboard._detect_backend", return_value="wayland"):
+            result = cb._get_backend()
+    assert result == "wayland"
+    cb._backend = None  # reset
+
+
 # ---------------------------------------------------------------------------
 # 13. Backend dispatch (read_clipboard / list_clipboard_formats)
 # ---------------------------------------------------------------------------
