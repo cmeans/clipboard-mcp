@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## [Unreleased]
+
+### Fixed
+- `detect_content_type` no longer false-positives on prose containing
+  common English words like "return", "class", or "public", or operators
+  like `->`, `||`, `::`. Short/ambiguous patterns now require 2+ distinct
+  matches to classify as code. Closes #20.
+
 ## [2.1.0] - 2026-04-12
 
 ### Added

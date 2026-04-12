@@ -299,6 +299,48 @@ def test_detect_empty():
     assert detect_content_type("   ") == "text"
 
 
+def test_detect_prose_with_return():
+    """Prose containing 'return ' as an English word should not be code."""
+    assert detect_content_type("Please return the book to the library.") == "text"
+
+
+def test_detect_prose_with_class():
+    """Prose containing 'class ' as an English word should not be code."""
+    assert detect_content_type("The class was cancelled due to weather.") == "text"
+
+
+def test_detect_prose_with_public():
+    """Prose containing 'public ' should not be code."""
+    assert detect_content_type("The public hearing is scheduled for Tuesday.") == "text"
+
+
+def test_detect_prose_with_arrow():
+    """Prose containing -> as an arrow should not be code."""
+    assert detect_content_type("Step 1 -> Step 2 -> Step 3") == "text"
+
+
+def test_detect_prose_with_double_pipe():
+    """Prose mentioning || should not be code."""
+    assert detect_content_type("Use the logical OR operator (||) in expressions.") == "text"
+
+
+def test_detect_prose_with_double_colon():
+    """Prose containing :: should not be code."""
+    assert detect_content_type("See ref::section for more details.") == "text"
+
+
+def test_detect_code_multiple_weak_signals():
+    """Multiple weak signals together should still detect as code."""
+    assert detect_content_type("x = a || b && c") == "code"
+
+
+def test_detect_code_strong_signal():
+    """A single strong signal is enough to detect code."""
+    assert detect_content_type("#!/bin/bash\necho hello") == "code"
+    assert detect_content_type("function add(a, b) { }") == "code"
+    assert detect_content_type("if (x > 0) { }") == "code"
+
+
 # ---------------------------------------------------------------------------
 # Schema inference
 # ---------------------------------------------------------------------------

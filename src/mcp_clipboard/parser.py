@@ -163,34 +163,39 @@ def extract_html_text(html: str) -> str:
 
 ContentType = Literal["json", "url", "code", "text"]
 
-# Code indicators: patterns that suggest the text is source code
-_CODE_PATTERNS = (
+# Strong code indicators: a single match is sufficient to classify as code.
+_STRONG_CODE_PATTERNS = (
     "def ",
-    "class ",
     "import ",
-    "from ",
-    "return ",  # Python
+    "from ",  # Python
     "function ",
     "const ",
     "let ",
     "var ",  # JavaScript
     "func ",
     "package ",  # Go
-    "public ",
-    "private ",
-    "protected ",  # Java/C#
     "fn ",
     "pub ",
     "mod ",  # Rust
-    "=>",
-    "->",
-    "::",
-    "&&",
-    "||",  # Operators
     "if (",
     "for (",
     "while (",  # Control flow
     "#!/",  # Shebang
+)
+
+# Weak code indicators: common in code but also appear in prose.
+# Need 2+ distinct matches to classify as code.
+_WEAK_CODE_PATTERNS = (
+    "class ",
+    "return ",  # Python (also English words)
+    "public ",
+    "private ",
+    "protected ",  # Java/C# (also English words)
+    "=>",
+    "->",
+    "::",
+    "&&",
+    "||",  # Operators (also appear in prose)
 )
 
 
@@ -213,10 +218,15 @@ def detect_content_type(text: str) -> ContentType:
     if len(lines) == 1 and (stripped.startswith("http://") or stripped.startswith("https://")):
         return "url"
 
-    # Code: check for common patterns
-    for pattern in _CODE_PATTERNS:
+    # Code: a single strong pattern is enough
+    for pattern in _STRONG_CODE_PATTERNS:
         if pattern in stripped:
             return "code"
+
+    # Code: need 2+ distinct weak patterns to avoid false positives on prose
+    weak_hits = sum(1 for pattern in _WEAK_CODE_PATTERNS if pattern in stripped)
+    if weak_hits >= 2:
+        return "code"
 
     # Code: significant indentation (4+ spaces or tabs at start of lines)
     indented_lines = sum(1 for line in lines if line.startswith("    ") or line.startswith("\t"))
