@@ -1642,6 +1642,23 @@ async def test_run_with_stdin_success():
     await _run_with_stdin(["cat"], b"hello")
 
 
+@pytest.mark.asyncio
+async def test_run_with_stdin_includes_stderr_in_debug():
+    """_run_with_stdin includes stderr in error message when debug is on."""
+    with patch.dict("os.environ", {"MCP_CLIPBOARD_DEBUG": "1"}):
+        with pytest.raises(ClipboardError, match=r"stderr:.*error output"):
+            await _run_with_stdin(["sh", "-c", "echo 'error output' >&2; exit 1"], b"data")
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_no_stderr_without_debug():
+    """_run_with_stdin omits stderr from error message when debug is off."""
+    with patch.dict("os.environ", {"MCP_CLIPBOARD_DEBUG": "0"}):
+        with pytest.raises(ClipboardError, match="Clipboard write failed") as exc_info:
+            await _run_with_stdin(["sh", "-c", "echo 'error output' >&2; exit 1"], b"data")
+        assert "stderr:" not in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # 20. clipboard_paste() image format and error paths
 # ---------------------------------------------------------------------------

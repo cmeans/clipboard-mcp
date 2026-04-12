@@ -11,6 +11,10 @@ All notable changes to this project will be documented here.
 - `MCP_CLIPBOARD_BACKEND` env var to override auto-detected clipboard
   backend. Valid values: `wayland`, `x11`, `macos`, `windows`. Useful
   for debugging wrong-backend issues. Closes #29.
+- `_run_with_stdin` now captures stderr when `MCP_CLIPBOARD_DEBUG=1`
+  and includes it in the `ClipboardError` message on write failures.
+  Stderr is still sent to /dev/null in normal mode to avoid the
+  wl-copy pipe-deadlock issue. Closes #32.
 - Opt-in integration test suite (`tests/test_integration.py`) that
   exercises real clipboard tools. Skipped by default; run with
   `uv run pytest -m integration`. Covers text round-trip, unicode,
