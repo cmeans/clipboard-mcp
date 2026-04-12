@@ -12,8 +12,9 @@ All notable changes to this project will be documented here.
   labels. New workflows: `pr-labels.yml`, `pr-labels-ci.yml`,
   `qa-gate.yml`.
 - `CONTRIBUTING.md` — license of contribution (Apache-2.0 § 5
-  inbound=outbound), no-bounty policy, PR requirements, review
-  process walkthrough, and code style notes.
+  inbound=outbound), no-bounty policy, dev-env setup, PR
+  requirements, review process walkthrough, issue template guide,
+  and code style notes.
 - `SECURITY.md` — private disclosure via GitHub Private Security
   Advisories (the only supported channel; no email fallback), scope,
   and response expectations. Private vulnerability reporting enabled
@@ -21,7 +22,7 @@ All notable changes to this project will be documented here.
 - `CODE_OF_CONDUCT.md` — adopts Contributor Covenant 2.1 by
   reference; reports route through a Private Security Advisory
   titled `Conduct` as a workaround for GitHub's lack of a general
-  private-contact channel. Partially closes #25.
+  private-contact channel. Closes #25.
 
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow

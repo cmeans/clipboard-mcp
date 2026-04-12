@@ -56,6 +56,17 @@ For anything bigger than a one-line fix:
    and "add Z." Small focused PRs get reviewed and merged faster.
 3. **Check that a similar PR isn't already open.**
 
+## Development setup
+
+```bash
+uv sync --extra dev    # install runtime + dev dependencies
+uv run pytest          # run the full test suite
+uv run pytest tests/test_parser.py           # single test file
+uv run pytest -k "test_format_html"          # single test by name
+```
+
+Requires **Python 3.11+**. See the [`README → Development`](README.md#development) section for additional commands (build, debug logging, MCP Inspector).
+
 ## PR requirements
 
 Every PR must:
@@ -123,11 +134,18 @@ Two required sections:
 
 ## Reporting bugs or security issues
 
-- **Non-security bugs:** open a regular GitHub issue using the bug
-  template.
-- **Security issues:** see [`SECURITY.md`](SECURITY.md) for private
-  disclosure instructions. Please don't file public issues for
-  security problems.
+Three issue templates are available — please use the right one:
+
+- **[Bug report](../../issues/new?template=bug_report.yml)** —
+  something isn't working as documented.
+- **[Feature request](../../issues/new?template=feature_request.yml)** —
+  a new capability or a change to existing behavior.
+- **[Platform test report](../../issues/new?template=platform_test_report.yml)** —
+  results from testing on macOS, Windows, or X11 (see #5 and #10).
+
+For **security issues**, see [`SECURITY.md`](SECURITY.md) for private
+disclosure instructions. Please don't file public issues for security
+problems.
 
 ## Contact
 
