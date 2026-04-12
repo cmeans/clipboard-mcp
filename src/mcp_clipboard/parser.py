@@ -356,6 +356,11 @@ def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
         return _format_markdown(rows)
 
 
+def _escape_md_cell(cell: str) -> str:
+    """Escape characters that break GFM pipe tables."""
+    return cell.replace("\\", "\\\\").replace("|", "\\|")
+
+
 def _format_markdown(rows: list[list[str]]) -> str:
     """Render rows as a GitHub-flavored Markdown table."""
     if not rows:
@@ -365,9 +370,11 @@ def _format_markdown(rows: list[list[str]]) -> str:
     max_cols = max(len(row) for row in rows)
     normalized = [row + [""] * (max_cols - len(row)) for row in rows]
 
-    # Calculate column widths
+    # Escape cells, then calculate widths from escaped values
+    escaped = [[_escape_md_cell(cell) for cell in row] for row in normalized]
+
     widths = [
-        max(len(normalized[r][c]) for r in range(len(normalized)))
+        max(len(escaped[r][c]) for r in range(len(escaped)))
         for c in range(max_cols)
     ]
     # Minimum width of 3 for the separator
@@ -376,7 +383,7 @@ def _format_markdown(rows: list[list[str]]) -> str:
     lines: list[str] = []
     # Header
     header = "| " + " | ".join(
-        normalized[0][c].ljust(widths[c]) for c in range(max_cols)
+        escaped[0][c].ljust(widths[c]) for c in range(max_cols)
     ) + " |"
     lines.append(header)
 
@@ -385,7 +392,7 @@ def _format_markdown(rows: list[list[str]]) -> str:
     lines.append(sep)
 
     # Data rows
-    for row in normalized[1:]:
+    for row in escaped[1:]:
         line = "| " + " | ".join(
             row[c].ljust(widths[c]) for c in range(max_cols)
         ) + " |"
