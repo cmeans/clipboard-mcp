@@ -432,6 +432,11 @@ def _format_slack(rows: list[list[str]]) -> str:
     return f"{header}\n```\n" + "\n".join(data_lines) + "\n```"
 
 
+def _escape_jira_cell(cell: str) -> str:
+    """Escape characters that break Jira/Confluence wiki markup tables."""
+    return cell.replace("\\", "\\\\").replace("|", "\\|")
+
+
 def _format_jira(rows: list[list[str]]) -> str:
     """Render rows as Jira/Confluence wiki markup: ||Header|| / |Cell| syntax."""
     if not rows:
@@ -440,8 +445,10 @@ def _format_jira(rows: list[list[str]]) -> str:
     max_cols = max(len(row) for row in rows)
     normalized = [row + [""] * (max_cols - len(row)) for row in rows]
 
-    lines = ["||" + "||".join(normalized[0]) + "||"]
-    for row in normalized[1:]:
+    escaped = [[_escape_jira_cell(cell) for cell in row] for row in normalized]
+
+    lines = ["||" + "||".join(escaped[0]) + "||"]
+    for row in escaped[1:]:
         lines.append("|" + "|".join(row) + "|")
 
     return "\n".join(lines)
