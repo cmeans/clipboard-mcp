@@ -109,9 +109,9 @@ Two required sections:
 3. **Maintainer reviews.** If there are issues, the PR gets
    `QA Failed` and a review comment. Push your fix; labels reset
    automatically.
-4. **Maintainer signoff and merge.** If everything is clean, the
-   maintainer applies `QA Approved`, which unblocks the merge. All
-   PRs are squash-merged. Your branch is auto-deleted after merge.
+4. **Final maintainer review and merge.** Once QA is clean, the
+   maintainer does a final review and merges the PR. All PRs are
+   squash-merged. Your branch is auto-deleted after merge.
 
 ## Code style
 
