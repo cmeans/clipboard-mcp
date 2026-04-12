@@ -19,6 +19,9 @@ All notable changes to this project will be documented here.
 - `__version__` no longer crashes with `PackageNotFoundError` when
   running from source without installing. Falls back to `"0.0.0+dev"`.
   Closes #28.
+- Date inference in `_classify_cell` now short-circuits on values with
+  no digits, skipping up to 10 exception-driven `strptime` calls per
+  text cell. Closes #26.
 
 ## [2.1.0] - 2026-04-12
 

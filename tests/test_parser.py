@@ -456,6 +456,18 @@ def test_infer_all_empty_column():
     assert infer_column_types(rows) == ["integer", "text"]
 
 
+def test_infer_text_no_digits_skips_date_parsing():
+    """Text-only cells (no digits) should be classified as text without date parsing."""
+    rows = [["Name"], ["Alice"], ["Bob"], ["Carol"]]
+    assert infer_column_types(rows) == ["text"]
+
+
+def test_infer_date_with_digits_still_works():
+    """Date values contain digits and should still be classified correctly."""
+    rows = [["Date"], ["2024-01-15"], ["March 10, 2023"], ["12/25/2024"]]
+    assert infer_column_types(rows) == ["date"]
+
+
 # ---------------------------------------------------------------------------
 # Destination-aware formatters
 # ---------------------------------------------------------------------------

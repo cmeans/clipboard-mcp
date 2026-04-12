@@ -286,7 +286,11 @@ def _classify_cell(value: str) -> ColumnType:
     if _FLOAT_RE.match(v):
         return "float"
 
-    # Date: ISO format first, then common regional formats
+    # Date: a date must contain at least one digit -- skip parsing for pure text
+    if not any(c.isdigit() for c in v):
+        return "text"
+
+    # ISO format first, then common regional formats
     try:
         datetime.fromisoformat(v)
         return "date"
