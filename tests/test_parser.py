@@ -1,5 +1,7 @@
 """Tests for the HTML/TSV parser, formatters, and content detection."""
 
+import re
+
 from mcp_clipboard.parser import (
     detect_content_type,
     extract_html_text,
@@ -481,7 +483,6 @@ def test_format_markdown_escapes_pipe_in_data():
     # Every line must have the same number of unescaped pipe delimiters
     # (escaped pipes \| do not count as delimiters)
     # 2-column table: | col1 | col2 | = 3 unescaped pipes per line
-    import re
     for line in lines:
         # Count unescaped pipes: pipes not preceded by backslash
         delimiters = len(re.findall(r"(?<!\\)\|", line))
@@ -503,7 +504,6 @@ def test_format_markdown_escapes_double_pipe():
     """Double pipe || must not create extra columns."""
     rows = [["X", "Y"], ["a||b", "c"]]
     result = format_table(rows, "markdown")
-    import re
     for line in result.strip().split("\n"):
         delimiters = len(re.findall(r"(?<!\\)\|", line))
         assert delimiters == 3  # 2-column table: | col1 | col2 | = 3 unescaped pipes
@@ -530,10 +530,12 @@ def test_format_markdown_leading_trailing_pipe():
     lines = result.strip().split("\n")
     # header + sep + 3 data rows = 5 lines
     assert len(lines) == 5
-    import re
     for line in lines:
         delimiters = len(re.findall(r"(?<!\\)\|", line))
         assert delimiters == 2  # single column: | cell |
+    assert r"\|leading" in result
+    assert r"trailing\|" in result
+    assert r"\|both\|" in result
 
 
 def test_format_notion_escapes_pipe():
