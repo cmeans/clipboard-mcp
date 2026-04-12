@@ -34,6 +34,10 @@ All notable changes to this project will be documented here.
 - Pipe (`|`) and backslash (`\`) in table cell values are now escaped in the
   `jira` and `confluence` output formats, preventing cell-boundary corruption
   and accidental header syntax. Closes #17.
+- `_macos_read_image` now rejects MIME types without a known UTI mapping
+  instead of interpolating raw caller input into an AppleScript string
+  literal. Prevents potential script injection via crafted MIME types.
+  Closes #24.
 
 ### Changed
 - Renamed `.github/workflows/test.yml` → `ci.yml` and the workflow

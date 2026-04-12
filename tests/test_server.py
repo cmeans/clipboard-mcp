@@ -1916,18 +1916,17 @@ async def test_macos_read_image_jpeg_uti():
 
 
 @pytest.mark.asyncio
-async def test_macos_read_image_unknown_mime_passthrough():
-    """_macos_read_image passes unknown MIME type as-is when no UTI mapping exists."""
-    import base64
-    fake_data = b"WEBP_DATA"
-    b64_text = base64.b64encode(fake_data).decode()
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=b64_text) as mock_run:
-        result = await _macos_read_image("image/webp")
+async def test_macos_read_image_unknown_mime_rejected():
+    """_macos_read_image rejects MIME types without a known UTI mapping."""
+    with pytest.raises(ClipboardError, match="Unsupported image type"):
+        await _macos_read_image("image/webp")
 
-    assert result == fake_data
-    script = mock_run.call_args[0][0][-1]
-    # Should use the MIME type itself since no UTI mapping exists
-    assert "image/webp" in script
+
+@pytest.mark.asyncio
+async def test_macos_read_image_injection_rejected():
+    """_macos_read_image rejects MIME types that could escape the AppleScript string."""
+    with pytest.raises(ClipboardError, match="Unsupported image type"):
+        await _macos_read_image('image/png"; -- ')  # noqa: B907
 
 
 def test_load_instruction_clipboard_copy():

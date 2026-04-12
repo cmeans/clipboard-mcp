@@ -392,9 +392,12 @@ async def _x11_read_image(mime_type: str) -> bytes:
 
 
 async def _macos_read_image(mime_type: str) -> bytes:
-    # Map MIME to UTI for NSPasteboard lookup
+    # Map MIME to UTI for NSPasteboard lookup -- reject unknown types
+    # to prevent AppleScript injection via crafted MIME strings (#24)
     mime_to_uti = {v: k for k, v in _UTI_TO_MIME.items() if v.startswith("image/")}
-    uti = mime_to_uti.get(mime_type, mime_type)
+    uti = mime_to_uti.get(mime_type)
+    if uti is None:
+        raise ClipboardError(f"Unsupported image type: {mime_type}")
     # Return image data as base64 text via osascript, then decode to bytes
     script = (
         'use framework "AppKit"\n'
