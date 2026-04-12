@@ -411,21 +411,7 @@ async def _macos_read_image(mime_type: str) -> bytes:
     return base64.b64decode(b64_text.strip())
 
 
-_WINDOWS_IMAGE_FORMATS: dict[str, str] = {
-    "image/png": "Png",
-    "image/jpeg": "Jpeg",
-    "image/bmp": "Bmp",
-    "image/gif": "Gif",
-    "image/tiff": "Tiff",
-}
-
-
 async def _windows_read_image(mime_type: str) -> bytes:
-    # Map MIME to .NET ImageFormat -- reject unknown types (#34)
-    dotnet_format = _WINDOWS_IMAGE_FORMATS.get(mime_type)
-    if dotnet_format is None:
-        raise ClipboardError(f"Unsupported image type: {mime_type}")
-
     # Read clipboard image as base64 via PowerShell
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
@@ -433,7 +419,7 @@ async def _windows_read_image(mime_type: str) -> bytes:
         "$img = [System.Windows.Forms.Clipboard]::GetImage(); "
         "if ($img -eq $null) { return }; "
         "$ms = New-Object System.IO.MemoryStream; "
-        f"$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::{dotnet_format}); "
+        "$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); "
         "[Convert]::ToBase64String($ms.ToArray())"
     )
     b64_text = await _run(["powershell", "-NoProfile", "-Command", script], allow_empty_exit=False)

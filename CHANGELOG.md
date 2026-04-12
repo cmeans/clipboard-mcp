@@ -9,10 +9,6 @@ All notable changes to this project will be documented here.
   common English words like "return", "class", or "public", or operators
   like `->`, `||`, `::`. Short/ambiguous patterns now require 2+ distinct
   matches to classify as code. Closes #20.
-- `_windows_read_image` now honors the requested MIME type instead of
-  always returning PNG. Maps `image/jpeg`, `image/bmp`, `image/gif`,
-  and `image/tiff` to their .NET `ImageFormat` equivalents. Rejects
-  unsupported types with `ClipboardError`. Closes #34.
 
 ## [2.1.0] - 2026-04-12
 
