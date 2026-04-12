@@ -429,11 +429,15 @@ def _format_markdown(rows: list[list[str]]) -> str:
 
 
 def _format_slack(rows: list[list[str]]) -> str:
-    """Render rows for Slack: *bold* header followed by space-aligned data in a code block.
+    """Render rows for Slack as a monospace code block with underlined header.
 
-    On first paste into Slack, a one-time "Apply formatting" prompt appears.
-    After accepting (or clicking "Don't ask again"), subsequent pastes apply
-    the bold and code block formatting automatically.
+    All content (header + data) lives inside a single code block so that
+    special characters (*, `, ~, etc.) are rendered literally. The header
+    row is visually separated by a dashed underline.
+
+    This avoids the escaping problems that arise when headers use *bold*
+    markup outside the code block (Slack mrkdwn has no escape mechanism
+    for formatting characters). See #19 and #31.
     """
     if not rows:
         return ""
@@ -444,16 +448,21 @@ def _format_slack(rows: list[list[str]]) -> str:
     widths = [max(len(normalized[r][c]) for r in range(len(normalized))) for c in range(max_cols)]
     widths = [max(w, 1) for w in widths]
 
-    # Header: *bold* cells (outside the code block so Slack renders the markup)
-    header = "  ".join(f"*{normalized[0][c]}*" for c in range(max_cols))
+    lines: list[str] = []
 
-    # Data rows: space-aligned inside a monospace code block
-    data_lines = [
-        "  ".join(row[c].ljust(widths[c]) for c in range(max_cols)).rstrip()
-        for row in normalized[1:]
-    ]
+    # Header row
+    header = "  ".join(normalized[0][c].ljust(widths[c]) for c in range(max_cols)).rstrip()
+    lines.append(header)
 
-    return f"{header}\n```\n" + "\n".join(data_lines) + "\n```"
+    # Underline separator
+    sep = "  ".join("-" * widths[c] for c in range(max_cols))
+    lines.append(sep)
+
+    # Data rows
+    for row in normalized[1:]:
+        lines.append("  ".join(row[c].ljust(widths[c]) for c in range(max_cols)).rstrip())
+
+    return "```\n" + "\n".join(lines) + "\n```"
 
 
 def _escape_jira_cell(cell: str) -> str:
