@@ -13,7 +13,7 @@ import json
 import re
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Literal
+from typing import ClassVar, Literal
 
 
 class _TableExtractor(HTMLParser):
@@ -101,7 +101,19 @@ class _TextExtractor(HTMLParser):
     """Strip HTML tags and extract readable text."""
 
     # Tags that should insert a newline when opened
-    _BLOCK_TAGS = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+    _BLOCK_TAGS: ClassVar[set[str]] = {
+        "p",
+        "div",
+        "br",
+        "li",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    }
 
     def __init__(self) -> None:
         super().__init__()
@@ -153,14 +165,32 @@ ContentType = Literal["json", "url", "code", "text"]
 
 # Code indicators: patterns that suggest the text is source code
 _CODE_PATTERNS = (
-    "def ", "class ", "import ", "from ", "return ",   # Python
-    "function ", "const ", "let ", "var ",              # JavaScript
-    "func ", "package ",                                # Go
-    "public ", "private ", "protected ",                # Java/C#
-    "fn ", "pub ", "mod ",                               # Rust
-    "=>", "->", "::","&&", "||",                        # Operators
-    "if (", "for (", "while (",                         # Control flow
-    "#!/",                                              # Shebang
+    "def ",
+    "class ",
+    "import ",
+    "from ",
+    "return ",  # Python
+    "function ",
+    "const ",
+    "let ",
+    "var ",  # JavaScript
+    "func ",
+    "package ",  # Go
+    "public ",
+    "private ",
+    "protected ",  # Java/C#
+    "fn ",
+    "pub ",
+    "mod ",  # Rust
+    "=>",
+    "->",
+    "::",
+    "&&",
+    "||",  # Operators
+    "if (",
+    "for (",
+    "while (",  # Control flow
+    "#!/",  # Shebang
 )
 
 
@@ -332,7 +362,7 @@ def format_table(rows: list[list[str]], fmt: OutputFormat = "markdown") -> str:
         elif len(rows) > 1:
             # Multi-column: use first row as header keys
             header = rows[0]
-            data = [dict(zip(header, row)) for row in rows[1:]]
+            data = [dict(zip(header, row, strict=False)) for row in rows[1:]]
         else:
             # Single row, multiple columns
             data = [{"values": row} for row in rows]
@@ -377,18 +407,13 @@ def _format_markdown(rows: list[list[str]]) -> str:
     # Escape cells, then calculate widths from escaped values
     escaped = [[_escape_md_cell(cell) for cell in row] for row in normalized]
 
-    widths = [
-        max(len(escaped[r][c]) for r in range(len(escaped)))
-        for c in range(max_cols)
-    ]
+    widths = [max(len(escaped[r][c]) for r in range(len(escaped))) for c in range(max_cols)]
     # Minimum width of 3 for the separator
     widths = [max(w, 3) for w in widths]
 
     lines: list[str] = []
     # Header
-    header = "| " + " | ".join(
-        escaped[0][c].ljust(widths[c]) for c in range(max_cols)
-    ) + " |"
+    header = "| " + " | ".join(escaped[0][c].ljust(widths[c]) for c in range(max_cols)) + " |"
     lines.append(header)
 
     # Separator
@@ -397,9 +422,7 @@ def _format_markdown(rows: list[list[str]]) -> str:
 
     # Data rows
     for row in escaped[1:]:
-        line = "| " + " | ".join(
-            row[c].ljust(widths[c]) for c in range(max_cols)
-        ) + " |"
+        line = "| " + " | ".join(row[c].ljust(widths[c]) for c in range(max_cols)) + " |"
         lines.append(line)
 
     return "\n".join(lines)
@@ -418,10 +441,7 @@ def _format_slack(rows: list[list[str]]) -> str:
     max_cols = max(len(row) for row in rows)
     normalized = [row + [""] * (max_cols - len(row)) for row in rows]
 
-    widths = [
-        max(len(normalized[r][c]) for r in range(len(normalized)))
-        for c in range(max_cols)
-    ]
+    widths = [max(len(normalized[r][c]) for r in range(len(normalized))) for c in range(max_cols)]
     widths = [max(w, 1) for w in widths]
 
     # Header: *bold* cells (outside the code block so Slack renders the markup)

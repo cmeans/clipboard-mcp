@@ -11,7 +11,6 @@ from mcp_clipboard.parser import (
     parse_tsv,
 )
 
-
 # ---------------------------------------------------------------------------
 # HTML parsing
 # ---------------------------------------------------------------------------
@@ -144,6 +143,7 @@ def test_format_json():
     rows = [["Name", "Age"], ["Alice", "30"]]
     result = format_table(rows, "json")
     import json
+
     data = json.loads(result)
     assert len(data) == 1
     assert data[0]["Name"] == "Alice"
@@ -153,6 +153,7 @@ def test_format_json():
 def test_format_json_single_column():
     """Single-column JSON should be a flat array of values."""
     import json
+
     rows = [["821 W Gunnison St"], ["1283 W Victoria St"], ["5533 N Glenwood Ave"]]
     result = format_table(rows, "json")
     data = json.loads(result)
@@ -233,7 +234,7 @@ def test_extract_html_text_list_items():
     text = extract_html_text(html)
     assert "Item 1" in text
     assert "Item 2" in text
-    lines = [l for l in text.splitlines() if l.strip()]
+    lines = [line for line in text.splitlines() if line.strip()]
     assert len(lines) >= 3
 
 
@@ -251,7 +252,7 @@ def test_detect_json_object():
 
 
 def test_detect_json_array():
-    assert detect_content_type('[1, 2, 3]') == "json"
+    assert detect_content_type("[1, 2, 3]") == "json"
 
 
 def test_detect_json_invalid():

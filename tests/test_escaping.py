@@ -45,7 +45,14 @@ SPECIAL_CHARS: list[tuple[str, str]] = [
 ]
 
 ALL_FORMATS: list[OutputFormat] = [
-    "markdown", "json", "csv", "slack", "jira", "confluence", "html", "notion",
+    "markdown",
+    "json",
+    "csv",
+    "slack",
+    "jira",
+    "confluence",
+    "html",
+    "notion",
 ]
 
 # Known unfixed bugs -- xfail these specific (format, char) combos
