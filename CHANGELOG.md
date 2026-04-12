@@ -19,6 +19,11 @@ All notable changes to this project will be documented here.
   prematurely re-enabling text extraction when inside a `<script>` tag
   (and vice versa). Closes #36.
 
+### Fixed
+- MIME type validation regex now requires type and subtype to start
+  with a letter. Rejects nonsensical values like `123/456` and `_/_`.
+  Also validates parameter syntax (`name=value`). Closes #35.
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed

@@ -104,8 +104,8 @@ _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
 # image/* entries that are text-readable (not actual binary).
 _TEXT_READABLE_MIMES = frozenset({"image/svg+xml"})
 
-# Basic MIME type validation: type/subtype with optional parameters.
-_MIME_RE = re.compile(r"^[\w.+\-]+/[\w.+\-]+(;[\w.+\-=]+)*$")
+# MIME type validation: type and subtype must start with a letter.
+_MIME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*/[a-zA-Z][\w.+\-]*(;\s*[\w.+\-]+=[\w.+\-]+)*$")
 
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:

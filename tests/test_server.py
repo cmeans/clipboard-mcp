@@ -1903,6 +1903,29 @@ async def test_read_raw_rejects_octet_stream():
     assert "Cannot read binary" in result
 
 
+@pytest.mark.asyncio
+async def test_read_raw_rejects_numeric_mime():
+    """clipboard_read_raw rejects MIME types starting with digits."""
+    result = await clipboard_read_raw(mime_type="123/456")
+    assert "Invalid MIME type" in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_rejects_underscore_mime():
+    """clipboard_read_raw rejects MIME types like _/_."""
+    result = await clipboard_read_raw(mime_type="_/_")
+    assert "Invalid MIME type" in result
+
+
+@pytest.mark.asyncio
+async def test_read_raw_accepts_custom_mime():
+    """clipboard_read_raw should accept valid custom MIME types."""
+    # This should pass validation (but return empty since it's not on clipboard)
+    with patch("mcp_clipboard.server.read_clipboard", new_callable=AsyncMock, return_value=""):
+        result = await clipboard_read_raw(mime_type="application/x-custom")
+    assert "Invalid MIME type" not in result
+
+
 # ---------------------------------------------------------------------------
 # 24. clipboard_copy() edge cases
 # ---------------------------------------------------------------------------
