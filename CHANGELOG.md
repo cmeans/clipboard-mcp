@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented here.
 
-## [Unreleased]
+## [2.1.0] - 2026-04-12
 
 ### Added
 - QA workflow labels and `pr-labels` / `qa-gate` automation, matching
