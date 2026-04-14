@@ -390,10 +390,7 @@ def test_detect_prose_with_from():
 
 def test_detect_prose_with_import():
     """Prose containing 'import ' mid-sentence should not be code (#68)."""
-    assert (
-        detect_content_type("The customs office reviews each import before release.")
-        == "text"
-    )
+    assert detect_content_type("The customs office reviews each import before release.") == "text"
 
 
 def test_detect_code_python_import_at_line_start():
