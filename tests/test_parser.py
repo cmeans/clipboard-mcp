@@ -383,6 +383,26 @@ def test_detect_code_strong_signal():
     assert detect_content_type("if (x > 0) { }") == "code"
 
 
+def test_detect_prose_with_from():
+    """Prose containing 'from ' as a preposition should not be code (#68)."""
+    assert detect_content_type("I got the data from the system yesterday.") == "text"
+
+
+def test_detect_prose_with_import():
+    """Prose containing 'import ' mid-sentence should not be code (#68)."""
+    assert (
+        detect_content_type("The customs office reviews each import before release.")
+        == "text"
+    )
+
+
+def test_detect_code_python_import_at_line_start():
+    """Real Python imports at line start must still be detected as code (#68)."""
+    assert detect_content_type("import os") == "code"
+    assert detect_content_type("from collections import defaultdict") == "code"
+    assert detect_content_type("import json\nimport sys") == "code"
+
+
 # ---------------------------------------------------------------------------
 # Schema inference
 # ---------------------------------------------------------------------------

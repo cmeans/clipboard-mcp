@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## [Unreleased]
+
+### Fixed
+- `detect_content_type` no longer misclassifies English prose containing
+  "from " or "import " (and other strong code keywords) as code. Strong
+  patterns now anchor to the start of a line (after leading whitespace),
+  so phrases like "data from the system" or "each import before release"
+  are correctly treated as text, while real `import os` / `from x import y`
+  at a line start are still detected as code. Closes #68.
+
 ## [2.2.0] - 2026-04-12
 
 ### Added
