@@ -4,6 +4,10 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- Strengthened `test_paste_large_content_truncated` with a size-bound
+  assertion so it can no longer pass if truncation regresses. Closes #70.
+
 ### Fixed
 - `detect_content_type` no longer misclassifies English prose containing
   "from " or "import " (and other strong code keywords) as code. Strong
