@@ -644,11 +644,34 @@ def test_format_destination_empty():
 
 
 def test_format_destination_ragged_rows():
-    """Ragged rows are padded for all destination formats."""
+    """Ragged rows are padded with empty cells so row shape is uniform."""
     rows = [["A", "B", "C"], ["1", "2"]]
-    for fmt in ("slack", "jira", "confluence", "html"):
+
+    # Slack: both data cells must appear in the output (short row wasn't dropped).
+    slack = format_table(rows, "slack")
+    assert "1" in slack and "2" in slack
+    assert "A" in slack and "B" in slack and "C" in slack
+
+    # Jira/Confluence: header has 3 cells, data row must also have 3 cells
+    # (including a padded empty cell for the ragged row).
+    # Header format: ||A||B||C||   Data format: |1|2||  (trailing empty cell)
+    for fmt in ("jira", "confluence"):
         result = format_table(rows, fmt)
-        assert result  # non-empty
+        lines = result.splitlines()
+        assert len(lines) == 2, f"{fmt}: expected 2 rows, got {len(lines)}"
+        header_cells = lines[0][2:-2].split("||")
+        data_cells = lines[1][1:-1].split("|")
+        assert len(header_cells) == 3, f"{fmt}: header cell count {len(header_cells)}"
+        assert len(data_cells) == 3, (
+            f"{fmt}: data cell count {len(data_cells)} (short row not padded)"
+        )
+
+    # HTML: every <tr> must contain the same number of cells (<th> for header,
+    # <td> for data), proving the short data row was padded.
+    html = format_table(rows, "html")
+    assert html.count("<th>") == 3
+    # Count <td> occurrences in the single data row (only one data <tr>).
+    assert html.count("<td>") == 3, f"html: expected 3 <td>, got {html.count('<td>')}"
 
 
 # ---------------------------------------------------------------------------
