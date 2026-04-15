@@ -726,10 +726,6 @@ def test_detect_backend_wayland_via_socket(tmp_path):
         os.environ.pop("XDG_SESSION_TYPE", None)
         with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
             with patch("mcp_clipboard.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
-                # Clear cached backend
-                import mcp_clipboard.clipboard as cb
-
-                cb._backend = None
                 result = _detect_backend()
 
     assert result == "wayland"
@@ -740,9 +736,6 @@ def test_detect_backend_prefers_env_var_over_socket():
     with patch.dict("os.environ", {"WAYLAND_DISPLAY": "wayland-0"}, clear=False):
         with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
             with patch("mcp_clipboard.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
-                import mcp_clipboard.clipboard as cb
-
-                cb._backend = None
                 result = _detect_backend()
 
     assert result == "wayland"
@@ -1001,12 +994,27 @@ def test_load_icons_returns_icons():
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _reset_backend_cache():
+    """Ensure the module-global ``_backend`` cache is None around every test.
+
+    Isolates tests from each other: any test that mutates ``cb._backend``
+    (directly or via ``_get_backend``) must not leak state to the next test.
+    Prior code did this manually with trailing ``cb._backend = None`` lines,
+    which was brittle (easy to forget; no enforcement).
+    """
+    import mcp_clipboard.clipboard as cb
+
+    cb._backend = None
+    try:
+        yield
+    finally:
+        cb._backend = None
+
+
 def test_detect_backend_darwin():
     """_detect_backend returns 'macos' on Darwin."""
     with patch("mcp_clipboard.clipboard.platform.system", return_value="Darwin"):
-        import mcp_clipboard.clipboard as cb
-
-        cb._backend = None
         result = _detect_backend()
 
     assert result == "macos"
@@ -1015,9 +1023,6 @@ def test_detect_backend_darwin():
 def test_detect_backend_windows():
     """_detect_backend returns 'windows' on Windows."""
     with patch("mcp_clipboard.clipboard.platform.system", return_value="Windows"):
-        import mcp_clipboard.clipboard as cb
-
-        cb._backend = None
         result = _detect_backend()
 
     assert result == "windows"
@@ -1026,9 +1031,6 @@ def test_detect_backend_windows():
 def test_detect_backend_unsupported():
     """_detect_backend raises ClipboardError on unsupported platforms."""
     with patch("mcp_clipboard.clipboard.platform.system", return_value="FreeBSD"):
-        import mcp_clipboard.clipboard as cb
-
-        cb._backend = None
         with pytest.raises(ClipboardError, match="Unsupported platform: FreeBSD"):
             _detect_backend()
 
@@ -1038,9 +1040,6 @@ def test_detect_backend_linux_no_tools():
     with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
         with patch("mcp_clipboard.clipboard.shutil.which", return_value=None):
             with patch.dict("os.environ", {}, clear=True):
-                import mcp_clipboard.clipboard as cb
-
-                cb._backend = None
                 with pytest.raises(ClipboardError, match="No clipboard tool found"):
                     _detect_backend()
 
@@ -1049,29 +1048,24 @@ def test_get_backend_env_override():
     """MCP_CLIPBOARD_BACKEND env var overrides auto-detection."""
     import mcp_clipboard.clipboard as cb
 
-    cb._backend = None
     with patch.dict("os.environ", {"MCP_CLIPBOARD_BACKEND": "x11"}):
         result = cb._get_backend()
     assert result == "x11"
-    cb._backend = None  # reset
 
 
 def test_get_backend_env_override_invalid():
     """MCP_CLIPBOARD_BACKEND with invalid value raises ClipboardError."""
     import mcp_clipboard.clipboard as cb
 
-    cb._backend = None
     with patch.dict("os.environ", {"MCP_CLIPBOARD_BACKEND": "invalid"}):
         with pytest.raises(ClipboardError, match="Invalid MCP_CLIPBOARD_BACKEND"):
             cb._get_backend()
-    cb._backend = None  # reset
 
 
 def test_get_backend_auto_detect_when_no_override():
     """Without MCP_CLIPBOARD_BACKEND, _get_backend uses auto-detection."""
     import mcp_clipboard.clipboard as cb
 
-    cb._backend = None
     with patch.dict("os.environ", {}, clear=False):
         import os
 
@@ -1079,7 +1073,6 @@ def test_get_backend_auto_detect_when_no_override():
         with patch("mcp_clipboard.clipboard._detect_backend", return_value="wayland"):
             result = cb._get_backend()
     assert result == "wayland"
-    cb._backend = None  # reset
 
 
 # ---------------------------------------------------------------------------
@@ -2263,9 +2256,6 @@ async def test_detect_backend_x11_fallback():
     with patch("mcp_clipboard.clipboard.platform.system", return_value="Linux"):
         with patch("mcp_clipboard.clipboard.shutil.which", side_effect=mock_which):
             with patch.dict("os.environ", {}, clear=True):
-                import mcp_clipboard.clipboard as cb
-
-                cb._backend = None
                 result = _detect_backend()
 
     assert result == "x11"
