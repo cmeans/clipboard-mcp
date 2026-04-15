@@ -5,6 +5,11 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Fixed
+- Subprocess reaping on timeout in `_run_subprocess` and `_run_with_stdin`.
+  After `proc.kill()`, the process is now awaited via
+  `await asyncio.wait_for(proc.wait(), timeout=1.0)` so the pipes are
+  drained and the child is fully reaped, rather than left pending for the
+  asyncio child watcher. Closes #69.
 - `detect_content_type` no longer misclassifies English prose containing
   "from " or "import " (and other strong code keywords) as code. Strong
   patterns now anchor to the start of a line (after leading whitespace),

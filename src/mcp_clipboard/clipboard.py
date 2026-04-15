@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import logging
 import os
 import platform
@@ -61,6 +62,8 @@ async def _run_subprocess(
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
     except TimeoutError as te:
         proc.kill()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
     if proc.returncode != 0:
@@ -126,6 +129,8 @@ async def _run_with_stdin(
         raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
     except TimeoutError as te:
         proc.kill()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
         raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
     if proc.returncode != 0:
