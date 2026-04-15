@@ -7,6 +7,11 @@ All notable changes to this project will be documented here.
 ### Added
 - Strengthened `test_paste_large_content_truncated` with a size-bound
   assertion so it can no longer pass if truncation regresses. Closes #70.
+- Strengthened `test_format_destination_ragged_rows` with per-format
+  structural assertions. Previously only checked non-empty output;
+  now verifies cell-count uniformity for jira/confluence (`||`/`|` cell
+  parsing) and html (`<th>`/`<td>` counts), so a formatter that dropped
+  or failed to pad the short row would be caught. Closes #71.
 
 ### Fixed
 - Subprocess reaping on timeout in `_run_subprocess` and `_run_with_stdin`.
