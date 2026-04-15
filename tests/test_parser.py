@@ -662,7 +662,9 @@ def test_format_destination_ragged_rows():
         header_cells = lines[0][2:-2].split("||")
         data_cells = lines[1][1:-1].split("|")
         assert len(header_cells) == 3, f"{fmt}: header cell count {len(header_cells)}"
-        assert len(data_cells) == 3, f"{fmt}: data cell count {len(data_cells)} (short row not padded)"
+        assert len(data_cells) == 3, (
+            f"{fmt}: data cell count {len(data_cells)} (short row not padded)"
+        )
 
     # HTML: every <tr> must contain the same number of cells (<th> for header,
     # <td> for data), proving the short data row was padded.
