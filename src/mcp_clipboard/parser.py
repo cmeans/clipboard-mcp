@@ -219,9 +219,11 @@ def detect_content_type(text: str) -> ContentType:
     if len(lines) == 1 and (stripped.startswith("http://") or stripped.startswith("https://")):
         return "url"
 
-    # Code: a single strong pattern is enough
+    # Code: a single strong pattern is enough, but it must appear at the start
+    # of a line (after any leading whitespace). Mid-sentence matches like
+    # "data from the system" or "each import before release" are prose, not code.
     for pattern in _STRONG_CODE_PATTERNS:
-        if pattern in stripped:
+        if any(line.lstrip().startswith(pattern) for line in lines):
             return "code"
 
     # Code: need 2+ distinct weak patterns to avoid false positives on prose
