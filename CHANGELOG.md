@@ -4,6 +4,10 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- Strengthened `test_paste_large_content_truncated` with a size-bound
+  assertion so it can no longer pass if truncation regresses. Closes #70.
+
 ### Fixed
 - Subprocess reaping on timeout in `_run_subprocess` and `_run_with_stdin`.
   After `proc.kill()`, the process is now awaited via

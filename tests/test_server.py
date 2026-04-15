@@ -357,12 +357,14 @@ async def test_paste_both_fail():
 
 @pytest.mark.asyncio
 async def test_paste_large_content_truncated():
-    """clipboard_paste truncates content over 50KB."""
+    """clipboard_paste truncates content over 50KB and enforces the size bound."""
     huge = "x" * 100_000
     with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html="", text=huge)):
         result = await clipboard_paste()
 
     assert "truncated" in result.lower()
+    # The truncation message adds a small suffix; bound must stay well below input size.
+    assert len(result) < 60_000, f"expected bounded output, got {len(result):,} chars"
 
 
 # ---------------------------------------------------------------------------
