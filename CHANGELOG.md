@@ -13,6 +13,12 @@ All notable changes to this project will be documented here.
   parsing) and html (`<th>`/`<td>` counts), so a formatter that dropped
   or failed to pad the short row would be caught. Closes #71.
 
+### Changed
+- `tests/test_server.py` adds an autouse fixture that resets the module
+  global `cb._backend` around every test, replacing scattered manual
+  `cb._backend = None` lines in backend-detection and env-override tests.
+  Removes the ordering-dependent state hazard called out in #72. Closes #72.
+
 ### Fixed
 - Subprocess reaping on timeout in `_run_subprocess` and `_run_with_stdin`.
   After `proc.kill()`, the process is now awaited via
