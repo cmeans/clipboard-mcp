@@ -1623,6 +1623,44 @@ async def test_run_subprocess_awaits_wait_after_kill_on_timeout():
 
 
 @pytest.mark.asyncio
+async def test_run_subprocess_bounded_wait_when_child_is_wedged():
+    """If the child hangs in wait() after kill(), _run_subprocess must not block indefinitely.
+
+    Mirrors a wedged-child scenario: wait() never returns. The bounded
+    ``asyncio.wait_for(proc.wait(), timeout=1.0)`` guarantees forward progress.
+    """
+    from mcp_clipboard.clipboard import _run_subprocess
+
+    class WedgedProc:
+        def __init__(self):
+            self.returncode = None
+
+        async def communicate(self):
+            await asyncio.sleep(10)
+            return b"", b""
+
+        def kill(self):
+            pass
+
+        async def wait(self):
+            await asyncio.sleep(10)  # simulates a wedged child
+            return -9
+
+    async def fake_create(*_args, **_kwargs):
+        return WedgedProc()
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    with patch("mcp_clipboard.clipboard.asyncio.create_subprocess_exec", fake_create):
+        with pytest.raises(ClipboardError, match="timed out"):
+            await _run_subprocess(["sleep", "10"], timeout=0.05)
+    elapsed = loop.time() - start
+
+    # Outer 0.05s timeout + inner 1.0s bounded wait ≈ ≤ 1.1s; leave generous headroom.
+    assert elapsed < 2.5, f"bounded wait not enforced: elapsed {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
 async def test_run_binary_exit_code_1_returns_empty():
     """_run_binary returns empty bytes for exit code 1 (format not available)."""
     result = await _run_binary(["sh", "-c", "exit 1"])
@@ -1696,6 +1734,38 @@ async def test_run_with_stdin_awaits_wait_after_kill_on_timeout():
 
     assert fake.kill_called, "kill() must be called on timeout"
     assert fake.wait_called, "wait() must be awaited after kill() to reap the process"
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_bounded_wait_when_child_is_wedged():
+    """If the child hangs in wait() after kill(), _run_with_stdin must not block indefinitely."""
+
+    class WedgedProc:
+        def __init__(self):
+            self.returncode = None
+
+        async def communicate(self, input=None):
+            await asyncio.sleep(10)
+            return b"", b""
+
+        def kill(self):
+            pass
+
+        async def wait(self):
+            await asyncio.sleep(10)  # simulates a wedged child
+            return -9
+
+    async def fake_create(*_args, **_kwargs):
+        return WedgedProc()
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    with patch("mcp_clipboard.clipboard.asyncio.create_subprocess_exec", fake_create):
+        with pytest.raises(ClipboardError, match="timed out"):
+            await _run_with_stdin(["sleep", "10"], b"data", timeout=0.05)
+    elapsed = loop.time() - start
+
+    assert elapsed < 2.5, f"bounded wait not enforced: elapsed {elapsed:.2f}s"
 
 
 @pytest.mark.asyncio
