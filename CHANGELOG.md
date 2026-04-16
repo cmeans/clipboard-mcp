@@ -5,6 +5,10 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Fixed
+- `clipboard_paste` instruction file now describes the `slack` format
+  accurately: monospace code block with a dashed-underline header row.
+  The prior description ("`*bold*` header + space-aligned data") reflected
+  the pre-#50 implementation and was stale. Closes #73.
 - `detect_content_type` no longer misclassifies prose that starts with a
   lowercase strong-pattern keyword. Strong patterns were converted from
   substring checks to MULTILINE regex patterns that require syntactic

@@ -29,7 +29,7 @@ Args:
         - "markdown" (default): GitHub-flavored Markdown table
         - "json": Array of objects keyed by header row
         - "csv": Comma-separated values
-        - "slack": *bold* header + space-aligned data in a monospace code block
+        - "slack": monospace code block with dashed-underline header row (avoids Slack mrkdwn escaping issues)
         - "jira": ||Header|| / |Cell| wiki markup (also works for Confluence)
         - "confluence": same as jira
         - "html": <table> with <thead>/<th>/<tbody>/<td>
