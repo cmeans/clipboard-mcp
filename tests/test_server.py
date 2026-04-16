@@ -823,6 +823,16 @@ async def test_macos_list_formats_passthrough_unknown():
     assert result == ["text/html", "com.apple.something-custom"]
 
 
+@pytest.mark.asyncio
+async def test_macos_list_formats_deduplicates_mime_types():
+    """_macos_list_formats deduplicates when multiple UTIs map to the same MIME type."""
+    raw_output = "public.html\npublic.utf8-plain-text\npublic.plain-text\npublic.png\n"
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _macos_list_formats()
+
+    assert result == ["text/html", "text/plain", "image/png"]
+
+
 # ---------------------------------------------------------------------------
 # 9. Windows backend
 # ---------------------------------------------------------------------------

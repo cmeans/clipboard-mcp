@@ -315,7 +315,14 @@ async def _macos_list_formats() -> list[str]:
     )
     raw = await _run(["osascript", "-e", script], allow_empty_exit=False)
     native = [line.strip() for line in raw.splitlines() if line.strip()]
-    return [_UTI_TO_MIME.get(t, t) for t in native]
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in native:
+        mime = _UTI_TO_MIME.get(t, t)
+        if mime not in seen:
+            seen.add(mime)
+            result.append(mime)
+    return result
 
 
 async def _windows_read(mime_type: str) -> str:
