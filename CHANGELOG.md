@@ -4,23 +4,7 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
-### Fixed
-- `clipboard_paste` instruction file now describes the `slack` format
-  accurately: monospace code block with a dashed-underline header row.
-  The prior description ("`*bold*` header + space-aligned data") reflected
-  the pre-#50 implementation and was stale. Closes #73.
-- `detect_content_type` no longer misclassifies prose that starts with a
-  lowercase strong-pattern keyword. Strong patterns were converted from
-  substring checks to MULTILINE regex patterns that require syntactic
-  context: `def X(`, `let/var/const X =`, `import X$`, `from X import Y`,
-  etc. Prose like "let me know", "from the desk of", "import tariffs
-  affect trade", "def leaves me confused", and "var is short for variable"
-  is now correctly classified as text, while real code forms are still
-  detected. Closes #77.
-- macOS `_macos_list_formats` now deduplicates MIME types. Both
-  `public.utf8-plain-text` and `public.plain-text` map to `text/plain`;
-  when both UTIs are on the pasteboard, the result list previously
-  contained `text/plain` twice. Closes #74.
+## [2.2.1] - 2026-04-16
 
 ### Added
 - Strengthened `test_paste_large_content_truncated` with a size-bound
@@ -30,12 +14,6 @@ All notable changes to this project will be documented here.
   now verifies cell-count uniformity for jira/confluence (`||`/`|` cell
   parsing) and html (`<th>`/`<td>` counts), so a formatter that dropped
   or failed to pad the short row would be caught. Closes #71.
-
-### Fixed
-- `clipboard_copy` now validates `mime_type` against `_MIME_RE` before
-  writing to the clipboard. Previously only `clipboard_read_raw` validated;
-  invalid values like `not-a-mime` or `123/456` passed through unchecked
-  to the backend subprocess. Closes #75.
 
 ### Changed
 - `tests/test_server.py` adds an autouse fixture that resets the module
@@ -55,6 +33,26 @@ All notable changes to this project will be documented here.
   so phrases like "data from the system" or "each import before release"
   are correctly treated as text, while real `import os` / `from x import y`
   at a line start are still detected as code. Closes #68.
+- `clipboard_paste` instruction file now describes the `slack` format
+  accurately: monospace code block with a dashed-underline header row.
+  The prior description ("`*bold*` header + space-aligned data") reflected
+  the pre-#50 implementation and was stale. Closes #73.
+- `detect_content_type` no longer misclassifies prose that starts with a
+  lowercase strong-pattern keyword. Strong patterns were converted from
+  substring checks to MULTILINE regex patterns that require syntactic
+  context: `def X(`, `let/var/const X =`, `import X$`, `from X import Y`,
+  etc. Prose like "let me know", "from the desk of", "import tariffs
+  affect trade", "def leaves me confused", and "var is short for variable"
+  is now correctly classified as text, while real code forms are still
+  detected. Closes #77.
+- macOS `_macos_list_formats` now deduplicates MIME types. Both
+  `public.utf8-plain-text` and `public.plain-text` map to `text/plain`;
+  when both UTIs are on the pasteboard, the result list previously
+  contained `text/plain` twice. Closes #74.
+- `clipboard_copy` now validates `mime_type` against `_MIME_RE` before
+  writing to the clipboard. Previously only `clipboard_read_raw` validated;
+  invalid values like `not-a-mime` or `123/456` passed through unchecked
+  to the backend subprocess. Closes #75.
 
 ## [2.2.0] - 2026-04-12
 
