@@ -13,6 +13,12 @@ All notable changes to this project will be documented here.
   parsing) and html (`<th>`/`<td>` counts), so a formatter that dropped
   or failed to pad the short row would be caught. Closes #71.
 
+### Fixed
+- `clipboard_copy` now validates `mime_type` against `_MIME_RE` before
+  writing to the clipboard. Previously only `clipboard_read_raw` validated;
+  invalid values like `not-a-mime` or `123/456` passed through unchecked
+  to the backend subprocess. Closes #75.
+
 ### Changed
 - `tests/test_server.py` adds an autouse fixture that resets the module
   global `cb._backend` around every test, replacing scattered manual

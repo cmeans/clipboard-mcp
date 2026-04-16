@@ -2156,6 +2156,29 @@ async def test_clipboard_copy_at_limit():
     assert "characters" in result
 
 
+@pytest.mark.asyncio
+async def test_clipboard_copy_rejects_invalid_mime_type():
+    """clipboard_copy rejects MIME types that don't match _MIME_RE."""
+    result = await clipboard_copy("hello", mime_type="not-a-mime")
+    assert "Invalid MIME type" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_rejects_numeric_mime_type():
+    """clipboard_copy rejects MIME types with numeric-prefixed type/subtype."""
+    result = await clipboard_copy("hello", mime_type="123/456")
+    assert "Invalid MIME type" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_accepts_valid_typed_mime():
+    """clipboard_copy accepts valid non-text/plain MIME types."""
+    with patch("mcp_clipboard.server.write_clipboard_typed", new_callable=AsyncMock):
+        result = await clipboard_copy("hello", mime_type="text/html")
+    assert "characters" in result
+    assert "text/html" in result
+
+
 # ---------------------------------------------------------------------------
 # 25. Misc medium-priority tests
 # ---------------------------------------------------------------------------
