@@ -164,24 +164,26 @@ def extract_html_text(html: str) -> str:
 
 ContentType = Literal["json", "url", "code", "text"]
 
-# Strong code indicators: a single match is sufficient to classify as code.
-_STRONG_CODE_PATTERNS = (
-    "def ",
-    "import ",
-    "from ",  # Python
-    "function ",
-    "const ",
-    "let ",
-    "var ",  # JavaScript
-    "func ",
-    "package ",  # Go
-    "fn ",
-    "pub ",
-    "mod ",  # Rust
-    "if (",
-    "for (",
-    "while (",  # Control flow
-    "#!/",  # Shebang
+# Strong code indicators: a single match at the start of a line (after any
+# leading whitespace) is sufficient to classify as code. Each pattern includes
+# enough syntactic context (parens, assignment, trailing EOL) to distinguish
+# real code from prose that happens to start with the same keyword (#77).
+_STRONG_CODE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.MULTILINE)
+    for p in (
+        r"^\s*def\s+\w+\s*\(",  # Python def with parens
+        # Python import / from X import Y (single or comma/as list, must reach EOL)
+        r"^\s*(?:from\s+[\w.]+\s+)?import\s+\w[\w.]*(?:\s*(?:,|as\s)\s*\w[\w.]*)*\s*$",
+        r"^\s*function\s+\w*\s*\(",  # JS function
+        r"^\s*(?:const|let|var)\s+\w+\s*=",  # JS declaration with assignment
+        r"^\s*func\s+\w*\s*\(",  # Go func
+        r"^\s*package\s+[\w.]+\s*$",  # Go package (must reach EOL)
+        r"^\s*fn\s+\w+\s*\(",  # Rust fn
+        r"^\s*pub\s+(?:fn|struct|mod|use|const|let|static)\b",  # Rust visibility
+        r"^\s*mod\s+\w+\s*[{;]",  # Rust mod with body or semicolon
+        r"^\s*(?:if|for|while)\s*\(",  # Control flow with parens
+        r"^\s*#!/",  # Shebang
+    )
 )
 
 # Weak code indicators: common in code but also appear in prose.
@@ -219,11 +221,12 @@ def detect_content_type(text: str) -> ContentType:
     if len(lines) == 1 and (stripped.startswith("http://") or stripped.startswith("https://")):
         return "url"
 
-    # Code: a single strong pattern is enough, but it must appear at the start
-    # of a line (after any leading whitespace). Mid-sentence matches like
-    # "data from the system" or "each import before release" are prose, not code.
+    # Code: a single strong pattern is enough. Each pattern is a MULTILINE
+    # regex anchored to line start that requires syntactic context (parens,
+    # assignment, or trailing EOL) to distinguish real code from prose that
+    # happens to start with a lowercase keyword (#68, #77).
     for pattern in _STRONG_CODE_PATTERNS:
-        if any(line.lstrip().startswith(pattern) for line in lines):
+        if pattern.search(stripped):
             return "code"
 
     # Code: need 2+ distinct weak patterns to avoid false positives on prose

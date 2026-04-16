@@ -5,6 +5,14 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Fixed
+- `detect_content_type` no longer misclassifies prose that starts with a
+  lowercase strong-pattern keyword. Strong patterns were converted from
+  substring checks to MULTILINE regex patterns that require syntactic
+  context: `def X(`, `let/var/const X =`, `import X$`, `from X import Y`,
+  etc. Prose like "let me know", "from the desk of", "import tariffs
+  affect trade", "def leaves me confused", and "var is short for variable"
+  is now correctly classified as text, while real code forms are still
+  detected. Closes #77.
 - macOS `_macos_list_formats` now deduplicates MIME types. Both
   `public.utf8-plain-text` and `public.plain-text` map to `text/plain`;
   when both UTIs are on the pasteboard, the result list previously
