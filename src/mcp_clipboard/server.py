@@ -388,6 +388,11 @@ async def clipboard_copy(
     mime_type: str = "text/plain",
 ) -> str:
     mime_type = mime_type.strip().lower()
+    if not _MIME_RE.match(mime_type):
+        return (
+            f"Invalid MIME type: {mime_type!r}. "
+            f"Expected format: type/subtype (e.g. text/plain, text/html)."
+        )
     content_bytes = len(content.encode())
     if content_bytes > _MAX_WRITE_BYTES:
         return (
