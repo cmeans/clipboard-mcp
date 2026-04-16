@@ -400,6 +400,44 @@ def test_detect_code_python_import_at_line_start():
     assert detect_content_type("import json\nimport sys") == "code"
 
 
+def test_detect_prose_starting_with_let():
+    """Prose starting with lowercase 'let' must not classify as code (#77)."""
+    assert detect_content_type("let me know when you are ready") == "text"
+
+
+def test_detect_prose_starting_with_from():
+    """Prose starting with lowercase 'from' (preposition) must not classify as code (#77)."""
+    assert detect_content_type("from the desk of the president") == "text"
+
+
+def test_detect_prose_starting_with_import():
+    """Prose starting with lowercase 'import' (noun) must not classify as code (#77)."""
+    assert detect_content_type("import tariffs affect trade") == "text"
+
+
+def test_detect_prose_starting_with_def():
+    """Prose starting with lowercase 'def' must not classify as code (#77)."""
+    assert detect_content_type("def leaves me confused") == "text"
+
+
+def test_detect_prose_starting_with_var():
+    """Prose starting with lowercase 'var' must not classify as code (#77)."""
+    assert detect_content_type("var is short for variable") == "text"
+
+
+def test_detect_code_js_declarations_still_detected():
+    """Real JS variable declarations with assignment must still classify as code (#77)."""
+    assert detect_content_type("let x = 42") == "code"
+    assert detect_content_type("const PI = 3.14") == "code"
+    assert detect_content_type("var total = 0;") == "code"
+
+
+def test_detect_code_python_def_still_detected():
+    """Real Python def with parens must still classify as code (#77)."""
+    assert detect_content_type("def hello():") == "code"
+    assert detect_content_type("def add(a, b):") == "code"
+
+
 # ---------------------------------------------------------------------------
 # Schema inference
 # ---------------------------------------------------------------------------
