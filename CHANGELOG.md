@@ -4,6 +4,12 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- macOS `_macos_list_formats` now deduplicates MIME types. Both
+  `public.utf8-plain-text` and `public.plain-text` map to `text/plain`;
+  when both UTIs are on the pasteboard, the result list previously
+  contained `text/plain` twice. Closes #74.
+
 ### Added
 - Strengthened `test_paste_large_content_truncated` with a size-bound
   assertion so it can no longer pass if truncation regresses. Closes #70.
