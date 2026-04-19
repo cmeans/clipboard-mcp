@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Harden GitHub Actions context handling against shell script injection in
+  `pr-labels-ci.yml` and `qa-gate.yml`. Contributor-controlled values
+  (notably `workflow_run.head_branch` from fork PRs) and label/sha/repo
+  context are now passed through `env:` blocks instead of being interpolated
+  directly into `run:` shell. Aligns with the pattern already used in
+  `pr-labels.yml`. Closes #87.
+
 ## [2.2.1] - 2026-04-16
 
 ### Added
