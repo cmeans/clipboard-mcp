@@ -11,6 +11,12 @@ All notable changes to this project will be documented here.
   context are now passed through `env:` blocks instead of being interpolated
   directly into `run:` shell. Aligns with the pattern already used in
   `pr-labels.yml`. Closes #87.
+- Remove the literal empty GitHub Actions expression from two shell
+  comments in `pr-labels-ci.yml`. GHA substitutes such sequences inside
+  `run:` blocks before the shell sees them (including within comments),
+  and the queue-time parser rejects the empty form on `workflow_dispatch`.
+  The `workflow_run` path tolerated it, so the bug was latent here but
+  blocked manual dispatch and fresh-repo cascades. Closes #91.
 
 ## [2.2.1] - 2026-04-16
 
