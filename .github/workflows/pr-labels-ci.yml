@@ -46,7 +46,7 @@ jobs:
 
           # Fallback: pull_requests array is empty for dependabot PRs.
           # Search by head branch instead. HEAD_BRANCH comes via env
-          # (not direct ${{ }} interpolation) because fork PR branch names
+          # (not a direct GHA expression) because fork PR branch names
           # are contributor-controlled and allow shell metacharacters.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
@@ -97,7 +97,7 @@ jobs:
           API_OUT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/pull_requests" \
             --jq '.[0].number // empty' 2>&1) && PR="$API_OUT" || true
 
-          # HEAD_BRANCH comes via env (not direct ${{ }} interpolation)
+          # HEAD_BRANCH comes via env (not a direct GHA expression)
           # because fork PR branch names are contributor-controlled.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
