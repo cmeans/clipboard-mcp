@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Changed
+- Add `workflow_dispatch:` trigger to `pr-labels-ci.yml` to restore
+  template parity with `cmeans/yt-dont-recommend`. Gives maintainers a
+  manual "Run workflow" handle and primes the `workflow_run` dispatcher
+  when the file is first introduced to a fresh repo. No-op on existing
+  PRs because the job-level `if:` guards require `workflow_run` context.
+  Closes #89.
+
 ### Fixed
 - Harden GitHub Actions context handling against shell script injection in
   `pr-labels-ci.yml` and `qa-gate.yml`. Contributor-controlled values
