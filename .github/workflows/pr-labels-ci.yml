@@ -11,7 +11,23 @@ name: PR Label Automation (CI)
 # LIMITATION: workflow_run triggers always run from the default branch
 # (main), not the PR branch. Changes to this file cannot be tested
 # on a PR — they take effect only after merge.
+#
+# The workflow_dispatch trigger is present so the file can be exercised
+# manually (Actions tab -> Run workflow). This serves two purposes:
+#
+#   1. Seeding: when this file is first introduced to a repo, the
+#      workflow_run dispatcher doesn't always register the listener
+#      until the workflow has had at least one non-startup-failure run.
+#      Running it once via workflow_dispatch produces a clean skipped
+#      run (the if: guards below don't match a workflow_dispatch
+#      event), which primes the dispatcher. Without this, every
+#      subsequent PR sticks at Awaiting CI because on-ci-pass never
+#      fires.
+#   2. Debugging: lets a maintainer trigger the workflow manually to
+#      inspect conditional logic, without having to piggyback on a
+#      real CI run.
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: [CI]
     types: [completed]
