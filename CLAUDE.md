@@ -77,6 +77,21 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - Linux with Wayland is tested on real hardware; X11 has unit tests but is unverified on live hardware; macOS and Windows are complete but untested
 - `clipboard_paste` intentionally has no return type annotation — adding `-> str | Image` causes FastMCP to fail Pydantic schema generation for `Image`
 
+## Conventions
+
+### Adding a CHANGELOG entry on every PR
+
+Every PR — features, fixes, infra, tests, docs — adds an entry to `CHANGELOG.md` under the `## [Unreleased]` section at the top of the file. Do not defer CHANGELOG updates until release prep.
+
+`CHANGELOG.md` follows **[Keep a Changelog](https://keepachangelog.com/) categories**:
+- `### Added` — anything new: features, capabilities, tests, docs, dev tooling
+- `### Changed` — behavior or API changes that aren't bug fixes
+- `### Fixed` — bug fixes
+
+Reference the PR number and any closed issue: `- ... (#16) — closes #14`. If no `## [Unreleased]` section exists (because the previous release just shipped), add one above the latest version section.
+
+Dependabot PRs are exempt from manual entry — `.github/workflows/dependabot-changelog.yml` auto-prepends an entry under `### Changed` (or creates the subsection at the right Keep-a-Changelog position if it does not exist). The workflow needs `BOT_APP_ID` and `BOT_APP_PRIVATE_KEY` repo secrets to mint a GitHub App installation token; without those secrets the workflow fails fast on the App-token mint step.
+
 ## Packaging Feature Branches
 
 - **`feature/homebrew-tap`** (local only) — Homebrew formula, update script, and CI template for a `cmeans/homebrew-mcp-clipboard` tap. Formula resource stanzas need populating via `brew update-python-resources` on macOS before the tap can be published. Has 36 transitive dependencies from `mcp[cli]`.
