@@ -21,7 +21,8 @@
 version: 2
 updates:
   # Python deps: pyproject.toml + uv.lock at the repo root.
-  # Covers runtime (mcp[cli]) and dev extras (pytest, pytest-asyncio).
+  # Covers runtime (mcp[cli]) and the dev extras declared in
+  # pyproject.toml.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
