@@ -4,6 +4,17 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- Dependabot version-update configuration (`.github/dependabot.yml`)
+  for pip and github-actions ecosystems. Weekly schedule (Monday
+  06:00 America/Chicago), grouped per ecosystem to reduce noise.
+  Commit-message uses `prefix: chore` with `include: scope` so
+  Dependabot's auto-appended `(deps)` scope yields canonical
+  `chore(deps): bump <foo>` subjects (avoids the doubled-prefix
+  failure mode documented in the dependabot-pr-hygiene playbook).
+  Labels `dependencies`, `python`, and `github-actions` are
+  pre-created on the repo so PRs are categorized on creation.
+
 ### Changed
 - Add `workflow_dispatch:` trigger to `pr-labels-ci.yml` to restore
   template parity with `cmeans/yt-dont-recommend`. Gives maintainers a
