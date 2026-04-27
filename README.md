@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/pypi/l/mcp-clipboard)](https://github.com/cmeans/mcp-clipboard/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/cmeans/mcp-clipboard/ci.yml?label=CI)](https://github.com/cmeans/mcp-clipboard/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/cmeans/mcp-clipboard/graph/badge.svg)](https://codecov.io/gh/cmeans/mcp-clipboard)
-[![Downloads](https://img.shields.io/pypi/dm/mcp-clipboard)](https://pypi.org/project/mcp-clipboard/)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fdownloads-30d-non-ci.json)](https://github.com/cmeans/pypi-winnow-downloads)
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
 
 An MCP server that gives your AI assistant direct access to your system clipboard: read what you copied, or write clean text straight to it. Works with any MCP-compatible client, including Claude Code, Claude Desktop, Cursor, Windsurf, and others.
