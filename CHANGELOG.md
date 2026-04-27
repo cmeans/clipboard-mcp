@@ -51,6 +51,7 @@ All notable changes to this project will be documented here.
   (already covered by the `PyPI version` badge above) to
   `github.com/cmeans/pypi-winnow-downloads` so a click surfaces the
   source-of-truth methodology. Closes #97.
+- **Bump github-actions group: codecov/codecov-action 5→6** (#95)
 - Add `workflow_dispatch:` trigger to `pr-labels-ci.yml` to restore
   template parity with `cmeans/yt-dont-recommend`. Gives maintainers a
   manual "Run workflow" handle and primes the `workflow_run` dispatcher
