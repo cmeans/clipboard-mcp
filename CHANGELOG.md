@@ -41,6 +41,7 @@ All notable changes to this project will be documented here.
   pre-created on the repo so PRs are categorized on creation.
 
 ### Changed
+- **Bump github-actions group: codecov/codecov-action 5→6** (#95)
 - Add `workflow_dispatch:` trigger to `pr-labels-ci.yml` to restore
   template parity with `cmeans/yt-dont-recommend`. Gives maintainers a
   manual "Run workflow" handle and primes the `workflow_run` dispatcher
