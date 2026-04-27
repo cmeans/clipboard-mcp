@@ -5,6 +5,31 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- `.github/PULL_REQUEST_TEMPLATE.md` auto-fills new human-authored
+  PR bodies with Summary, Test plan (matching the CI's `pytest`,
+  `ruff check`, `ruff format --check`, `mypy` invocations), and
+  CHANGELOG-confirmation sections. Dependabot bypasses the template
+  and is handled by the auto-CHANGELOG workflow instead.
+- `.github/workflows/dependabot-changelog.yml` auto-prepends a
+  `## [Unreleased]` → `### Changed` entry to Dependabot-authored PRs
+  so they satisfy the per-PR CHANGELOG rule without manual
+  intervention. Runs on `pull_request_target`, filters to
+  `dependabot[bot]`, mints a GitHub App installation token via
+  `actions/create-github-app-token`, fetches metadata via
+  `dependabot/fetch-metadata@v3.1.0` (the v3 line fixed empty
+  `prevVersion`/`newVersion` on grouped PRs), and pushes the
+  CHANGELOG commit under the `cmeans-claude-dev[bot]` identity.
+  Subsection insertion respects Keep-a-Changelog v1.1.0 ordering
+  (Added → Changed → Deprecated → Removed → Fixed → Security) so a
+  newly-created `### Changed` block lands in the right position.
+  Loop guard skips when the last commit is already by the bot;
+  idempotency guard skips when the PR number is already referenced
+  in `CHANGELOG.md`. Operator must configure two repo secrets
+  (`BOT_APP_ID`, `BOT_APP_PRIVATE_KEY`) before the workflow can run.
+- `CLAUDE.md § Conventions` documents the per-PR CHANGELOG rule and
+  the Keep-a-Changelog category set, mirroring the conventions
+  already in place across `cmeans/mcp-synology` and
+  `cmeans/pypi-winnow-downloads`.
 - Dependabot version-update configuration (`.github/dependabot.yml`)
   for pip and github-actions ecosystems. Weekly schedule (Monday
   06:00 America/Chicago), grouped per ecosystem to reduce noise.
