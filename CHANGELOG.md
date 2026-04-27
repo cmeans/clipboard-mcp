@@ -41,6 +41,16 @@ All notable changes to this project will be documented here.
   pre-created on the repo so PRs are categorized on creation.
 
 ### Changed
+- README downloads badge now points at the dogfooded
+  `cmeans/pypi-winnow-downloads` endpoint
+  (`pypi-badges.intfar.com/mcp-clipboard/downloads-30d-non-ci.json`)
+  instead of `shields.io/pypi/dm/mcp-clipboard`. The new number is
+  30-day non-CI installs (the metric that signals real adoption);
+  the previous shields.io built-in counted CI/installer/mirror
+  traffic. Badge link target swapped from the PyPI project page
+  (already covered by the `PyPI version` badge above) to
+  `github.com/cmeans/pypi-winnow-downloads` so a click surfaces the
+  source-of-truth methodology. Closes #97.
 - **Bump github-actions group: codecov/codecov-action 5→6** (#95)
 - Add `workflow_dispatch:` trigger to `pr-labels-ci.yml` to restore
   template parity with `cmeans/yt-dont-recommend`. Gives maintainers a
