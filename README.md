@@ -16,6 +16,17 @@
 [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fdownloads-30d-non-ci.json)](https://github.com/cmeans/pypi-winnow-downloads)
 [![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
 
+[![pip downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pip-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![pipenv downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pipenv-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![pipx downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pipx-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![uv downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-uv-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![poetry downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-poetry-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![pdm downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pdm-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+
+[![linux downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-linux-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![macos downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-macos-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![windows downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-windows-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+
 An MCP server that gives your AI assistant direct access to your system clipboard: read what you copied, or write clean text straight to it. Works with any MCP-compatible client, including Claude Code, Claude Desktop, Cursor, Windsurf, and others.
 
 ## Why This Exists
