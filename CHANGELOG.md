@@ -5,6 +5,10 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- README badge breakouts for installer mix (pip, pipenv, pipx, uv,
+  poetry, pdm) and OS distribution (linux, macos, windows), powered by
+  the per-installer (v0.2.0) and per-OS (v0.3.0) endpoints from
+  pypi-winnow-downloads. Existing hero `Downloads` badge is unchanged.
 - `.github/PULL_REQUEST_TEMPLATE.md` auto-fills new human-authored
   PR bodies with Summary, Test plan (matching the CI's `pytest`,
   `ruff check`, `ruff format --check`, `mypy` invocations), and
