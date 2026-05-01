@@ -105,10 +105,14 @@ All notable changes to this project will be documented here.
 ### Security
 - New `MCP_CLIPBOARD_MAX_IMAGE_BYTES` cap (default 10 MB) on
   `read_clipboard_image`. A 100 MB clipboard bitmap previously became
-  ~133 MB base64 in a single MCP response, which could exhaust memory on
-  constrained hosts or drop the MCP transport. Oversized reads now raise
-  the new `ClipboardSizeError`, and `clipboard_paste` returns an
-  explanatory message instead of forwarding the payload. (#101)
+  ~133 MB base64 in a single MCP response and could time out or drop
+  the MCP transport. Oversized reads now raise the new
+  `ClipboardSizeError`, and `clipboard_paste` returns an explanatory
+  message instead of forwarding the payload. The cap is a wire-level
+  guard rather than a memory-bounded read: the backend still buffers
+  the full image before the size check, so the inflated wire response
+  is prevented but local memory pressure on the host running the
+  server is not. (#101)
 - Image subtype passed to `mcp.Image(format=...)` is now validated against
   an allowlist (`png`, `jpeg`, `gif`, `webp`, `tiff`, `bmp`). Clipboard-
   controlled MIME strings with parameter injection or unexpected subtypes
