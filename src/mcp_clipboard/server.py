@@ -21,6 +21,7 @@ from mcp.types import Icon
 
 from .clipboard import (
     ClipboardError,
+    ClipboardSizeError,
     base_mime_type,
     list_clipboard_formats,
     read_clipboard,
@@ -102,11 +103,36 @@ _MAX_WRITE_BYTES = int(os.environ.get("MCP_CLIPBOARD_MAX_WRITE_BYTES", 1_048_576
 _BINARY_MIME_PREFIXES = ("image/", "audio/", "video/")
 _BINARY_MIME_EXACT = frozenset({"application/octet-stream"})
 
+# Whitelist of image subtypes recognized as a safe `format=` value to pass
+# to mcp.Image. Anything else (including parameter-laden or malformed
+# clipboard-controlled MIME strings) falls back to "png" so the host
+# never sees an unexpected format string.
+_IMAGE_SUBTYPE_ALLOWLIST = frozenset({"png", "jpeg", "gif", "webp", "tiff", "bmp"})
+
 # image/* entries that are text-readable (not actual binary).
 _TEXT_READABLE_MIMES = frozenset({"image/svg+xml"})
 
 # MIME type validation: type and subtype must start with a letter.
 _MIME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*/[a-zA-Z][\w.+\-]*(;\s*[\w.+\-]+=[\w.+\-]+)*$")
+
+
+def _safe_code_fence(text: str) -> str:
+    """Return a backtick fence long enough to wrap ``text`` without escape.
+
+    Markdown spec: a fenced code block can only be closed by a fence at
+    least as long as the opening fence. Pick a fence one longer than any
+    backtick run inside the content; minimum length 3.
+    """
+    longest = 0
+    current = 0
+    for ch in text:
+        if ch == "`":
+            current += 1
+            if current > longest:
+                longest = current
+        else:
+            current = 0
+    return "`" * max(3, longest + 1)
 
 
 async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
@@ -158,13 +184,16 @@ def _format_non_tabular(text: str) -> str:
         try:
             parsed = json.loads(text.strip())
             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
-            result = f"Clipboard contains JSON:\n\n```json\n{formatted}\n```"
+            fence = _safe_code_fence(formatted)
+            result = f"Clipboard contains JSON:\n\n{fence}json\n{formatted}\n{fence}"
         except (json.JSONDecodeError, ValueError):
             result = f"Clipboard content:\n\n{text}"
     elif content_type == "url":
         result = f"Clipboard contains URL:\n\n{text.strip()}"
     elif content_type == "code":
-        result = f"Clipboard contains code:\n\n```\n{text.rstrip()}\n```"
+        body = text.rstrip()
+        fence = _safe_code_fence(body)
+        result = f"Clipboard contains code:\n\n{fence}\n{body}\n{fence}"
     else:
         result = f"Clipboard content:\n\n{text}"
 
@@ -246,7 +275,8 @@ async def clipboard_paste(
             if rtf.strip():
                 truncated = len(rtf) > _MAX_CONTENT_CHARS
                 display = rtf[:_MAX_CONTENT_CHARS]
-                result = f"Clipboard contains rich text (RTF):\n\n```\n{display}\n```"
+                fence = _safe_code_fence(display)
+                result = f"Clipboard contains rich text (RTF):\n\n{fence}\n{display}\n{fence}"
                 if truncated:
                     result += f"\n\n... [truncated at {_MAX_CONTENT_CHARS:,} characters]"
                 return result
@@ -267,8 +297,12 @@ async def clipboard_paste(
                 try:
                     data = await read_clipboard_image(mime)
                     if data:
-                        fmt = base_mime_type(mime).split("/", 1)[1]
+                        fmt = base_mime_type(mime).split("/", 1)[1].lower()
+                        if fmt not in _IMAGE_SUBTYPE_ALLOWLIST:
+                            fmt = "png"
                         return Image(data=data, format=fmt)
+                except ClipboardSizeError as e:
+                    return f"Clipboard image too large to return: {e}"
                 except ClipboardError as e:
                     logger.debug("Image read failed: %s", e)
             # Non-image binary (audio/video) — report but can't return

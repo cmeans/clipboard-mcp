@@ -26,6 +26,21 @@ class ClipboardError(Exception):
     """Raised when clipboard access fails."""
 
 
+class ClipboardSizeError(ClipboardError):
+    """Raised when clipboard content exceeds a configured size cap."""
+
+
+# AppleScript source has a 32,767-character per-line limit. Chunk size for
+# base64 string literals must stay well under that to leave headroom for
+# the surrounding `set b64 to "..."` syntax.
+_APPLESCRIPT_CHUNK = 4000
+
+# Cap on image read size. A large clipboard bitmap (e.g. 100 MB uncompressed
+# TIFF screenshot) becomes ~133 MB base64 in a single MCP response and can
+# exhaust memory on constrained hosts. Configurable via env var.
+_MAX_IMAGE_BYTES = int(os.environ.get("MCP_CLIPBOARD_MAX_IMAGE_BYTES", 10 * 1024 * 1024))
+
+
 def base_mime_type(mime: str) -> str:
     """Strip parameters from a MIME type string.
 
@@ -50,29 +65,40 @@ async def _run_subprocess(
     available").  Set it to ``False`` for macOS and Windows backends where exit
     code 1 indicates a real error (script failure, permission denied, etc.).
     """
+    proc: asyncio.subprocess.Process | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except FileNotFoundError as fnf:
-        raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
-    except TimeoutError as te:
-        proc.kill()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
-        raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except FileNotFoundError as fnf:
+            raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError as te:
+            proc.kill()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
-    if proc.returncode != 0:
-        if allow_empty_exit and proc.returncode == 1:
-            return b""
-        err = stderr.decode(errors="replace").strip()
-        raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
+        if proc.returncode != 0:
+            if allow_empty_exit and proc.returncode == 1:
+                return b""
+            err = stderr.decode(errors="replace").strip()
+            raise ClipboardError(f"Clipboard command failed (rc={proc.returncode}): {err}")
 
-    return stdout
+        return stdout
+    finally:
+        # Belt-and-suspenders cleanup for paths that bypass the explicit
+        # kill above -- specifically asyncio.CancelledError (BaseException)
+        # from a cancelled MCP request, which would otherwise orphan the
+        # subprocess. kill() is a no-op once the process has exited.
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
 
 
 async def _run(
@@ -116,28 +142,39 @@ async def _run_with_stdin(
     """
     debug = os.environ.get("MCP_CLIPBOARD_DEBUG", "") == "1"
     stderr_mode = asyncio.subprocess.PIPE if debug else asyncio.subprocess.DEVNULL
+    proc: asyncio.subprocess.Process | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=stderr_mode,
-            env=env,
-        )
-        _, stderr_data = await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
-    except FileNotFoundError as fnf:
-        raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
-    except TimeoutError as te:
-        proc.kill()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
-        raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=stderr_mode,
+                env=env,
+            )
+        except FileNotFoundError as fnf:
+            raise ClipboardError(f"Command not found: {cmd[0]}") from fnf
+        try:
+            _, stderr_data = await asyncio.wait_for(
+                proc.communicate(input=input_data), timeout=timeout
+            )
+        except TimeoutError as te:
+            proc.kill()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            raise ClipboardError(f"Clipboard command timed out: {' '.join(cmd)}") from te
 
-    if proc.returncode != 0:
-        msg = f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}"
-        if debug and stderr_data:
-            msg += f"\nstderr: {stderr_data.decode(errors='replace').strip()}"
-        raise ClipboardError(msg)
+        if proc.returncode != 0:
+            msg = f"Clipboard write failed (rc={proc.returncode}): {cmd[0]}"
+            if debug and stderr_data:
+                msg += f"\nstderr: {stderr_data.decode(errors='replace').strip()}"
+            raise ClipboardError(msg)
+    finally:
+        # See _run_subprocess: belt-and-suspenders cleanup for the
+        # CancelledError path which bypasses except handlers entirely.
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
 
 
 def _find_wayland_display() -> str | None:
@@ -390,7 +427,16 @@ async def _windows_list_formats() -> list[str]:
     )
     raw = await _run(["powershell", "-NoProfile", "-Command", script], allow_empty_exit=False)
     native = [line.strip() for line in raw.splitlines() if line.strip()]
-    return [_WIN_TO_MIME.get(f, f) for f in native]
+    # Deduplicate: Windows clipboards routinely expose both "Text" and
+    # "UnicodeText" which both map to text/plain. Mirror _macos_list_formats.
+    seen: set[str] = set()
+    result: list[str] = []
+    for f in native:
+        mime = _WIN_TO_MIME.get(f, f)
+        if mime not in seen:
+            seen.add(mime)
+            result.append(mime)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -513,11 +559,23 @@ async def _macos_write_typed(content: str, mime_type: str) -> None:
     if mime_type in ("text/html", "text/rtf"):
         uti = "public.html" if mime_type == "text/html" else "public.rtf"
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        # AppleScript has a 32,767-char per-line limit, so a single
+        # `set b64 to "..."` literal breaks for content >~24 KB once
+        # base64-encoded. Split the literal across multiple statements.
+        b64_chunks = [
+            b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)
+        ]
+        if not b64_chunks:
+            b64_chunks = [""]
+        b64_lines = [f'set b64 to "{b64_chunks[0]}"']
+        for chunk in b64_chunks[1:]:
+            b64_lines.append(f'set b64 to b64 & "{chunk}"')
         script = (
             'use framework "AppKit"\n'
             'use framework "Foundation"\n'
-            f'set b64 to "{b64}"\n'
-            "set decoded to (current application's NSData's alloc()'s "
+            + "\n".join(b64_lines)
+            + "\n"
+            + "set decoded to (current application's NSData's alloc()'s "
             "initWithBase64EncodedString:b64 options:0)\n"
             "set pb to current application's NSPasteboard's generalPasteboard()\n"
             "pb's clearContents()\n"
@@ -721,6 +779,9 @@ async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
 
     Like :func:`read_clipboard`, falls back to a matching suffixed MIME
     type when the exact requested type is not available.
+
+    Raises :exc:`ClipboardSizeError` when the image exceeds
+    ``MCP_CLIPBOARD_MAX_IMAGE_BYTES`` (default 10 MB).
     """
     backend = _get_backend()
     result = await _IMAGE_READERS[backend](mime_type)
@@ -734,6 +795,12 @@ async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
                 if result:
                     break
 
+    if len(result) > _MAX_IMAGE_BYTES:
+        raise ClipboardSizeError(
+            f"Image exceeds clipboard read limit "
+            f"({len(result):,} bytes, max {_MAX_IMAGE_BYTES:,}). "
+            f"Set MCP_CLIPBOARD_MAX_IMAGE_BYTES to increase."
+        )
     return result
 
 
