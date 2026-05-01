@@ -45,6 +45,9 @@ All notable changes to this project will be documented here.
   pre-created on the repo so PRs are categorized on creation.
 
 ### Changed
+- README Glama badge swapped from the full `card.svg` to the compact
+  `score.svg` format (matches the convention used in `mcp-synology`).
+  Link target unchanged.
 - README downloads badge now points at the dogfooded
   `cmeans/pypi-winnow-downloads` endpoint
   (`pypi-badges.intfar.com/mcp-clipboard/downloads-30d-non-ci.json`)

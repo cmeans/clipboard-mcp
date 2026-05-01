@@ -14,7 +14,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/cmeans/mcp-clipboard/ci.yml?label=CI)](https://github.com/cmeans/mcp-clipboard/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/cmeans/mcp-clipboard/graph/badge.svg)](https://codecov.io/gh/cmeans/mcp-clipboard)
 [![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fdownloads-30d-non-ci.json)](https://github.com/cmeans/pypi-winnow-downloads)
-[![mcp-clipboard MCP server](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/card.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
+[![Glama](https://glama.ai/mcp/servers/cmeans/mcp-clipboard/badges/score.svg)](https://glama.ai/mcp/servers/cmeans/mcp-clipboard)
 
 [![pip downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pip-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
 [![pipenv downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Finstaller-pipenv-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
