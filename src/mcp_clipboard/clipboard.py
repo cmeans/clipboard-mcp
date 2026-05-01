@@ -37,7 +37,9 @@ _APPLESCRIPT_CHUNK = 4000
 
 # Cap on image read size. A large clipboard bitmap (e.g. 100 MB uncompressed
 # TIFF screenshot) becomes ~133 MB base64 in a single MCP response and can
-# exhaust memory on constrained hosts. Configurable via env var.
+# time out or drop the MCP transport. The cap is a wire-level guard;
+# backend memory is not bounded (the full image is still buffered before
+# the size check fires). Configurable via env var.
 _MAX_IMAGE_BYTES = int(os.environ.get("MCP_CLIPBOARD_MAX_IMAGE_BYTES", 10 * 1024 * 1024))
 
 
