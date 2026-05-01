@@ -1281,11 +1281,31 @@ async def test_read_clipboard_image_size_cap():
 
 @pytest.mark.asyncio
 async def test_paste_image_format_unknown_subtype_falls_back_to_png():
-    """A weird clipboard-controlled MIME subtype must not flow into Image(format=...)."""
+    """A subtype outside the allowlist must not flow into Image(format=...)."""
     fake_data = b"\x89PNG\x00\x00\x00"
-    weird_mime = 'image/png; injected="oops"'
+    # x-icon is a real image MIME but not in _IMAGE_SUBTYPE_ALLOWLIST; this
+    # exercises the explicit `fmt = "png"` fallback. (Parameter forms like
+    # 'image/png; injected="oops"' get stripped by base_mime_type before
+    # subtype extraction, so they never reach the fallback assignment.)
+    weird_mime = "image/x-icon"
     with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
         with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[weird_mime]):
+            with patch("mcp_clipboard.server.read_clipboard_image", return_value=fake_data):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "png"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_strips_mime_parameters():
+    """MIME parameters (e.g. ;charset=...) must be stripped before subtype check."""
+    fake_data = b"\x89PNG\x00\x00\x00"
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            return_value=['image/png; injected="oops"'],
+        ):
             with patch("mcp_clipboard.server.read_clipboard_image", return_value=fake_data):
                 result = await clipboard_paste()
 
@@ -2576,6 +2596,19 @@ async def test_macos_write_typed_unsupported():
     """_macos_write_typed raises ClipboardError for unsupported MIME types."""
     with pytest.raises(ClipboardError, match="macOS"):
         await _macos_write_typed("data", "text/csv")
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_empty_content():
+    """Empty HTML content must still produce a valid (empty-b64) AppleScript."""
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed("", "text/html")
+
+    script = mock.call_args[0][0][-1]
+    # range(0, 0, _APPLESCRIPT_CHUNK) is empty, so the chunk-list fallback
+    # to [""] must keep the script syntactically valid.
+    assert 'set b64 to ""' in script
+    assert "public.html" in script
 
 
 @pytest.mark.asyncio
