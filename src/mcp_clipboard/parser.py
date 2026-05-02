@@ -59,7 +59,10 @@ class _TableExtractor(HTMLParser):
                 self._current_row = None
 
     def handle_data(self, data: str) -> None:
-        if self._current_cell is not None:
+        # Only collect text at the outer table's depth: a nested table inside
+        # a cell would otherwise leak its inner-cell text into the outer cell
+        # because _current_cell is still set while inner <td>/<th> are skipped.
+        if self._current_cell is not None and self._table_depth == 1:
             self._current_cell.append(data)
 
 
@@ -90,6 +93,14 @@ def parse_tsv(text: str) -> list[list[str]]:
     for row in reader:
         if any(cell.strip() for cell in row):
             rows.append(row)
+
+    # Reject a single row with fewer than two non-empty cells: copying a
+    # single Excel cell on Windows commonly produces "word\t" which would
+    # otherwise be rendered as a misleading 1x2 table with a phantom
+    # empty column.
+    if len(rows) == 1 and sum(1 for c in rows[0] if c.strip()) < 2:
+        return []
+
     return rows
 
 

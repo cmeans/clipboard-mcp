@@ -77,6 +77,16 @@ def test_parse_html_empty():
     assert rows == []
 
 
+def test_parse_html_nested_table_isolates_outer():
+    """Inner-table text must not leak into the outer cell."""
+    html = (
+        "<table><tr><td>outer<table><tr><td>inner</td></tr></table></td><td>after</td></tr></table>"
+    )
+    rows = parse_html_table(html)
+    assert len(rows) == 1
+    assert rows[0] == ["outer", "after"]
+
+
 # ---------------------------------------------------------------------------
 # TSV parsing
 # ---------------------------------------------------------------------------
@@ -98,6 +108,19 @@ def test_parse_tsv_no_tabs():
 def test_parse_tsv_single_column():
     # No tabs means not tabular
     rows = parse_tsv("line1\nline2\nline3")
+    assert rows == []
+
+
+def test_parse_tsv_single_cell_trailing_tab():
+    """A single non-empty cell with a trailing tab is not a table."""
+    # Common output from copying one cell out of Excel on Windows.
+    rows = parse_tsv("word\t")
+    assert rows == []
+
+
+def test_parse_tsv_single_cell_leading_tab():
+    """A single non-empty cell preceded by a tab is not a table."""
+    rows = parse_tsv("\tword")
     assert rows == []
 
 

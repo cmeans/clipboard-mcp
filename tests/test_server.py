@@ -13,6 +13,7 @@ from mcp.server.fastmcp.utilities.types import Image
 
 from mcp_clipboard.clipboard import (
     ClipboardError,
+    ClipboardSizeError,
     _detect_backend,
     _find_wayland_display,
     _macos_write_typed,
@@ -319,6 +320,34 @@ async def test_paste_code_snippet():
     assert "Clipboard contains code:" in result
     assert "```" in result
     assert "def hello():" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_code_with_triple_backticks_uses_longer_fence():
+    """Code containing ``` must not break out of its enclosing markdown fence."""
+    # Strong code pattern (def + parens) so detect_content_type returns "code".
+    code = "def f():\n    return '```evil```'"
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html="", text=code)):
+        result = await clipboard_paste()
+
+    assert "```evil```" in result  # content preserved verbatim
+    # Opening fence must be at least 4 backticks (longer than the embedded run).
+    assert "````\n" in result
+
+
+@pytest.mark.asyncio
+async def test_paste_json_with_triple_backticks_in_string_uses_longer_fence():
+    """JSON whose string values contain ``` must not break out of the json fence."""
+    json_text = '{"snippet": "look: ```bad```"}'
+    with patch(
+        "mcp_clipboard.server.read_clipboard",
+        side_effect=_mock_read(html="", text=json_text),
+    ):
+        result = await clipboard_paste()
+
+    assert "Clipboard contains JSON:" in result
+    assert "```bad```" in result
+    assert "````json\n" in result
 
 
 @pytest.mark.asyncio
@@ -889,12 +918,13 @@ async def test_windows_read_rtf():
 
 @pytest.mark.asyncio
 async def test_windows_list_formats_maps_names_to_mime():
-    """_windows_list_formats maps known Windows format names to MIME types."""
+    """_windows_list_formats maps known Windows format names to MIME types and
+    deduplicates collisions (Text and UnicodeText both map to text/plain)."""
     raw_output = "HTML Format\nText\nUnicodeText\nPNG\n"
     with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
         result = await _windows_list_formats()
 
-    assert result == ["text/html", "text/plain", "text/plain", "image/png"]
+    assert result == ["text/html", "text/plain", "image/png"]
 
 
 @pytest.mark.asyncio
@@ -905,6 +935,16 @@ async def test_windows_list_formats_passthrough_unknown():
         result = await _windows_list_formats()
 
     assert result == ["text/html", "System.String"]
+
+
+@pytest.mark.asyncio
+async def test_windows_list_formats_deduplicates_mime_types():
+    """Multiple native names mapping to the same MIME collapse to one entry."""
+    raw_output = "Text\nUnicodeText\nText\nHTML Format\n"
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=raw_output):
+        result = await _windows_list_formats()
+
+    assert result == ["text/plain", "text/html"]
 
 
 # ---------------------------------------------------------------------------
@@ -1226,6 +1266,79 @@ async def test_paste_image_empty_data():
 
     # Empty data should fall through
     assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_size_cap():
+    """read_clipboard_image raises ClipboardSizeError when bytes exceed cap."""
+    huge = b"\x89PNG" + (b"\x00" * (11 * 1024 * 1024))  # > 10 MB default cap
+    mock_reader = AsyncMock(return_value=huge)
+    with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
+        with patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"wayland": mock_reader}):
+            with pytest.raises(ClipboardSizeError, match="exceeds clipboard read limit"):
+                await read_clipboard_image("image/png")
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_unknown_subtype_falls_back_to_png():
+    """A subtype outside the allowlist must not flow into Image(format=...)."""
+    fake_data = b"\x89PNG\x00\x00\x00"
+    # x-icon is a real image MIME but not in _IMAGE_SUBTYPE_ALLOWLIST; this
+    # exercises the explicit `fmt = "png"` fallback. (Parameter forms like
+    # 'image/png; injected="oops"' get stripped by base_mime_type before
+    # subtype extraction, so they never reach the fallback assignment.)
+    weird_mime = "image/x-icon"
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=[weird_mime]):
+            with patch("mcp_clipboard.server.read_clipboard_image", return_value=fake_data):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "png"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_strips_mime_parameters():
+    """MIME parameters (e.g. ;charset=...) must be stripped before subtype check."""
+    fake_data = b"\x89PNG\x00\x00\x00"
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            return_value=['image/png; injected="oops"'],
+        ):
+            with patch("mcp_clipboard.server.read_clipboard_image", return_value=fake_data):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "png"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_format_uppercase_subtype_normalizes():
+    """Image subtype is case-insensitive when matching the allowlist."""
+    fake_data = b"GIF89a"
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["image/GIF"]):
+            with patch("mcp_clipboard.server.read_clipboard_image", return_value=fake_data):
+                result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+    assert result._format == "gif"
+
+
+@pytest.mark.asyncio
+async def test_paste_image_too_large_returns_message():
+    """clipboard_paste surfaces an explanatory message when image exceeds cap."""
+    err = ClipboardSizeError(
+        "Image exceeds clipboard read limit (12,000,000 bytes, max 10,485,760)."
+    )
+    with patch("mcp_clipboard.server.read_clipboard", _mock_read(html="", text="")):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["image/png"]):
+            with patch("mcp_clipboard.server.read_clipboard_image", side_effect=err):
+                result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "too large" in result.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1666,6 +1779,88 @@ async def test_run_subprocess_bounded_wait_when_child_is_wedged():
 
 
 @pytest.mark.asyncio
+async def test_run_subprocess_kills_on_cancellation():
+    """asyncio.CancelledError must trigger proc.kill() to avoid orphans.
+
+    CancelledError inherits from BaseException, not Exception, so a bare
+    `except Exception` would skip it. The fix relies on a `finally` block.
+    """
+    from mcp_clipboard.clipboard import _run_subprocess
+
+    class FakeProc:
+        def __init__(self):
+            self.kill_called = False
+            self.returncode: int | None = None
+
+        async def communicate(self):
+            await asyncio.sleep(10)
+            return b"", b""
+
+        def kill(self):
+            self.kill_called = True
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    fake = FakeProc()
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    async def runner():
+        with patch("mcp_clipboard.clipboard.asyncio.create_subprocess_exec", fake_create):
+            await _run_subprocess(["sleep", "10"], timeout=10.0)
+
+    task = asyncio.create_task(runner())
+    await asyncio.sleep(0.05)  # let the task enter communicate()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fake.kill_called, "kill() must be called when the task is cancelled"
+
+
+@pytest.mark.asyncio
+async def test_run_with_stdin_kills_on_cancellation():
+    """asyncio.CancelledError must trigger proc.kill() in _run_with_stdin too."""
+    from mcp_clipboard.clipboard import _run_with_stdin
+
+    class FakeProc:
+        def __init__(self):
+            self.kill_called = False
+            self.returncode: int | None = None
+
+        async def communicate(self, input=None):
+            await asyncio.sleep(10)
+            return b"", b""
+
+        def kill(self):
+            self.kill_called = True
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    fake = FakeProc()
+
+    async def fake_create(*_args, **_kwargs):
+        return fake
+
+    async def runner():
+        with patch("mcp_clipboard.clipboard.asyncio.create_subprocess_exec", fake_create):
+            await _run_with_stdin(["sleep", "10"], b"data", timeout=10.0)
+
+    task = asyncio.create_task(runner())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fake.kill_called, "kill() must be called when the task is cancelled"
+
+
+@pytest.mark.asyncio
 async def test_run_binary_exit_code_1_returns_empty():
     """_run_binary returns empty bytes for exit code 1 (format not available)."""
     result = await _run_binary(["sh", "-c", "exit 1"])
@@ -1907,6 +2102,24 @@ async def test_paste_rtf_fallback():
     assert isinstance(result, str)
     assert "rich text (RTF)" in result
     assert rtf_content in result
+
+
+@pytest.mark.asyncio
+async def test_paste_rtf_with_triple_backticks_uses_longer_fence():
+    """RTF content containing ``` must not break out of the markdown fence."""
+    rtf_content = r"{\rtf1\ansi look: ```escape```}"
+
+    async def mock_read(mime_type="text/plain"):
+        if mime_type == "text/rtf":
+            return rtf_content
+        return ""
+
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=mock_read):
+        with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["text/rtf"]):
+            result = await clipboard_paste()
+
+    assert "```escape```" in result
+    assert "````\n" in result
 
 
 @pytest.mark.asyncio
@@ -2383,6 +2596,36 @@ async def test_macos_write_typed_unsupported():
     """_macos_write_typed raises ClipboardError for unsupported MIME types."""
     with pytest.raises(ClipboardError, match="macOS"):
         await _macos_write_typed("data", "text/csv")
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_empty_content():
+    """Empty HTML content must still produce a valid (empty-b64) AppleScript."""
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed("", "text/html")
+
+    script = mock.call_args[0][0][-1]
+    # range(0, 0, _APPLESCRIPT_CHUNK) is empty, so the chunk-list fallback
+    # to [""] must keep the script syntactically valid.
+    assert 'set b64 to ""' in script
+    assert "public.html" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_large_content_chunks_base64():
+    """Large HTML content must split base64 across multiple AppleScript
+    statements so no single line exceeds AppleScript's 32,767-char limit."""
+    # 100 KB of HTML -> ~133 KB base64; well over the per-line cap
+    large_html = "<p>" + ("X" * 100_000) + "</p>"
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed(large_html, "text/html")
+
+    script = mock.call_args[0][0][-1]
+    # Split into AppleScript source lines and check each stays under the limit.
+    for line in script.split("\n"):
+        assert len(line) < 32_767, f"AppleScript line exceeds limit: {len(line)} chars"
+    # Concatenation must be present (proves the chunking happened).
+    assert "set b64 to b64 &" in script
 
 
 @pytest.mark.asyncio

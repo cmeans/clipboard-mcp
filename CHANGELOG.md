@@ -79,6 +79,49 @@ All notable changes to this project will be documented here.
   and the queue-time parser rejects the empty form on `workflow_dispatch`.
   The `workflow_run` path tolerated it, so the bug was latent here but
   blocked manual dispatch and fresh-repo cascades. Closes #91.
+- Windows clipboard `list_formats` now deduplicates MIME types when multiple
+  native format names map to the same MIME (e.g. `Text` and `UnicodeText`
+  both map to `text/plain`), matching the existing macOS behavior. Prevents
+  inflated format counts and downstream duplicate iteration. (#101)
+- Nested HTML tables no longer leak inner-table cell text into the outer
+  cell. `_TableExtractor.handle_data` now gates on `_table_depth == 1` so
+  text inside an inner `<table><tr><td>...</td></tr></table>` is no longer
+  concatenated into the surrounding outer cell. (#101)
+- macOS `_macos_write_typed` no longer trips AppleScript's 32,767-character
+  per-line limit when writing HTML or RTF content larger than ~24 KB. The
+  base64-encoded payload is split across multiple `set b64 to b64 & "..."`
+  statements with a 4,000-character chunk size. (#101)
+- `_run_subprocess` and `_run_with_stdin` no longer orphan their child
+  process when the calling task is cancelled (e.g. on MCP client
+  disconnect). A `finally` block now calls `proc.kill()` on any non-normal
+  exit including `asyncio.CancelledError`, which inherits from
+  `BaseException` and previously bypassed the timeout-only `except`
+  handler. (#101)
+- `parse_tsv` no longer treats single-cell input with a stray tab
+  (`"word\t"`, commonly produced when copying one Excel cell on Windows)
+  as a 1x2 table with a phantom empty column. Single-row results now
+  require at least two non-empty cells. (#101)
+
+### Security
+- New `MCP_CLIPBOARD_MAX_IMAGE_BYTES` cap (default 10 MB) on
+  `read_clipboard_image`. A 100 MB clipboard bitmap previously became
+  ~133 MB base64 in a single MCP response and could time out or drop
+  the MCP transport. Oversized reads now raise the new
+  `ClipboardSizeError`, and `clipboard_paste` returns an explanatory
+  message instead of forwarding the payload. The cap is a wire-level
+  guard rather than a memory-bounded read: the backend still buffers
+  the full image before the size check, so the inflated wire response
+  is prevented but local memory pressure on the host running the
+  server is not. (#101)
+- Image subtype passed to `mcp.Image(format=...)` is now validated against
+  an allowlist (`png`, `jpeg`, `gif`, `webp`, `tiff`, `bmp`). Clipboard-
+  controlled MIME strings with parameter injection or unexpected subtypes
+  fall back to `png` rather than flowing through to the host. (#101)
+- Markdown code fences in `clipboard_paste` (JSON, code, RTF branches) now
+  size dynamically to one longer than the longest backtick run inside the
+  wrapped content. Prevents clipboard text containing literal triple
+  backticks from closing the fence early and rendering injected content
+  as Markdown (or HTML on permissive hosts). (#101)
 
 ## [2.2.1] - 2026-04-16
 
