@@ -89,7 +89,7 @@ All notable changes to this project will be documented here.
   unreachable: `detect_content_type` only returns `"json"` after a
   successful `json.loads` on the same (already-truncated) text the
   caller will re-parse. Kept as a safety net in case content-type
-  detection ever drifts. No behavioural change. (#102)
+  detection ever drifts. No behavioral change. (#102)
 - README downloads badge now points at the dogfooded
   `cmeans/pypi-winnow-downloads` endpoint
   (`pypi-badges.intfar.com/mcp-clipboard/downloads-30d-non-ci.json`)
