@@ -45,9 +45,6 @@ All notable changes to this project will be documented here.
   pre-created on the repo so PRs are categorized on creation.
 
 ### Changed
-- README Glama badge swapped from the full `card.svg` to the compact
-  `score.svg` format (matches the convention used in `mcp-synology`).
-  Link target unchanged.
 - README downloads badge now points at the dogfooded
   `cmeans/pypi-winnow-downloads` endpoint
   (`pypi-badges.intfar.com/mcp-clipboard/downloads-30d-non-ci.json`)
@@ -65,6 +62,11 @@ All notable changes to this project will be documented here.
   when the file is first introduced to a fresh repo. No-op on existing
   PRs because the job-level `if:` guards require `workflow_run` context.
   Closes #89.
+
+### Removed
+- Glama integration. The README Glama score badge and the `glama.json`
+  registry metadata file are gone. Supersedes the in-Unreleased badge
+  swap from PR #100 (which is now moot). (#103)
 
 ### Fixed
 - Harden GitHub Actions context handling against shell script injection in
