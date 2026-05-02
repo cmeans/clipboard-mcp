@@ -3,6 +3,7 @@
 import re
 
 from mcp_clipboard.parser import (
+    _has_header_row,
     detect_content_type,
     extract_html_text,
     format_table,
@@ -459,6 +460,34 @@ def test_detect_code_python_def_still_detected():
     """Real Python def with parens must still classify as code (#77)."""
     assert detect_content_type("def hello():") == "code"
     assert detect_content_type("def add(a, b):") == "code"
+
+
+# ---------------------------------------------------------------------------
+# _has_header_row direct coverage
+# ---------------------------------------------------------------------------
+
+
+def test_has_header_row_single_row():
+    """Single row triggers the early return; can't be a header without data."""
+    assert _has_header_row([["Name", "Age", "City"]]) is False
+
+
+def test_has_header_row_empty():
+    """Zero rows also takes the early-return path."""
+    assert _has_header_row([]) is False
+
+
+def test_has_header_row_uniform_text_no_header():
+    """When every row (header included) is text and data is also text, no
+    column type differs, so no header is detected."""
+    rows = [["Alice", "Bob"], ["Carol", "Dan"], ["Eve", "Frank"]]
+    assert _has_header_row(rows) is False
+
+
+def test_has_header_row_text_header_over_numeric_data():
+    """Classic header case: text labels over numeric data rows."""
+    rows = [["Count", "Total"], ["1", "100"], ["2", "200"], ["3", "300"]]
+    assert _has_header_row(rows) is True
 
 
 # ---------------------------------------------------------------------------

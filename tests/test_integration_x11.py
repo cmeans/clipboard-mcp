@@ -21,11 +21,11 @@ import shutil
 
 import pytest
 
-import mcp_clipboard.clipboard as cb
 from mcp_clipboard.clipboard import (
     list_clipboard_formats,
     read_clipboard,
     read_clipboard_image,
+    reset_backend_cache,
     write_clipboard,
     write_clipboard_typed,
 )
@@ -47,9 +47,9 @@ pytestmark = [
 def _force_x11_backend(monkeypatch):
     """Force the X11 backend for every test in this module."""
     monkeypatch.setenv("MCP_CLIPBOARD_BACKEND", "x11")
-    cb._backend = None
+    reset_backend_cache()
     yield
-    cb._backend = None
+    reset_backend_cache()
 
 
 @pytest.mark.asyncio
