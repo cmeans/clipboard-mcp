@@ -5,6 +5,14 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- Headless X11 integration tests (`tests/test_integration_x11.py`) and a
+  matching CI `integration-x11` job that runs them against a real `xclip`
+  process under Xvfb. Five round-trip tests exercise plain text, unicode,
+  HTML via `-target`, format listing after a typed write, and binary
+  image read. Closes the gap from the audit that the X11 stack
+  (`_x11_read`, `_x11_list_formats`, `_x11_read_image`, `_x11_write`,
+  `_x11_write_typed`) was mock-only despite shipping in production
+  builds. (#102)
 - README badge breakouts for installer mix (pip, pipenv, pipx, uv,
   poetry, pdm) and OS distribution (linux, macos, windows), powered by
   the per-installer (v0.2.0) and per-OS (v0.3.0) endpoints from
@@ -45,6 +53,21 @@ All notable changes to this project will be documented here.
   pre-created on the repo so PRs are categorized on creation.
 
 ### Changed
+- `clipboard_read_raw` instruction text no longer enumerates a fixed list
+  of `application/*` types as if they were specially permitted. The
+  implementation only blocks the `image/`, `audio/`, and `video/`
+  prefixes plus the exact type `application/octet-stream`, so any other
+  MIME type (text/*, application/json, application/xml,
+  application/xhtml+xml, image/svg+xml, etc.) passes through. The
+  reworded text reflects that, removing the maintenance trap where the
+  enumeration would silently drift from the code if the blocklist
+  changes. (#102)
+- Defensive comment on the `_format_non_tabular` JSONDecodeError fallback
+  in `server.py:189-194` documenting that the branch is currently
+  unreachable: `detect_content_type` only returns `"json"` after a
+  successful `json.loads` on the same (already-truncated) text the
+  caller will re-parse. Kept as a safety net in case content-type
+  detection ever drifts. No behavioural change. (#102)
 - README downloads badge now points at the dogfooded
   `cmeans/pypi-winnow-downloads` endpoint
   (`pypi-badges.intfar.com/mcp-clipboard/downloads-30d-non-ci.json`)

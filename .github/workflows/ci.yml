@@ -71,3 +71,25 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  integration-x11:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Install Xvfb and xclip
+        run: sudo apt-get update && sudo apt-get install -y xvfb xclip
+
+      - name: Run X11 integration tests under Xvfb
+        env:
+          MCP_CLIPBOARD_BACKEND: x11
+        run: xvfb-run -a uv run pytest tests/test_integration_x11.py -m integration -v

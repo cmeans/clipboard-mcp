@@ -69,7 +69,7 @@ Claude Code will then copy every command it suggests without you having to ask.
 | `clipboard_paste` | **Primary tool.** Read any clipboard content: tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types. Images are returned as image content the model can see. |
 | `clipboard_copy` | Write content to the system clipboard. Accepts an optional `mime_type` parameter (`text/plain` by default; also `text/html`, `text/rtf`, or any `text/*` on Wayland/X11). |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard. |
-| `clipboard_read_raw` | Return raw clipboard content for a given MIME type — supports text formats plus `image/svg+xml`, `application/json`, `application/xml` (diagnostic). |
+| `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic). Any non-binary type passes through; only `image/*`, `audio/*`, `video/*`, and `application/octet-stream` are rejected. Use `clipboard_paste` for images. |
 
 ## Setup
 

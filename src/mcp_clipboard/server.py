@@ -187,6 +187,10 @@ def _format_non_tabular(text: str) -> str:
             fence = _safe_code_fence(formatted)
             result = f"Clipboard contains JSON:\n\n{fence}json\n{formatted}\n{fence}"
         except (json.JSONDecodeError, ValueError):
+            # Defensive: detect_content_type only returns "json" after a
+            # successful json.loads on the same (already-truncated) text,
+            # so this branch is currently unreachable. Kept as a safety
+            # net in case content_type detection ever drifts.
             result = f"Clipboard content:\n\n{text}"
     elif content_type == "url":
         result = f"Clipboard contains URL:\n\n{text.strip()}"
