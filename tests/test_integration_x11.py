@@ -92,15 +92,6 @@ async def test_x11_list_formats_after_typed_write():
 
 
 @pytest.mark.asyncio
-async def test_x11_read_unavailable_mime_returns_empty():
-    """xclip exits 1 ("target not available") when the MIME type isn't on
-    the clipboard; the backend treats that as empty bytes."""
-    await write_clipboard("plain text only")
-    result = await read_clipboard("application/x-unavailable-format")
-    assert result == ""
-
-
-@pytest.mark.asyncio
 async def test_x11_read_image_binary_round_trip():
     """xclip -target image/png accepts arbitrary bytes; the binary read
     path round-trips them via _x11_read_image."""

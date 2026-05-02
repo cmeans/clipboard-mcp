@@ -7,12 +7,12 @@ All notable changes to this project will be documented here.
 ### Added
 - Headless X11 integration tests (`tests/test_integration_x11.py`) and a
   matching CI `integration-x11` job that runs them against a real `xclip`
-  process under Xvfb. Six round-trip tests exercise plain text, unicode,
-  HTML via `-target`, format listing after a typed write, "target not
-  available" handling, and binary image read. Closes the gap from the
-  audit that the X11 stack (`_x11_read`, `_x11_list_formats`,
-  `_x11_read_image`, `_x11_write`, `_x11_write_typed`) was mock-only
-  despite shipping in production builds. (#102)
+  process under Xvfb. Five round-trip tests exercise plain text, unicode,
+  HTML via `-target`, format listing after a typed write, and binary
+  image read. Closes the gap from the audit that the X11 stack
+  (`_x11_read`, `_x11_list_formats`, `_x11_read_image`, `_x11_write`,
+  `_x11_write_typed`) was mock-only despite shipping in production
+  builds. (#102)
 - README badge breakouts for installer mix (pip, pipenv, pipx, uv,
   poetry, pdm) and OS distribution (linux, macos, windows), powered by
   the per-installer (v0.2.0) and per-OS (v0.3.0) endpoints from
