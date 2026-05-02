@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-05-02
+
 ### Added
 - Public `clipboard.reset_backend_cache()` helper. Replaces the previous
   pattern of poking the module-private `_backend` global directly (which
