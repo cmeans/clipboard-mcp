@@ -705,6 +705,17 @@ def _get_backend() -> str:
     return _backend
 
 
+def reset_backend_cache() -> None:
+    """Clear the cached backend so the next call to _get_backend() re-detects.
+
+    Intended for tests that need to switch backends or re-read
+    MCP_CLIPBOARD_BACKEND mid-process. Production code should not need
+    this -- the cache is a process-lifetime decision.
+    """
+    global _backend
+    _backend = None
+
+
 _READERS = {
     "wayland": _wayland_read,
     "x11": _x11_read,

@@ -6,6 +6,7 @@ All clipboard access is mocked — no actual system clipboard needed.
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -165,6 +166,70 @@ async def test_paste_schema_not_appended_for_non_table():
 
     assert "Column types" not in result
     assert "hello world" in result
+
+
+def test_max_write_bytes_non_integer_raises_at_import():
+    """A non-integer MCP_CLIPBOARD_MAX_WRITE_BYTES raises ValueError at module
+    load (server.py runs ``int(os.environ.get(...))`` at import time).
+
+    Run as a subprocess so the bad env var and partial-import state are
+    contained -- reloading mcp_clipboard.server in-process would break
+    every test that holds a reference to the module's exception classes.
+    """
+    import subprocess
+    import sys
+
+    env = {**os.environ, "MCP_CLIPBOARD_MAX_WRITE_BYTES": "not-a-number"}
+    proc = subprocess.run(
+        [sys.executable, "-c", "import mcp_clipboard.server"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "ValueError" in proc.stderr
+    assert "not-a-number" in proc.stderr
+
+
+def test_max_image_bytes_non_integer_raises_at_import():
+    """Same for MCP_CLIPBOARD_MAX_IMAGE_BYTES on the clipboard module."""
+    import subprocess
+    import sys
+
+    env = {**os.environ, "MCP_CLIPBOARD_MAX_IMAGE_BYTES": "ten-megs"}
+    proc = subprocess.run(
+        [sys.executable, "-c", "import mcp_clipboard.clipboard"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "ValueError" in proc.stderr
+    assert "ten-megs" in proc.stderr
+
+
+@pytest.mark.asyncio
+async def test_paste_with_schema_pads_short_header_row():
+    """When data rows are wider than the header row, the schema table
+    pads with synthetic Col N labels (server.py:222-228 padding loop)."""
+    # Header has 2 cells, data rows have 4. Padding should add Col 3, Col 4.
+    html = (
+        "<table>"
+        "<tr><th>Name</th><th>Age</th></tr>"
+        "<tr><td>Alice</td><td>30</td><td>Portland</td><td>Engineer</td></tr>"
+        "<tr><td>Bob</td><td>25</td><td>Seattle</td><td>Designer</td></tr>"
+        "</table>"
+    )
+    with patch("mcp_clipboard.server.read_clipboard", side_effect=_mock_read(html=html)):
+        result = await clipboard_paste(output_format="markdown", include_schema=True)
+
+    assert "Column types" in result
+    # Original headers preserved
+    assert "| Name" in result
+    assert "| Age" in result
+    # Synthetic labels filled in for the wider data rows
+    assert "Col 3" in result
+    assert "Col 4" in result
 
 
 @pytest.mark.asyncio
@@ -1050,16 +1115,14 @@ def _reset_backend_cache():
 
     Isolates tests from each other: any test that mutates ``cb._backend``
     (directly or via ``_get_backend``) must not leak state to the next test.
-    Prior code did this manually with trailing ``cb._backend = None`` lines,
-    which was brittle (easy to forget; no enforcement).
     """
-    import mcp_clipboard.clipboard as cb
+    from mcp_clipboard.clipboard import reset_backend_cache
 
-    cb._backend = None
+    reset_backend_cache()
     try:
         yield
     finally:
-        cb._backend = None
+        reset_backend_cache()
 
 
 def test_detect_backend_darwin():

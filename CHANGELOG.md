@@ -5,6 +5,26 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- Public `clipboard.reset_backend_cache()` helper. Replaces the previous
+  pattern of poking the module-private `_backend` global directly (which
+  the autouse fixtures in `tests/test_server.py` and
+  `tests/test_integration_x11.py` were already doing). Production code
+  has no reason to call this; it exists for tests that switch backends
+  or re-read `MCP_CLIPBOARD_BACKEND` mid-process. (#104)
+- Direct unit tests for `parser._has_header_row` covering the
+  `len(rows) < 2` early-return path and the all-text-no-header path,
+  plus a positive case for text-headers-over-numeric-data. Previously
+  exercised only indirectly via `format_table` JSON output. (#104)
+- Coverage for `clipboard_paste` `include_schema=True` when the data
+  rows are wider than the header row -- the padding loop at
+  `server.py:222-228` now has a regression test that asserts synthetic
+  `Col 3` / `Col 4` labels are emitted. (#104)
+- Coverage for `MCP_CLIPBOARD_MAX_WRITE_BYTES` and
+  `MCP_CLIPBOARD_MAX_IMAGE_BYTES` env-var validation. Both vars are
+  parsed via `int(os.environ.get(...))` at module import; a non-integer
+  value raises `ValueError` before anything else runs. Tests exercise
+  each in a subprocess so the partial-import state stays out of the
+  in-process module cache. (#104)
 - Headless X11 integration tests (`tests/test_integration_x11.py`) and a
   matching CI `integration-x11` job that runs them against a real `xclip`
   process under Xvfb. Five round-trip tests exercise plain text, unicode,
