@@ -62,7 +62,7 @@ async def _run_subprocess(
     """Run a subprocess and return its stdout as raw bytes.
 
     When *allow_empty_exit* is ``True``, exit code 1 is treated as "format not
-    available" and returns empty bytes.  This is the expected behaviour for
+    available" and returns empty bytes.  This is the expected behavior for
     ``wl-paste`` ("No suitable type of content") and ``xclip`` ("target not
     available").  Set it to ``False`` for macOS and Windows backends where exit
     code 1 indicates a real error (script failure, permission denied, etc.).
@@ -96,7 +96,7 @@ async def _run_subprocess(
     finally:
         # Belt-and-suspenders cleanup for paths that bypass the explicit
         # kill above -- specifically asyncio.CancelledError (BaseException)
-        # from a cancelled MCP request, which would otherwise orphan the
+        # from a canceled MCP request, which would otherwise orphan the
         # subprocess. kill() is a no-op once the process has exited.
         if proc is not None and proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):

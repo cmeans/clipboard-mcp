@@ -372,7 +372,7 @@ def test_detect_prose_with_return():
 
 def test_detect_prose_with_class():
     """Prose containing 'class ' as an English word should not be code."""
-    assert detect_content_type("The class was cancelled due to weather.") == "text"
+    assert detect_content_type("The class was canceled due to weather.") == "text"
 
 
 def test_detect_prose_with_public():

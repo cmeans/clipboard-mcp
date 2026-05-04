@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Changed
+- Sweep British to American spellings in source comments, test fixtures,
+  and historical CHANGELOG prose: `behaviour` → `behavior` in
+  `_run_subprocess` docstring; `cancelled` → `canceled` in narrative
+  comments, test assertion messages, and one parser test fixture string.
+  `asyncio.CancelledError` (Python class name) is left as-is. (#107) -
+  closes #106.
+
 ## [2.3.0] - 2026-05-02
 
 ### Added
@@ -139,7 +147,7 @@ All notable changes to this project will be documented here.
   base64-encoded payload is split across multiple `set b64 to b64 & "..."`
   statements with a 4,000-character chunk size. (#101)
 - `_run_subprocess` and `_run_with_stdin` no longer orphan their child
-  process when the calling task is cancelled (e.g. on MCP client
+  process when the calling task is canceled (e.g. on MCP client
   disconnect). A `finally` block now calls `proc.kill()` on any non-normal
   exit including `asyncio.CancelledError`, which inherits from
   `BaseException` and previously bypassed the timeout-only `except`
@@ -395,7 +403,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 - RTF clipboard read support (`text/rtf`) on macOS (via `osascript`/NSPasteboard) and Windows (via PowerShell/`DataFormats::Rtf`)
-- `clipboard_paste` Strategy 3: when HTML and plain text are both empty, attempts `text/rtf` as a fallback before checking for binary formats; RTF content is returned in a fenced code block labelled "rich text (RTF)", truncated at 50KB
+- `clipboard_paste` Strategy 3: when HTML and plain text are both empty, attempts `text/rtf` as a fallback before checking for binary formats; RTF content is returned in a fenced code block labeled "rich text (RTF)", truncated at 50KB
 - Wayland and X11 backends already supported `text/rtf` via pass-through MIME to `wl-paste`/`xclip`
 
 ## [1.0.1] - 2026-03-14

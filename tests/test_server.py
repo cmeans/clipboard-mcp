@@ -1881,7 +1881,7 @@ async def test_run_subprocess_kills_on_cancellation():
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert fake.kill_called, "kill() must be called when the task is cancelled"
+    assert fake.kill_called, "kill() must be called when the task is canceled"
 
 
 @pytest.mark.asyncio
@@ -1920,7 +1920,7 @@ async def test_run_with_stdin_kills_on_cancellation():
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert fake.kill_called, "kill() must be called when the task is cancelled"
+    assert fake.kill_called, "kill() must be called when the task is canceled"
 
 
 @pytest.mark.asyncio
