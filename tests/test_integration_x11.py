@@ -27,6 +27,7 @@ from mcp_clipboard.clipboard import (
     read_clipboard_image,
     reset_backend_cache,
     write_clipboard,
+    write_clipboard_image,
     write_clipboard_typed,
 )
 
@@ -109,3 +110,48 @@ async def test_x11_read_image_binary_round_trip():
 
     result = await read_clipboard_image("image/png")
     assert result == payload
+
+
+# Smallest possible PNG (1x1, fully transparent) — proves the write path
+# round-trips bytes intact through xclip without mangling.
+_TINY_PNG = bytes.fromhex(
+    "89504e470d0a1a0a"
+    "0000000d49484452"
+    "0000000100000001080600000015b9da38"
+    "0000000a49444154789c63000100000005000182dd8a73"
+    "0000000049454e44ae426082"
+)
+
+_TINY_JPEG = bytes.fromhex(
+    "ffd8ffe000104a46494600010100000100010000"
+    "ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d"
+    "1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d3832"
+    "3c2e333432"
+    "ffc0000b08000100010101110000"
+    "ffc4001f0000010501010101010100000000000000000102030405060708090a0b"
+    "ffda0008010100003f00d2cf20ffd9"
+)
+
+
+@pytest.mark.asyncio
+async def test_x11_write_image_png_round_trip():
+    """write_clipboard_image(PNG) round-trips intact through xclip."""
+    await write_clipboard_image(_TINY_PNG, "image/png")
+    result = await read_clipboard_image("image/png")
+    assert result == _TINY_PNG
+
+
+@pytest.mark.asyncio
+async def test_x11_write_image_jpeg_round_trip():
+    """write_clipboard_image(JPEG) round-trips intact through xclip."""
+    await write_clipboard_image(_TINY_JPEG, "image/jpeg")
+    result = await read_clipboard_image("image/jpeg")
+    assert result == _TINY_JPEG
+
+
+@pytest.mark.asyncio
+async def test_x11_write_image_advertises_target():
+    """After write_clipboard_image, list_clipboard_formats reports the MIME."""
+    await write_clipboard_image(_TINY_PNG, "image/png")
+    formats = await list_clipboard_formats()
+    assert any(f == "image/png" for f in formats), f"image/png not in {formats}"

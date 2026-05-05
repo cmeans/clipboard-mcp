@@ -7,6 +7,8 @@ spreadsheet row/column layout) and returns non-tabular content cleanly.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -27,6 +29,7 @@ from .clipboard import (
     read_clipboard,
     read_clipboard_image,
     write_clipboard,
+    write_clipboard_image,
     write_clipboard_typed,
 )
 from .parser import (
@@ -456,6 +459,42 @@ async def clipboard_copy(
         return f"Error writing to clipboard: {e}"
 
     return f"Copied {len(content)} characters to clipboard as {mime_type}."
+
+
+_WRITABLE_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
+
+
+@mcp.tool(
+    name="clipboard_copy_image",
+    description=_load_instruction("clipboard_copy_image"),
+    annotations={  # type: ignore[arg-type]
+        "title": "Copy Image to Clipboard",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def clipboard_copy_image(
+    image_data: str,
+    mime_type: str = "image/png",
+) -> str:
+    mime_type = mime_type.strip().lower()
+    if mime_type not in _WRITABLE_IMAGE_MIMES:
+        return (
+            f"Unsupported image MIME type: {mime_type!r}. "
+            f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIMES))}."
+        )
+    try:
+        data = base64.b64decode(image_data, validate=True)
+    except (binascii.Error, ValueError) as e:
+        return f"image_data is not valid base64: {e}"
+    try:
+        await write_clipboard_image(data, mime_type)
+    except ClipboardError as e:
+        return f"Error writing image to clipboard: {e}"
+
+    return f"Copied {len(data):,} bytes to clipboard as {mime_type}."
 
 
 def main() -> None:
