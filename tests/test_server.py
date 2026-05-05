@@ -2948,6 +2948,23 @@ async def test_macos_write_image_chunks_large_base64():
 
 
 @pytest.mark.asyncio
+async def test_macos_write_image_empty_payload_chunk_fallback():
+    """Empty image bytes must still produce syntactically valid AppleScript.
+
+    `_validate_image_magic` upstream rejects empty bytes, but the backend
+    function itself defensively handles the empty-chunks case (mirroring
+    `_macos_write_typed`) so the AppleScript stays valid even if called
+    directly with `b""`.
+    """
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_image(b"", "image/png")
+
+    script = mock.call_args[0][0][-1]
+    assert 'set b64 to ""' in script
+    assert "public.png" in script
+
+
+@pytest.mark.asyncio
 async def test_windows_write_image_invokes_setimage():
     """_windows_write_image invokes PowerShell SetImage with a base64 payload."""
     with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
