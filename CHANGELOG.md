@@ -4,6 +4,24 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- New `github-release` job in `publish.yml` auto-creates (or updates) a
+  GitHub Release matching the pushed tag, with notes pulled from the
+  matching `## [VERSION]` section of `CHANGELOG.md`. Idempotent: if a
+  Release for the tag already exists (hand-crafted, or a re-run of a
+  partially-failed publish), the job edits the notes in place via
+  `gh release edit` rather than failing with HTTP 422. Falls through to
+  `--generate-notes` (auto commit-list) when the CHANGELOG has no
+  matching entry. `needs: publish-pypi` so the Release only lands after
+  the wheel is on PyPI; `permissions: contents: write` enables
+  `gh release create`. Closes the GitHub-Releases-page-drift gap that
+  surfaced after v2.4.0/v2.5.0/v2.5.1 all landed on PyPI without
+  matching Releases (manually backfilled on 2026-05-06). Pattern ported
+  from mcp-synology with a CHANGELOG-format adaptation: mcp-clipboard
+  uses Keep-a-Changelog `## [VERSION]` brackets, so the awk anchor is
+  `^## \[VERSION\]` rather than mcp-synology's `^## VERSION( |\()`.
+  (#127) - closes #126.
+
 ## [2.5.1] - 2026-05-05
 
 ### Fixed
