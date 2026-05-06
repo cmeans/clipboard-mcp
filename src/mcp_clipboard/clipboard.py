@@ -564,6 +564,40 @@ _MACOS_TYPED_WRITE_UTIS: dict[str, str] = {
 }
 
 
+def _macos_pasteboard_script(payload: bytes, uti: str) -> str:
+    """Build the AppleScript that base64-decodes ``payload`` into NSData and
+    writes it to the system pasteboard under the given UTI.
+
+    The script is meant to be piped to ``osascript -`` over stdin (NOT passed
+    via ``-e``). That decouples the total script length from execve's argv
+    cap (~1 MiB ARG_MAX on default macOS), so payloads up to the
+    ``MCP_CLIPBOARD_MAX_*`` envelope are safe.
+
+    The chunked-base64 splitting is still required: AppleScript's parser
+    rejects single source lines longer than 32,767 chars regardless of how
+    the script reached osascript, so a >~24 KB raw payload would otherwise
+    fail to compile.
+    """
+    b64 = base64.b64encode(payload).decode("ascii")
+    b64_chunks = [b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)]
+    if not b64_chunks:
+        b64_chunks = [""]
+    b64_lines = [f'set b64 to "{b64_chunks[0]}"']
+    for chunk in b64_chunks[1:]:
+        b64_lines.append(f'set b64 to b64 & "{chunk}"')
+    return (
+        'use framework "AppKit"\n'
+        'use framework "Foundation"\n'
+        + "\n".join(b64_lines)
+        + "\n"
+        + "set decoded to (current application's NSData's alloc()'s "
+        "initWithBase64EncodedString:b64 options:0)\n"
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        "pb's clearContents()\n"
+        f'pb\'s setData:decoded forType:"{uti}"\n'
+    )
+
+
 async def _macos_write_typed(content: str, mime_type: str) -> None:
     if mime_type == "text/plain":
         await _run_with_stdin(["pbcopy"], content.encode())
@@ -577,28 +611,12 @@ async def _macos_write_typed(content: str, mime_type: str) -> None:
             f"Supported: {', '.join(supported)}"
         )
 
-    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-    # AppleScript has a 32,767-char per-line limit, so a single
-    # `set b64 to "..."` literal breaks for content >~24 KB once
-    # base64-encoded. Split the literal across multiple statements.
-    b64_chunks = [b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)]
-    if not b64_chunks:
-        b64_chunks = [""]
-    b64_lines = [f'set b64 to "{b64_chunks[0]}"']
-    for chunk in b64_chunks[1:]:
-        b64_lines.append(f'set b64 to b64 & "{chunk}"')
-    script = (
-        'use framework "AppKit"\n'
-        'use framework "Foundation"\n'
-        + "\n".join(b64_lines)
-        + "\n"
-        + "set decoded to (current application's NSData's alloc()'s "
-        "initWithBase64EncodedString:b64 options:0)\n"
-        "set pb to current application's NSPasteboard's generalPasteboard()\n"
-        "pb's clearContents()\n"
-        f'pb\'s setData:decoded forType:"{uti}"\n'
+    # Pipe via `osascript -` to escape execve's ~1 MiB ARG_MAX cap.
+    # See _macos_pasteboard_script.
+    await _run_with_stdin(
+        ["osascript", "-"],
+        _macos_pasteboard_script(content.encode("utf-8"), uti).encode("utf-8"),
     )
-    await _run(["osascript", "-e", script], allow_empty_exit=False)
 
 
 def _windows_html_clipboard_wrap(html: str) -> str:
@@ -738,27 +756,13 @@ async def _macos_write_image(data: bytes, mime_type: str) -> None:
             f"macOS clipboard image write does not support MIME type {mime_type!r}. "
             f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIME_TO_UTI))}"
         )
-    b64 = base64.b64encode(data).decode("ascii")
-    # AppleScript per-line literal limit is 32,767 chars; chunk to avoid it
-    # for any image larger than ~24 KB after base64 encoding.
-    b64_chunks = [b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)]
-    if not b64_chunks:
-        b64_chunks = [""]
-    b64_lines = [f'set b64 to "{b64_chunks[0]}"']
-    for chunk in b64_chunks[1:]:
-        b64_lines.append(f'set b64 to b64 & "{chunk}"')
-    script = (
-        'use framework "AppKit"\n'
-        'use framework "Foundation"\n'
-        + "\n".join(b64_lines)
-        + "\n"
-        + "set decoded to (current application's NSData's alloc()'s "
-        "initWithBase64EncodedString:b64 options:0)\n"
-        "set pb to current application's NSPasteboard's generalPasteboard()\n"
-        "pb's clearContents()\n"
-        f'pb\'s setData:decoded forType:"{uti}"\n'
+    # Pipe via `osascript -` over stdin to escape execve's ~1 MiB ARG_MAX
+    # cap, which the prior `osascript -e <script>` form would have hit for
+    # any image above ~750 KB after base64 framing. See _macos_pasteboard_script.
+    await _run_with_stdin(
+        ["osascript", "-"],
+        _macos_pasteboard_script(data, uti).encode("utf-8"),
     )
-    await _run(["osascript", "-e", script], allow_empty_exit=False)
 
 
 async def _windows_write_image(data: bytes, mime_type: str) -> None:
