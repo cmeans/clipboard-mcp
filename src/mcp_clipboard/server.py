@@ -22,6 +22,7 @@ from mcp.server.fastmcp.utilities.types import Image
 from mcp.types import Icon
 
 from .clipboard import (
+    WRITABLE_IMAGE_MIMES,
     ClipboardError,
     ClipboardSizeError,
     base_mime_type,
@@ -461,9 +462,6 @@ async def clipboard_copy(
     return f"Copied {len(content)} characters to clipboard as {mime_type}."
 
 
-_WRITABLE_IMAGE_MIMES = frozenset({"image/png", "image/jpeg"})
-
-
 @mcp.tool(
     name="clipboard_copy_image",
     description=_load_instruction("clipboard_copy_image"),
@@ -480,10 +478,10 @@ async def clipboard_copy_image(
     mime_type: str = "image/png",
 ) -> str:
     mime_type = mime_type.strip().lower()
-    if mime_type not in _WRITABLE_IMAGE_MIMES:
+    if mime_type not in WRITABLE_IMAGE_MIMES:
         return (
             f"Unsupported image MIME type: {mime_type!r}. "
-            f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIMES))}."
+            f"Supported: {', '.join(sorted(WRITABLE_IMAGE_MIMES))}."
         )
     try:
         data = base64.b64decode(image_data, validate=True)

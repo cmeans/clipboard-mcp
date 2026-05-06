@@ -15,8 +15,10 @@ All notable changes to this project will be documented here.
   four backends supported: Wayland (`wl-copy --type`), X11
   (`xclip -selection clipboard -target -i`), macOS (NSPasteboard
   `setData:forType:` via osascript), Windows
-  (`Clipboard::SetImage` via PowerShell). Linux validated under Xvfb in
-  CI; macOS and Windows unit-tested only per repo convention.
+  (`Clipboard::SetImage` via PowerShell, base64 piped over stdin so the
+  payload never touches `CreateProcess`'s 32,767-char `lpCommandLine`
+  cap). Linux validated under Xvfb in CI; macOS and Windows unit-tested
+  only per repo convention.
   Other formats (GIF, WebP, TIFF, BMP) intentionally deferred — can land
   in a follow-up without taking on Pillow. (#111) - closes #108.
 

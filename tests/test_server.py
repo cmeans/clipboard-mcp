@@ -2967,13 +2967,51 @@ async def test_macos_write_image_empty_payload_chunk_fallback():
 @pytest.mark.asyncio
 async def test_windows_write_image_invokes_setimage():
     """_windows_write_image invokes PowerShell SetImage with a base64 payload."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write_image(_TINY_PNG, "image/png")
 
     script = mock.call_args[0][0][-1]
     assert "System.Windows.Forms.Clipboard" in script
     assert "SetImage" in script
     assert "FromBase64String" in script
+    # The base64 payload flows over stdin, NOT in the script body.
+    assert "[Console]::In.ReadToEnd()" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_pipes_b64_via_stdin():
+    """The base64 payload must be passed as stdin bytes, not interpolated."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(_TINY_PNG, "image/png")
+
+    stdin_bytes = mock.call_args[0][1]
+    # stdin bytes must be base64-decodable and decode back to the original.
+    import base64 as _b64
+
+    assert _b64.b64decode(stdin_bytes.decode("ascii")) == _TINY_PNG
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_command_line_bounded_for_large_payloads():
+    """Regression for the QA Round 2 F1 finding: Windows CreateProcess caps
+    lpCommandLine at 32,767 chars. The previous implementation interpolated
+    the base64 inline, which blew the cap for any image >~24 KB raw. The
+    fixed implementation pipes via stdin, so the constructed argv stays a
+    fixed ~400 chars regardless of payload size.
+    """
+    big_png = _TINY_PNG + (b"\x00" * (1024 * 1024))  # 1 MB+
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(big_png, "image/png")
+
+    cmd = mock.call_args[0][0]
+    cmdline_len = sum(len(arg) for arg in cmd) + max(0, len(cmd) - 1)  # +spaces
+    assert cmdline_len < 32_767, (
+        f"PowerShell command line is {cmdline_len} chars; CreateProcess caps "
+        f"lpCommandLine at 32,767. Inputs of any size must use stdin."
+    )
+    # Bytes must flow over stdin proportional to the input.
+    stdin_bytes = mock.call_args[0][1]
+    assert len(stdin_bytes) > 1_000_000
 
 
 @pytest.mark.asyncio

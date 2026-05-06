@@ -690,7 +690,7 @@ _WRITABLE_IMAGE_MIME_TO_UTI: dict[str, str] = {
     "image/jpeg": "public.jpeg",
 }
 
-_WRITABLE_IMAGE_MIMES: frozenset[str] = frozenset(_WRITABLE_IMAGE_MIME_TO_UTI)
+WRITABLE_IMAGE_MIMES: frozenset[str] = frozenset(_WRITABLE_IMAGE_MIME_TO_UTI)
 
 
 async def _wayland_write_image(data: bytes, mime_type: str) -> None:
@@ -735,25 +735,31 @@ async def _macos_write_image(data: bytes, mime_type: str) -> None:
 
 
 async def _windows_write_image(data: bytes, mime_type: str) -> None:
-    if mime_type not in _WRITABLE_IMAGE_MIMES:
+    if mime_type not in WRITABLE_IMAGE_MIMES:
         raise ClipboardError(
             f"Windows clipboard image write does not support MIME type {mime_type!r}. "
-            f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIMES))}"
+            f"Supported: {', '.join(sorted(WRITABLE_IMAGE_MIMES))}"
         )
-    # SetImage takes a System.Drawing.Image. base64-encode the bytes here,
-    # decode in PowerShell to a MemoryStream, then load with FromStream
-    # (auto-detects PNG vs JPEG from the magic header).
-    b64 = base64.b64encode(data).decode("ascii")
+    # The base64 payload flows over stdin, NOT inline in the script: Windows
+    # CreateProcess caps lpCommandLine at 32,767 chars, so interpolating the
+    # base64 directly would fail at the OS layer for any image larger than
+    # ~24 KB raw. Mirrors the stdin pattern in _windows_write_typed.
+    # SetImage takes a System.Drawing.Image; FromStream auto-detects PNG vs
+    # JPEG from the magic header, so no per-MIME branching is needed.
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "Add-Type -AssemblyName System.Drawing; "
-        f"$b64 = '{b64}'; "
+        "$b64 = [Console]::In.ReadToEnd(); "
         "$bytes = [Convert]::FromBase64String($b64); "
         "$ms = New-Object System.IO.MemoryStream(,$bytes); "
         "$img = [System.Drawing.Image]::FromStream($ms); "
         "[System.Windows.Forms.Clipboard]::SetImage($img)"
     )
-    await _run(["powershell", "-NoProfile", "-Command", script], allow_empty_exit=False)
+    b64 = base64.b64encode(data).decode("ascii")
+    await _run_with_stdin(
+        ["powershell", "-NoProfile", "-Command", script],
+        b64.encode("ascii"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -941,10 +947,10 @@ async def write_clipboard_image(data: bytes, mime_type: str) -> None:
     Raises :exc:`ClipboardError` for unsupported MIME types or mismatched
     headers, and :exc:`ClipboardSizeError` when the payload exceeds the cap.
     """
-    if mime_type not in _WRITABLE_IMAGE_MIMES:
+    if mime_type not in WRITABLE_IMAGE_MIMES:
         raise ClipboardError(
             f"Unsupported image MIME type: {mime_type!r}. "
-            f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIMES))}"
+            f"Supported: {', '.join(sorted(WRITABLE_IMAGE_MIMES))}"
         )
     if len(data) > _MAX_IMAGE_BYTES:
         raise ClipboardSizeError(
