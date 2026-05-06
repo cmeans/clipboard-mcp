@@ -6,13 +6,17 @@ All notable changes to this project will be documented here.
 
 ### Added
 - `clipboard_copy` now accepts `mime_type="image/svg+xml"`. SVG is XML
-  and the read path already treats it as text-readable, but the write
+  and the read path already treated it as text-readable, but the write
   path was rejecting it as binary. Apps that consume SVG from the
   clipboard (Edge, Chrome, Figma, Inkscape) now receive the rendered
-  image; text editors receive the source. Wayland/X11 pass-through with
-  zero new code; macOS uses the `public.svg-image` UTI on NSPasteboard;
-  Windows uses a `DataObject` custom format `image/svg+xml`. Linux
-  validated under Xvfb in CI. (#116) - closes #112.
+  image. Wayland/X11 pass-through with zero new code; macOS uses the
+  `public.svg-image` UTI on NSPasteboard; Windows uses a `DataObject`
+  custom format `image/svg+xml`. Linux validated under Xvfb in CI.
+  Note: this is single-MIME write — only `image/svg+xml` is set on the
+  clipboard. On Wayland, `wl-copy` happens to also advertise `text/plain`
+  automatically, so non-SVG-aware editors get the source for free; on
+  X11 / macOS / Windows there is no text fallback until multi-format
+  simultaneous write lands (#109). (#116) - closes #112.
 - New `clipboard_copy_image(image_data, mime_type)` tool: write a PNG or
   JPEG to the system clipboard from base64-encoded bytes. Closes the
   read/write asymmetry for binary content (we already returned six image

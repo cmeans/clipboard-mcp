@@ -236,7 +236,7 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 | RTF | Returned in a fenced code block (macOS, Windows, and Wayland/X11 via pass-through) |
 | Plain text | Returned as-is |
 | Images (PNG, etc.) | Returned as an MCP image content block the model can see and analyze |
-| SVG | Readable as text via `clipboard_read_raw` with `image/svg+xml`, or returned as image via `clipboard_paste`. Writable via `clipboard_copy(mime_type="image/svg+xml")` — apps that consume SVG (Inkscape, Figma, browsers) get the image; text editors get the source. |
+| SVG | Readable as text via `clipboard_read_raw` with `image/svg+xml`, or returned as image via `clipboard_paste`. Writable via `clipboard_copy(mime_type="image/svg+xml")` — apps that consume SVG (Inkscape, Figma, browsers) get the image. On Wayland, `wl-copy` automatically also advertises `text/plain`, so editors get the source for free. On X11 / macOS / Windows the SVG-only path is single-MIME — non-SVG-aware apps will not see any text fallback until multi-format simultaneous write lands (#109). |
 | Audio / video | Not supported; returns a message identifying the format |
 
 ## How It Works
