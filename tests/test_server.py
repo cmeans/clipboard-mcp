@@ -69,7 +69,7 @@ SAMPLE_TSV = "Name\tAge\tCity\nAlice\t30\tPortland\nBob\t25\tSeattle"
 def _mock_read(html: str = "", text: str = ""):
     """Create a mock for read_clipboard that returns html or text by mime type."""
 
-    async def _read(mime_type: str = "text/plain") -> str:
+    async def _read(mime_type: str = "text/plain", selection: str = "clipboard") -> str:
         if mime_type == "text/html":
             return html
         return text
@@ -80,7 +80,7 @@ def _mock_read(html: str = "", text: str = ""):
 def _mock_read_error(msg: str = "Command not found: wl-paste"):
     """Create a mock for read_clipboard that raises ClipboardError."""
 
-    async def _read(mime_type: str = "text/plain") -> str:
+    async def _read(mime_type: str = "text/plain", selection: str = "clipboard") -> str:
         raise ClipboardError(msg)
 
     return _read
@@ -331,7 +331,7 @@ async def test_paste_tsv_fallback():
 async def test_paste_tsv_when_html_errors():
     """clipboard_paste falls back to TSV when HTML read raises an error."""
 
-    async def _mixed_read(mime_type: str = "text/plain") -> str:
+    async def _mixed_read(mime_type: str = "text/plain", selection: str = "clipboard") -> str:
         if mime_type == "text/html":
             raise ClipboardError("No HTML available")
         return SAMPLE_TSV
@@ -1215,7 +1215,7 @@ async def test_read_clipboard_dispatches_to_wayland():
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
-    mock_reader.assert_called_once_with("text/plain")
+    mock_reader.assert_called_once_with("text/plain", "clipboard")
 
 
 @pytest.mark.asyncio
@@ -1227,7 +1227,7 @@ async def test_read_clipboard_dispatches_to_x11():
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
-    mock_reader.assert_called_once_with("text/plain")
+    mock_reader.assert_called_once_with("text/plain", "clipboard")
 
 
 @pytest.mark.asyncio
@@ -1239,7 +1239,7 @@ async def test_read_clipboard_dispatches_to_macos():
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
-    mock_reader.assert_called_once_with("text/plain")
+    mock_reader.assert_called_once_with("text/plain", "clipboard")
 
 
 @pytest.mark.asyncio
@@ -1251,7 +1251,7 @@ async def test_read_clipboard_dispatches_to_windows():
             result = await read_clipboard("text/plain")
 
     assert result == "hello"
-    mock_reader.assert_called_once_with("text/plain")
+    mock_reader.assert_called_once_with("text/plain", "clipboard")
 
 
 @pytest.mark.asyncio
@@ -1284,7 +1284,7 @@ async def test_paste_image_prefers_png():
             ) as mock_img:
                 result = await clipboard_paste()
 
-    mock_img.assert_called_once_with("image/png")
+    mock_img.assert_called_once_with("image/png", "clipboard")
     assert isinstance(result, Image)
 
 
@@ -1301,7 +1301,7 @@ async def test_paste_image_falls_back_to_first():
             ) as mock_img:
                 result = await clipboard_paste()
 
-    mock_img.assert_called_once_with("image/tiff")
+    mock_img.assert_called_once_with("image/tiff", "clipboard")
     assert isinstance(result, Image)
 
 
@@ -1501,7 +1501,7 @@ async def test_read_clipboard_image_dispatches():
             result = await read_clipboard_image("image/png")
 
     assert result == b"IMG"
-    mock_reader.assert_called_once_with("image/png")
+    mock_reader.assert_called_once_with("image/png", "clipboard")
 
 
 # ---------------------------------------------------------------------------
@@ -1614,7 +1614,7 @@ async def test_read_clipboard_falls_back_to_suffixed_mime():
     """read_clipboard retries with the suffixed MIME type when exact match fails."""
     call_log = []
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         call_log.append(mime_type)
         if mime_type == "text/plain":
             return ""  # exact match fails
@@ -1622,7 +1622,7 @@ async def test_read_clipboard_falls_back_to_suffixed_mime():
             return "hello from charset"
         return ""
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         return ["text/plain;charset=utf-8", "text/html"]
 
     with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
@@ -1640,10 +1640,10 @@ async def test_read_clipboard_no_fallback_when_exact_match_works():
     """read_clipboard does not list formats when the exact MIME type succeeds."""
     list_called = False
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         return "direct content"
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         nonlocal list_called
         list_called = True
         return []
@@ -1661,12 +1661,12 @@ async def test_read_clipboard_no_fallback_when_exact_match_works():
 async def test_read_clipboard_no_fallback_on_macos():
     """read_clipboard skips MIME fallback on macOS (not applicable)."""
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         return ""
 
     list_called = False
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         nonlocal list_called
         list_called = True
         return ["text/plain;charset=utf-8"]
@@ -1684,14 +1684,14 @@ async def test_read_clipboard_no_fallback_on_macos():
 async def test_read_clipboard_image_falls_back_to_suffixed_mime():
     """read_clipboard_image retries with suffixed MIME type on fallback."""
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         if mime_type == "image/png":
             return b""
         if mime_type == "image/png;charset=binary":
             return b"\x89PNG"
         return b""
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         return ["image/png;charset=binary"]
 
     with patch("mcp_clipboard.clipboard._get_backend", return_value="x11"):
@@ -1738,7 +1738,7 @@ async def test_paste_image_prefers_png_with_params():
                 result = await clipboard_paste()
 
     # Should use the suffixed PNG format, not fall back to tiff
-    mock_img.assert_called_once_with("image/png;charset=binary")
+    mock_img.assert_called_once_with("image/png;charset=binary", "clipboard")
     assert isinstance(result, Image)
 
 
@@ -2166,7 +2166,7 @@ async def test_paste_rtf_fallback():
     """clipboard_paste returns RTF content when HTML and plain text are empty."""
     rtf_content = r"{\rtf1\ansi Hello, {\b world}!}"
 
-    async def mock_read(mime_type="text/plain"):
+    async def mock_read(mime_type="text/plain", selection="clipboard"):
         if mime_type == "text/rtf":
             return rtf_content
         return ""
@@ -2185,7 +2185,7 @@ async def test_paste_rtf_with_triple_backticks_uses_longer_fence():
     """RTF content containing ``` must not break out of the markdown fence."""
     rtf_content = r"{\rtf1\ansi look: ```escape```}"
 
-    async def mock_read(mime_type="text/plain"):
+    async def mock_read(mime_type="text/plain", selection="clipboard"):
         if mime_type == "text/rtf":
             return rtf_content
         return ""
@@ -2203,7 +2203,7 @@ async def test_paste_rtf_truncated():
     """clipboard_paste truncates oversized RTF at 50KB."""
     rtf_content = r"{\rtf1\ansi " + ("x" * 60_000) + "}"
 
-    async def mock_read(mime_type="text/plain"):
+    async def mock_read(mime_type="text/plain", selection="clipboard"):
         if mime_type == "text/rtf":
             return rtf_content
         return ""
@@ -2220,7 +2220,7 @@ async def test_paste_rtf_truncated():
 async def test_paste_rtf_skipped_when_text_present():
     """clipboard_paste does not attempt RTF read when plain text is available."""
 
-    async def mock_read(mime_type="text/plain"):
+    async def mock_read(mime_type="text/plain", selection="clipboard"):
         if mime_type == "text/plain":
             return "hello world"
         if mime_type == "text/rtf":
@@ -2237,7 +2237,7 @@ async def test_paste_rtf_skipped_when_text_present():
 async def test_paste_rtf_error_falls_through():
     """clipboard_paste falls through to binary check when RTF read raises ClipboardError."""
 
-    async def mock_read(mime_type="text/plain"):
+    async def mock_read(mime_type="text/plain", selection="clipboard"):
         if mime_type == "text/rtf":
             raise ClipboardError("rtf not available")
         return ""
@@ -2258,12 +2258,12 @@ async def test_paste_rtf_error_falls_through():
 async def test_read_clipboard_image_no_fallback_on_macos():
     """read_clipboard_image skips MIME fallback on macOS."""
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         return b""
 
     list_called = False
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         nonlocal list_called
         list_called = True
         return ["image/png;charset=binary"]
@@ -2281,12 +2281,12 @@ async def test_read_clipboard_image_no_fallback_on_macos():
 async def test_read_clipboard_image_no_fallback_on_windows():
     """read_clipboard_image skips MIME fallback on Windows."""
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         return b""
 
     list_called = False
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         nonlocal list_called
         list_called = True
         return ["image/png;charset=binary"]
@@ -2304,10 +2304,10 @@ async def test_read_clipboard_image_no_fallback_on_windows():
 async def test_read_clipboard_image_fallback_no_match():
     """read_clipboard_image returns empty bytes when fallback finds no matching base type."""
 
-    async def mock_reader(mime_type):
+    async def mock_reader(mime_type, selection="clipboard"):
         return b""
 
-    async def mock_list():
+    async def mock_list(selection="clipboard"):
         return ["image/tiff", "text/plain"]
 
     with patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"):
@@ -3633,6 +3633,292 @@ async def test_clipboard_copy_markdown_surfaces_render_error():
         result = await clipboard_copy_markdown(_SAMPLE_MARKDOWN)
     assert "Failed to render markdown" in result
     assert "parser exploded" in result
+
+
+# ---------------------------------------------------------------------------
+# PRIMARY selection support (#110)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wayland_read_passes_primary_flag():
+    """_wayland_read appends --primary when selection='primary'."""
+    from mcp_clipboard.clipboard import _wayland_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = "selected text"
+        await _wayland_read("text/plain", "primary")
+
+    cmd = mock.call_args[0][0]
+    assert "--primary" in cmd
+    assert "wl-paste" in cmd[0]
+
+
+@pytest.mark.asyncio
+async def test_wayland_read_default_clipboard_omits_primary_flag():
+    from mcp_clipboard.clipboard import _wayland_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = ""
+        await _wayland_read("text/plain")
+
+    cmd = mock.call_args[0][0]
+    assert "--primary" not in cmd
+
+
+@pytest.mark.asyncio
+async def test_wayland_list_formats_primary():
+    from mcp_clipboard.clipboard import _wayland_list_formats
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = "text/plain\n"
+        await _wayland_list_formats("primary")
+
+    cmd = mock.call_args[0][0]
+    assert "--primary" in cmd
+    assert "--list-types" in cmd
+
+
+@pytest.mark.asyncio
+async def test_wayland_read_image_primary():
+    from mcp_clipboard.clipboard import _wayland_read_image
+
+    with patch("mcp_clipboard.clipboard._run_binary", new_callable=AsyncMock) as mock:
+        mock.return_value = b""
+        await _wayland_read_image("image/png", "primary")
+
+    cmd = mock.call_args[0][0]
+    assert "--primary" in cmd
+
+
+@pytest.mark.asyncio
+async def test_x11_read_uses_primary_selection_arg():
+    """_x11_read passes -selection primary when selection='primary'."""
+    from mcp_clipboard.clipboard import _x11_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = ""
+        await _x11_read("text/plain", "primary")
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "xclip"
+    # `-selection primary` must be the consecutive args.
+    sel_idx = cmd.index("-selection")
+    assert cmd[sel_idx + 1] == "primary"
+
+
+@pytest.mark.asyncio
+async def test_x11_read_default_uses_clipboard_selection():
+    from mcp_clipboard.clipboard import _x11_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = ""
+        await _x11_read("text/plain")
+
+    cmd = mock.call_args[0][0]
+    sel_idx = cmd.index("-selection")
+    assert cmd[sel_idx + 1] == "clipboard"
+
+
+@pytest.mark.asyncio
+async def test_x11_list_formats_primary():
+    from mcp_clipboard.clipboard import _x11_list_formats
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        mock.return_value = ""
+        await _x11_list_formats("primary")
+
+    cmd = mock.call_args[0][0]
+    sel_idx = cmd.index("-selection")
+    assert cmd[sel_idx + 1] == "primary"
+
+
+@pytest.mark.asyncio
+async def test_x11_read_image_primary():
+    from mcp_clipboard.clipboard import _x11_read_image
+
+    with patch("mcp_clipboard.clipboard._run_binary", new_callable=AsyncMock) as mock:
+        mock.return_value = b""
+        await _x11_read_image("image/png", "primary")
+
+    cmd = mock.call_args[0][0]
+    sel_idx = cmd.index("-selection")
+    assert cmd[sel_idx + 1] == "primary"
+
+
+@pytest.mark.asyncio
+async def test_macos_read_rejects_primary():
+    """macOS has no PRIMARY analog; non-default selection raises ClipboardError."""
+    from mcp_clipboard.clipboard import _macos_read
+
+    with pytest.raises(ClipboardError, match="macOS does not support"):
+        await _macos_read("text/plain", "primary")
+
+
+@pytest.mark.asyncio
+async def test_windows_read_rejects_primary():
+    from mcp_clipboard.clipboard import _windows_read
+
+    with pytest.raises(ClipboardError, match="Windows does not support"):
+        await _windows_read("text/plain", "primary")
+
+
+@pytest.mark.asyncio
+async def test_macos_list_formats_rejects_primary():
+    from mcp_clipboard.clipboard import _macos_list_formats
+
+    with pytest.raises(ClipboardError, match="macOS"):
+        await _macos_list_formats("primary")
+
+
+@pytest.mark.asyncio
+async def test_windows_list_formats_rejects_primary():
+    from mcp_clipboard.clipboard import _windows_list_formats
+
+    with pytest.raises(ClipboardError, match="Windows"):
+        await _windows_list_formats("primary")
+
+
+@pytest.mark.asyncio
+async def test_macos_read_image_rejects_primary():
+    from mcp_clipboard.clipboard import _macos_read_image
+
+    with pytest.raises(ClipboardError, match="macOS"):
+        await _macos_read_image("image/png", "primary")
+
+
+@pytest.mark.asyncio
+async def test_windows_read_image_rejects_primary():
+    from mcp_clipboard.clipboard import _windows_read_image
+
+    with pytest.raises(ClipboardError, match="Windows"):
+        await _windows_read_image("image/png", "primary")
+
+
+@pytest.mark.asyncio
+async def test_invalid_selection_raises_at_backend_layer():
+    """Backend selection validation rejects unknown values cleanly on Wayland."""
+    from mcp_clipboard.clipboard import _wayland_read
+
+    with pytest.raises(ClipboardError, match="Invalid selection"):
+        await _wayland_read("text/plain", "secondary")
+
+
+# --- Public API threading ---
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_passes_selection_through():
+    mock_reader = AsyncMock(return_value="primary text")
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="wayland"),
+        patch.dict("mcp_clipboard.clipboard._READERS", {"wayland": mock_reader}),
+    ):
+        result = await read_clipboard("text/plain", "primary")
+
+    assert result == "primary text"
+    mock_reader.assert_called_once_with("text/plain", "primary")
+
+
+@pytest.mark.asyncio
+async def test_list_clipboard_formats_passes_selection_through():
+    mock_lister = AsyncMock(return_value=["text/plain"])
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._FORMAT_LISTERS", {"x11": mock_lister}),
+    ):
+        await list_clipboard_formats("primary")
+
+    mock_lister.assert_called_once_with("primary")
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_image_passes_selection_through():
+    mock_reader = AsyncMock(return_value=b"")
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._IMAGE_READERS", {"x11": mock_reader}),
+        patch.dict(
+            "mcp_clipboard.clipboard._FORMAT_LISTERS",
+            {"x11": AsyncMock(return_value=[])},
+        ),
+    ):
+        await read_clipboard_image("image/png", "primary")
+
+    mock_reader.assert_called_once_with("image/png", "primary")
+
+
+# --- Tool surface ---
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_accepts_selection_primary():
+    """clipboard_paste(selection='primary') routes the read through with primary."""
+    with patch("mcp_clipboard.server.read_clipboard", new=_mock_read(text="hello primary")):
+        result = await clipboard_paste(selection="primary")
+    assert "hello primary" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_threads_selection_to_read_clipboard():
+    """clipboard_paste must pass selection to its read_clipboard calls so the
+    correct buffer is sourced."""
+    seen: list[tuple[str, str]] = []
+
+    async def spy(mime_type: str = "text/plain", selection: str = "clipboard") -> str:
+        seen.append((mime_type, selection))
+        return ""
+
+    with patch("mcp_clipboard.server.read_clipboard", new=spy):
+        await clipboard_paste(selection="primary")
+
+    assert all(s == "primary" for _, s in seen)
+    assert any(m == "text/html" for m, _ in seen)
+    assert any(m == "text/plain" for m, _ in seen)
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_rejects_invalid_selection():
+    result = await clipboard_paste(selection="secondary")
+    assert "Invalid selection" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_read_raw_accepts_primary():
+    with patch("mcp_clipboard.server.read_clipboard", return_value="from primary") as mock:
+        result = await clipboard_read_raw(mime_type="text/plain", selection="primary")
+
+    assert "from primary" in result
+    mock.assert_called_once_with("text/plain", "primary")
+
+
+@pytest.mark.asyncio
+async def test_clipboard_read_raw_rejects_invalid_selection():
+    result = await clipboard_read_raw(mime_type="text/plain", selection="bogus")
+    assert "Invalid selection" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_list_formats_accepts_primary():
+    with patch("mcp_clipboard.server.list_clipboard_formats", return_value=["text/plain"]) as mock:
+        result = await clipboard_list_formats(selection="primary")
+
+    assert "text/plain" in result
+    mock.assert_called_once_with("primary")
+
+
+@pytest.mark.asyncio
+async def test_clipboard_list_formats_rejects_invalid_selection():
+    result = await clipboard_list_formats(selection="bogus")
+    assert "Invalid selection" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_normalizes_selection_case():
+    with patch("mcp_clipboard.server.read_clipboard", new=_mock_read(text="x")):
+        result = await clipboard_paste(selection=" PRIMARY ")
+    # Normalized to lowercase; would have been rejected as "Invalid" otherwise.
+    assert "Invalid selection" not in result
 
 
 # ---------------------------------------------------------------------------

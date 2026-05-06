@@ -17,6 +17,10 @@ Args:
     mime_type: The MIME type to read from the clipboard.
         Common values: "text/plain", "text/html", "image/svg+xml",
         "application/json"
+    selection: Which buffer to read. Defaults to "clipboard". Pass
+        "primary" to read the X11/Wayland PRIMARY selection (middle-click
+        buffer). macOS and Windows have no PRIMARY analog and will return
+        an error if "primary" is passed.
 
 Returns:
     The raw clipboard content in the requested format, or an error message.
