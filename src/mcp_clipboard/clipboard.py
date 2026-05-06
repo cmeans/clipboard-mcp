@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import os
 import platform
@@ -619,6 +620,50 @@ async def _macos_write_typed(content: str, mime_type: str) -> None:
     )
 
 
+# Extended UTI map covering text/plain too. The single-format _macos_write_typed
+# path uses pbcopy for text/plain (a more direct route), but the multi-format
+# script needs to set every MIME via NSPasteboard so we can compose them in
+# one clearContents() + N x setData:forType: AppleScript.
+_MACOS_MULTI_WRITE_UTIS: dict[str, str] = {
+    "text/plain": "public.utf8-plain-text",
+    **_MACOS_TYPED_WRITE_UTIS,
+}
+
+
+def _macos_pasteboard_multi_script(payloads: list[tuple[bytes, str]]) -> str:
+    """Build an AppleScript that writes multiple (payload, UTI) pairs to the
+    pasteboard atomically: one ``clearContents`` followed by N ``setData:forType:``
+    calls inside a single osascript invocation.
+
+    Like ``_macos_pasteboard_script``, the result is meant to be piped over
+    ``osascript -`` so the total script length is not bounded by ARG_MAX. The
+    chunked-base64 line-length workaround is preserved per UTI.
+    """
+    parts: list[str] = ['use framework "AppKit"', 'use framework "Foundation"']
+    parts.append("set pb to current application's NSPasteboard's generalPasteboard()")
+    parts.append("pb's clearContents()")
+
+    for i, (payload, uti) in enumerate(payloads):
+        b64 = base64.b64encode(payload).decode("ascii")
+        b64_chunks = [
+            b64[j : j + _APPLESCRIPT_CHUNK] for j in range(0, len(b64), _APPLESCRIPT_CHUNK)
+        ]
+        if not b64_chunks:
+            b64_chunks = [""]
+        b64_var = f"b64_{i}"
+        decoded_var = f"decoded_{i}"
+        parts.append(f'set {b64_var} to "{b64_chunks[0]}"')
+        for chunk in b64_chunks[1:]:
+            parts.append(f'set {b64_var} to {b64_var} & "{chunk}"')
+        parts.append(
+            f"set {decoded_var} to (current application's NSData's alloc()'s "
+            f"initWithBase64EncodedString:{b64_var} options:0)"
+        )
+        parts.append(f'pb\'s setData:{decoded_var} forType:"{uti}"')
+
+    return "\n".join(parts) + "\n"
+
+
 def _windows_html_clipboard_wrap(html: str) -> str:
     """Wrap HTML in the Windows CF_HTML clipboard format.
 
@@ -719,6 +764,122 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
     raise ClipboardError(
         f"Windows clipboard write does not support MIME type {mime_type!r}. "
         "Supported: text/plain, text/html, text/rtf, image/svg+xml"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backend multi-format writers (#109)
+# ---------------------------------------------------------------------------
+
+# Order in which we'd prefer to write a single-MIME backend if more than one
+# format is offered. text/html beats text/plain because Slack/Gmail/Discord
+# render HTML; falling back to text/plain for non-HTML callers.
+_SINGLE_MIME_PREFERENCE = ("text/html", "text/plain")
+
+
+def _pick_single_mime(formats: dict[str, str]) -> tuple[str, str] | None:
+    """Pick one (mime, content) from a multi-format dict for backends that
+    can only carry one MIME per call (Wayland, X11). Returns ``None`` if the
+    dict is empty.
+    """
+    for mime in _SINGLE_MIME_PREFERENCE:
+        if mime in formats:
+            return mime, formats[mime]
+    # Fall back to whatever's first in the dict (Python 3.7+ insertion order).
+    for mime, content in formats.items():
+        return mime, content
+    return None
+
+
+async def _wayland_write_multi(formats: dict[str, str]) -> None:
+    pick = _pick_single_mime(formats)
+    if pick is None:
+        return
+    mime, content = pick
+    await _run_with_stdin(["wl-copy", "--type", mime], content.encode("utf-8"), env=_wayland_env())
+
+
+async def _x11_write_multi(formats: dict[str, str]) -> None:
+    pick = _pick_single_mime(formats)
+    if pick is None:
+        return
+    mime, content = pick
+    await _run_with_stdin(
+        ["xclip", "-selection", "clipboard", "-target", mime],
+        content.encode("utf-8"),
+    )
+
+
+async def _macos_write_multi(formats: dict[str, str]) -> None:
+    payloads: list[tuple[bytes, str]] = []
+    for mime, content in formats.items():
+        uti = _MACOS_MULTI_WRITE_UTIS.get(mime)
+        if uti is None:
+            # Skip unsupported MIMEs silently — multi-format is best-effort
+            # by design; the caller may pass formats not all backends know.
+            continue
+        payloads.append((content.encode("utf-8"), uti))
+    if not payloads:
+        return
+    await _run_with_stdin(
+        ["osascript", "-"],
+        _macos_pasteboard_multi_script(payloads).encode("utf-8"),
+    )
+
+
+async def _windows_write_multi(formats: dict[str, str]) -> None:
+    # Pre-encode each format on the Python side. text/html is wrapped in
+    # Windows CF_HTML format with byte offsets per the existing convention
+    # (see _windows_html_clipboard_wrap). Payloads flow over stdin as a
+    # JSON document so the constructed argv stays bounded regardless of
+    # content size (mirrors the post-#117 Windows-write stdin pattern).
+    encoded: dict[str, str] = {}
+    for mime, content in formats.items():
+        if mime == "text/html":
+            wrapped = _windows_html_clipboard_wrap(content)
+            encoded["html"] = base64.b64encode(wrapped.encode("utf-8")).decode("ascii")
+        elif mime == "text/plain":
+            encoded["text"] = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        elif mime == "text/rtf":
+            encoded["rtf"] = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        # Other MIMEs are dropped silently — multi-format is best-effort.
+
+    if not encoded:
+        return
+
+    parts: list[str] = [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "$json = [Console]::In.ReadToEnd()",
+        "$payloads = ConvertFrom-Json $json",
+        "$data = New-Object System.Windows.Forms.DataObject",
+    ]
+    if "html" in encoded:
+        parts.append(
+            "if ($payloads.html) { "
+            "$b = [Convert]::FromBase64String($payloads.html); "
+            "$s = [System.Text.Encoding]::UTF8.GetString($b); "
+            "$data.SetData([System.Windows.Forms.DataFormats]::Html, $s) }"
+        )
+    if "text" in encoded:
+        parts.append(
+            "if ($payloads.text) { "
+            "$b = [Convert]::FromBase64String($payloads.text); "
+            "$s = [System.Text.Encoding]::UTF8.GetString($b); "
+            "$data.SetData([System.Windows.Forms.DataFormats]::Text, $s) }"
+        )
+    if "rtf" in encoded:
+        parts.append(
+            "if ($payloads.rtf) { "
+            "$b = [Convert]::FromBase64String($payloads.rtf); "
+            "$s = [System.Text.Encoding]::UTF8.GetString($b); "
+            "$data.SetData([System.Windows.Forms.DataFormats]::Rtf, $s) }"
+        )
+    parts.append("[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)")
+    script = "; ".join(parts)
+
+    await _run_with_stdin(
+        ["powershell", "-NoProfile", "-Command", script],
+        json.dumps(encoded).encode("utf-8"),
     )
 
 
@@ -874,6 +1035,13 @@ _IMAGE_WRITERS = {
     "windows": _windows_write_image,
 }
 
+_MULTI_WRITERS = {
+    "wayland": _wayland_write_multi,
+    "x11": _x11_write_multi,
+    "macos": _macos_write_multi,
+    "windows": _windows_write_multi,
+}
+
 
 async def read_clipboard(mime_type: str = "text/plain") -> str:
     """Read the clipboard content in the specified MIME type.
@@ -1010,3 +1178,25 @@ async def write_clipboard_typed(content: str, mime_type: str) -> None:
     """
     backend = _get_backend()
     await _TYPED_WRITERS[backend](content, mime_type)
+
+
+async def write_clipboard_multi_format(formats: dict[str, str]) -> None:
+    """Write multiple MIME-keyed text payloads to the clipboard.
+
+    On macOS and Windows, all supported entries land on the clipboard
+    atomically — a paste target picks the format it prefers (Slack/Gmail
+    pick ``text/html``; vim/terminal pick ``text/plain``).
+
+    On Wayland and X11, the underlying ``wl-copy``/``xclip`` tools only
+    carry a single MIME per invocation, so this function picks the
+    highest-preference format from the dict (``text/html`` > ``text/plain``
+    > whatever's first) and writes only that one. Other formats are
+    dropped — callers needing a plain-text fallback on Linux must call
+    ``write_clipboard`` separately.
+
+    Unknown MIMEs on macOS/Windows are dropped silently. Multi-format
+    write is best-effort by design; failures to set one MIME do not
+    prevent setting others.
+    """
+    backend = _get_backend()
+    await _MULTI_WRITERS[backend](formats)

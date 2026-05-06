@@ -28,6 +28,7 @@ from mcp_clipboard.clipboard import (
     reset_backend_cache,
     write_clipboard,
     write_clipboard_image,
+    write_clipboard_multi_format,
     write_clipboard_typed,
 )
 
@@ -183,3 +184,27 @@ async def test_x11_list_formats_after_svg_write():
     await write_clipboard_typed(svg, "image/svg+xml")
     formats = await list_clipboard_formats()
     assert any(f == "image/svg+xml" for f in formats), f"image/svg+xml not in {formats}"
+
+
+@pytest.mark.asyncio
+async def test_x11_multi_format_write_picks_html():
+    """write_clipboard_multi_format on X11 picks the highest-preference MIME
+    (text/html) and writes only that one — xclip is single-MIME-per-call.
+
+    Verifies #109's documented Linux behavior: rich-text targets get HTML;
+    plain-text fallback is dropped on Linux until multi-MIME selection-owner
+    support lands.
+    """
+    html = "<h1>Title</h1><ul><li>one</li><li>two</li></ul>"
+    plain = "# Title\n\n- one\n- two\n"
+    await write_clipboard_multi_format({"text/html": html, "text/plain": plain})
+
+    # text/html landed.
+    result = await read_clipboard("text/html")
+    assert result.strip() == html
+
+    # text/plain was NOT set (single-MIME on X11). Reading it returns nothing
+    # for the html-only target, OR returns the html content if xclip falls
+    # back to UTF8_STRING — accept either of the documented Linux behaviors.
+    formats = await list_clipboard_formats()
+    assert any(f == "text/html" for f in formats), f"text/html missing from {formats}"

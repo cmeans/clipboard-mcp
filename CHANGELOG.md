@@ -5,6 +5,26 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- New `clipboard_copy_markdown(text)` tool: render a markdown source string
+  to HTML (via `markdown-it-py` with raw-HTML pass-through disabled, so the
+  rendered output is safe by construction) and write both `text/html` and
+  `text/plain` (the markdown source) to the clipboard. Closes the read/write
+  asymmetry for formatted text — today we read HTML tables and rich content
+  beautifully but only wrote plain. macOS and Windows write both formats
+  atomically via NSPasteboard / `DataObject` so paste targets pick the
+  format they prefer (Slack/Gmail/Notion/Discord get the rendered HTML;
+  vim/terminal/text editors get the markdown source). Wayland and X11 are
+  single-MIME-per-call and write only `text/html`; for plain-text paste on
+  Linux, call `clipboard_copy` with the markdown source directly. Adds
+  `markdown-it-py>=3.0` as a new runtime dependency (pure Python, ~250 KB,
+  no native deps). New private dispatcher `write_clipboard_multi_format`
+  in `clipboard.py` backs the four per-backend writers
+  (`_wayland_write_multi`, `_x11_write_multi`, `_macos_write_multi`,
+  `_windows_write_multi`); single-MIME backends pick `text/html` over
+  `text/plain` over the first dict entry. Linux validated under Xvfb in
+  CI; macOS and Windows unit-tested only per repo convention. RTF generation
+  intentionally deferred (cross-platform RTF is fiddly enough to deserve
+  its own ticket). (#121) - closes #109.
 - Register with the MCP Server registry at
   `registry.modelcontextprotocol.io`. New `server.json` (root) carries
   the registry manifest; `scripts/sync-server-json.py` is the

@@ -31,6 +31,7 @@ from .clipboard import (
     read_clipboard_image,
     write_clipboard,
     write_clipboard_image,
+    write_clipboard_multi_format,
     write_clipboard_typed,
 )
 from .parser import (
@@ -494,6 +495,61 @@ async def clipboard_copy_image(
         return f"Error writing image to clipboard: {e}"
 
     return f"Copied {len(data):,} bytes to clipboard as {mime_type}."
+
+
+# Cap on markdown source bytes accepted by clipboard_copy_markdown. The same
+# MCP_CLIPBOARD_MAX_WRITE_BYTES envelope as clipboard_copy. Larger documents
+# can still be written as text/plain via clipboard_copy directly.
+def _render_markdown_to_html(markdown_source: str) -> str:
+    """Render a markdown string to HTML with raw HTML disabled.
+
+    `MarkdownIt('default', {'html': False})` escapes raw HTML tags in the
+    source rather than passing them through, so the rendered output is safe
+    by construction (no script/iframe/etc. injection vector). A model
+    wanting to write hand-crafted HTML should use clipboard_copy with
+    mime_type='text/html' explicitly — that's the opt-in surface.
+    """
+    from markdown_it import MarkdownIt
+
+    md = MarkdownIt("default", {"html": False})
+    rendered: str = md.render(markdown_source)
+    return rendered
+
+
+@mcp.tool(
+    name="clipboard_copy_markdown",
+    description=_load_instruction("clipboard_copy_markdown"),
+    annotations={  # type: ignore[arg-type]
+        "title": "Copy Markdown to Clipboard (paste as rich text)",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def clipboard_copy_markdown(text: str) -> str:
+    content_bytes = len(text.encode("utf-8"))
+    if content_bytes > _MAX_WRITE_BYTES:
+        return (
+            f"Markdown source exceeds clipboard write limit "
+            f"({content_bytes:,} bytes, max {_MAX_WRITE_BYTES:,}). "
+            f"Set MCP_CLIPBOARD_MAX_WRITE_BYTES to increase."
+        )
+    try:
+        html = _render_markdown_to_html(text)
+    except Exception as e:
+        return f"Failed to render markdown: {e}"
+
+    try:
+        await write_clipboard_multi_format({"text/html": html, "text/plain": text})
+    except ClipboardError as e:
+        return f"Error writing to clipboard: {e}"
+
+    return (
+        f"Copied {len(text):,} characters of markdown to clipboard "
+        f"(rendered to {len(html):,}-char HTML; rich-text and plain-text "
+        f"both available where the platform supports atomic multi-format write)."
+    )
 
 
 def main() -> None:
