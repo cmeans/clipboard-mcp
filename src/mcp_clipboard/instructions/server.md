@@ -30,5 +30,7 @@ into a rich-text target (Slack, Gmail, Notion, Word, Google Docs, Discord) —
 bulleted lists, headings, links, code, bold/italic. The markdown is rendered
 to HTML and (on macOS/Windows) both formats land on the clipboard atomically
 so each paste target picks the right one. On Wayland/X11 only `text/html`
-is set due to a single-MIME-per-call limit; for plain-text paste on Linux,
-call `clipboard_copy` with the markdown source directly.
+is set due to a single-MIME-per-call limit (Wayland auto-advertises a
+`text/plain` target whose bytes are the rendered HTML, not the markdown
+source); for a plain-text paste of the markdown source on Linux, call
+`clipboard_copy` with the markdown source directly.

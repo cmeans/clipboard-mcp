@@ -30,9 +30,15 @@ Platform behavior:
       source) land on the clipboard atomically. Each paste target picks
       the format it prefers — Slack/Gmail/Notion get the rendered HTML;
       vim/terminal/text editors get the markdown source.
-    - Wayland and X11: the underlying `wl-copy` and `xclip` tools only
-      carry one MIME per invocation, so only `text/html` is set. Apps
-      that consume HTML (Slack, Gmail, Discord, browsers) render it;
-      apps that only read `text/plain` (terminals, vim, basic editors)
-      will see an empty clipboard. For a plain-text paste on Linux,
-      call `clipboard_copy` with the markdown source directly.
+    - Wayland: `wl-copy` is single-MIME-per-invocation, so only
+      `text/html` is set explicitly. However, `wl-copy` auto-advertises
+      `text/plain` (and the X-style aliases `UTF8_STRING`/`STRING`/`TEXT`)
+      for UTF-8 content, and the bytes returned for those targets are
+      the **rendered HTML markup** — NOT the markdown source. A vim user
+      pasting after this tool runs will see `<h1>Title</h1>...` etc.
+      To get the markdown source on the clipboard, call `clipboard_copy`
+      with the markdown source directly.
+    - X11: `xclip -target text/html -i` does NOT auto-advertise
+      additional targets, so apps that only read `text/plain` see an
+      empty clipboard. Same workaround: call `clipboard_copy` with the
+      markdown source for a plain-text paste.

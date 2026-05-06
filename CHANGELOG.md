@@ -14,8 +14,13 @@ All notable changes to this project will be documented here.
   atomically via NSPasteboard / `DataObject` so paste targets pick the
   format they prefer (Slack/Gmail/Notion/Discord get the rendered HTML;
   vim/terminal/text editors get the markdown source). Wayland and X11 are
-  single-MIME-per-call and write only `text/html`; for plain-text paste on
-  Linux, call `clipboard_copy` with the markdown source directly. Adds
+  single-MIME-per-call and write only `text/html`. On Wayland, `wl-copy`
+  auto-advertises `text/plain` for UTF-8 content but the bytes returned
+  for that target are the rendered HTML markup, not the markdown source
+  (a vim user pasting after the tool runs sees `<h1>...` etc); on X11
+  the `text/plain` target is genuinely absent. For a plain-text paste of
+  the markdown source on either platform, call `clipboard_copy` with the
+  markdown source directly. Adds
   `markdown-it-py>=3.0` as a new runtime dependency (pure Python, ~250 KB,
   no native deps). New private dispatcher `write_clipboard_multi_format`
   in `clipboard.py` backs the four per-backend writers
