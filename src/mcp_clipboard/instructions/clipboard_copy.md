@@ -16,11 +16,14 @@ Args:
     content: The text to place on the clipboard. Any string is accepted.
     mime_type: MIME type for the clipboard content (default: "text/plain").
         Use "text/html" to write HTML that applications can paste as rich
-        text. Use "text/rtf" to write RTF content. Binary MIME types
-        (image/*, audio/*, video/*) are rejected.
-        Note: On Wayland and X11, any text/* MIME type is accepted. On
-        macOS and Windows, only text/plain, text/html, and text/rtf are
-        supported.
+        text. Use "text/rtf" to write RTF content. Use "image/svg+xml"
+        to write an SVG; SVG is XML, so it rides this text-write path
+        rather than `clipboard_copy_image`. Binary image MIME types
+        (image/png, image/jpeg, etc.) and audio/* / video/* are
+        rejected — for PNG or JPEG, use `clipboard_copy_image`.
+        Note: On Wayland and X11, any text/* MIME type is accepted, plus
+        image/svg+xml. On macOS and Windows, only text/plain, text/html,
+        text/rtf, and image/svg+xml are supported.
 
 Returns:
     A confirmation message with the number of characters copied and the

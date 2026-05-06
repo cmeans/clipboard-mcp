@@ -553,43 +553,52 @@ async def _x11_write_typed(content: str, mime_type: str) -> None:
     )
 
 
+# Text-shaped MIME types writable on macOS via NSPasteboard setData:forType:.
+# Each maps to the Uniform Type Identifier the pasteboard expects. SVG is
+# textual XML but lands under public.svg-image; that is the UTI Inkscape,
+# Figma, and browsers look for to consume an SVG from the clipboard.
+_MACOS_TYPED_WRITE_UTIS: dict[str, str] = {
+    "text/html": "public.html",
+    "text/rtf": "public.rtf",
+    "image/svg+xml": "public.svg-image",
+}
+
+
 async def _macos_write_typed(content: str, mime_type: str) -> None:
     if mime_type == "text/plain":
         await _run_with_stdin(["pbcopy"], content.encode())
         return
 
-    if mime_type in ("text/html", "text/rtf"):
-        uti = "public.html" if mime_type == "text/html" else "public.rtf"
-        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        # AppleScript has a 32,767-char per-line limit, so a single
-        # `set b64 to "..."` literal breaks for content >~24 KB once
-        # base64-encoded. Split the literal across multiple statements.
-        b64_chunks = [
-            b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)
-        ]
-        if not b64_chunks:
-            b64_chunks = [""]
-        b64_lines = [f'set b64 to "{b64_chunks[0]}"']
-        for chunk in b64_chunks[1:]:
-            b64_lines.append(f'set b64 to b64 & "{chunk}"')
-        script = (
-            'use framework "AppKit"\n'
-            'use framework "Foundation"\n'
-            + "\n".join(b64_lines)
-            + "\n"
-            + "set decoded to (current application's NSData's alloc()'s "
-            "initWithBase64EncodedString:b64 options:0)\n"
-            "set pb to current application's NSPasteboard's generalPasteboard()\n"
-            "pb's clearContents()\n"
-            f'pb\'s setData:decoded forType:"{uti}"\n'
+    uti = _MACOS_TYPED_WRITE_UTIS.get(mime_type)
+    if uti is None:
+        supported = ["text/plain", *sorted(_MACOS_TYPED_WRITE_UTIS)]
+        raise ClipboardError(
+            f"macOS clipboard write does not support MIME type {mime_type!r}. "
+            f"Supported: {', '.join(supported)}"
         )
-        await _run(["osascript", "-e", script], allow_empty_exit=False)
-        return
 
-    raise ClipboardError(
-        f"macOS clipboard write does not support MIME type {mime_type!r}. "
-        "Supported: text/plain, text/html, text/rtf"
+    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    # AppleScript has a 32,767-char per-line limit, so a single
+    # `set b64 to "..."` literal breaks for content >~24 KB once
+    # base64-encoded. Split the literal across multiple statements.
+    b64_chunks = [b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)]
+    if not b64_chunks:
+        b64_chunks = [""]
+    b64_lines = [f'set b64 to "{b64_chunks[0]}"']
+    for chunk in b64_chunks[1:]:
+        b64_lines.append(f'set b64 to b64 & "{chunk}"')
+    script = (
+        'use framework "AppKit"\n'
+        'use framework "Foundation"\n'
+        + "\n".join(b64_lines)
+        + "\n"
+        + "set decoded to (current application's NSData's alloc()'s "
+        "initWithBase64EncodedString:b64 options:0)\n"
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        "pb's clearContents()\n"
+        f'pb\'s setData:decoded forType:"{uti}"\n'
     )
+    await _run(["osascript", "-e", script], allow_empty_exit=False)
 
 
 def _windows_html_clipboard_wrap(html: str) -> str:
@@ -671,9 +680,27 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
         )
         return
 
+    if mime_type == "image/svg+xml":
+        # Modern apps that consume SVG from the clipboard (Edge, Chrome,
+        # Figma desktop, Inkscape) look for the "image/svg+xml" custom
+        # format on the DataObject. Older apps fall through to text paste,
+        # which is acceptable since SVG IS text.
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$content = [Console]::In.ReadToEnd(); "
+            "$data = New-Object System.Windows.Forms.DataObject; "
+            "$data.SetData('image/svg+xml', $content); "
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+        )
+        await _run_with_stdin(
+            ["powershell", "-NoProfile", "-Command", script],
+            content.encode("utf-8"),
+        )
+        return
+
     raise ClipboardError(
         f"Windows clipboard write does not support MIME type {mime_type!r}. "
-        "Supported: text/plain, text/html, text/rtf"
+        "Supported: text/plain, text/html, text/rtf, image/svg+xml"
     )
 
 
