@@ -17,22 +17,28 @@ from mcp_clipboard.clipboard import (
     ClipboardSizeError,
     _detect_backend,
     _find_wayland_display,
+    _macos_write_image,
     _macos_write_typed,
     _wayland_env,
+    _wayland_write_image,
     _wayland_write_typed,
     _windows_html_clipboard_wrap,
+    _windows_write_image,
     _windows_write_typed,
+    _x11_write_image,
     _x11_write_typed,
     list_clipboard_formats,
     read_clipboard,
     read_clipboard_image,
     write_clipboard,
+    write_clipboard_image,
     write_clipboard_typed,
 )
 from mcp_clipboard.server import (
     _load_icons,
     _load_instruction,
     clipboard_copy,
+    clipboard_copy_image,
     clipboard_list_formats,
     clipboard_paste,
     clipboard_read_raw,
@@ -2835,6 +2841,343 @@ async def test_clipboard_copy_typed_error():
 
     assert "Error" in result
     assert "unsupported" in result
+
+
+# ---------------------------------------------------------------------------
+# Image write — backend writers (#108)
+# ---------------------------------------------------------------------------
+
+
+# Smallest possible PNG (1x1, fully transparent) — IHDR + IDAT + IEND.
+_TINY_PNG = bytes.fromhex(
+    "89504e470d0a1a0a"  # PNG magic
+    "0000000d49484452"  # IHDR length + chunk
+    "0000000100000001080600000015b9da38"  # 1x1 RGBA
+    "0000000a49444154789c63000100000005000182dd8a73"  # IDAT
+    "0000000049454e44ae426082"  # IEND
+)
+# Smallest valid JPEG: SOI + APP0 minimal JFIF + SOF0 1x1 + SOS + EOI
+_TINY_JPEG = bytes.fromhex(
+    "ffd8ffe000104a46494600010100000100010000"  # SOI + JFIF APP0
+    "ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d"
+    "1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d3832"
+    "3c2e333432"  # DQT
+    "ffc0000b08000100010101110000"  # SOF0 1x1
+    "ffc4001f0000010501010101010100000000000000000102030405060708090a0b"  # DHT
+    "ffda0008010100003f00d2cf20ffd9"  # SOS + EOI
+)
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_image_passes_mime_and_bytes():
+    """_wayland_write_image invokes wl-copy --type <mime> with bytes on stdin."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_image(_TINY_PNG, "image/png")
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "wl-copy"
+    assert "--type" in cmd
+    assert "image/png" in cmd
+    assert mock.call_args[0][1] == _TINY_PNG
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_image_jpeg():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_image(_TINY_JPEG, "image/jpeg")
+
+    cmd = mock.call_args[0][0]
+    assert "image/jpeg" in cmd
+    assert mock.call_args[0][1] == _TINY_JPEG
+
+
+@pytest.mark.asyncio
+async def test_x11_write_image_passes_target_and_bytes():
+    """_x11_write_image invokes xclip -selection clipboard -target <mime> -i."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_image(_TINY_PNG, "image/png")
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "xclip"
+    assert "-selection" in cmd and "clipboard" in cmd
+    assert "-target" in cmd and "image/png" in cmd
+    assert mock.call_args[0][1] == _TINY_PNG
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_uses_correct_uti():
+    """_macos_write_image generates an osascript with the matching UTI."""
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_image(_TINY_PNG, "image/png")
+
+    script = mock.call_args[0][0][-1]
+    assert "public.png" in script
+    assert "NSPasteboard" in script
+    assert "setData" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_jpeg_uti():
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_image(_TINY_JPEG, "image/jpeg")
+
+    script = mock.call_args[0][0][-1]
+    assert "public.jpeg" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_unsupported_mime():
+    with pytest.raises(ClipboardError, match="macOS"):
+        await _macos_write_image(b"\x00", "image/gif")
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_chunks_large_base64():
+    """A large image must split base64 across multiple AppleScript lines.
+
+    Mirrors _macos_write_typed's per-line-limit handling.
+    """
+    big_png = _TINY_PNG + (b"\x00" * 100_000)
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_image(big_png, "image/png")
+
+    script = mock.call_args[0][0][-1]
+    for line in script.split("\n"):
+        assert len(line) < 32_767, f"AppleScript line exceeds limit: {len(line)} chars"
+    assert "set b64 to b64 &" in script  # chunking happened
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_empty_payload_chunk_fallback():
+    """Empty image bytes must still produce syntactically valid AppleScript.
+
+    `_validate_image_magic` upstream rejects empty bytes, but the backend
+    function itself defensively handles the empty-chunks case (mirroring
+    `_macos_write_typed`) so the AppleScript stays valid even if called
+    directly with `b""`.
+    """
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_image(b"", "image/png")
+
+    script = mock.call_args[0][0][-1]
+    assert 'set b64 to ""' in script
+    assert "public.png" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_invokes_setimage():
+    """_windows_write_image invokes PowerShell SetImage with a base64 payload."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(_TINY_PNG, "image/png")
+
+    script = mock.call_args[0][0][-1]
+    assert "System.Windows.Forms.Clipboard" in script
+    assert "SetImage" in script
+    assert "FromBase64String" in script
+    # The base64 payload flows over stdin, NOT in the script body.
+    assert "[Console]::In.ReadToEnd()" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_pipes_b64_via_stdin():
+    """The base64 payload must be passed as stdin bytes, not interpolated."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(_TINY_PNG, "image/png")
+
+    stdin_bytes = mock.call_args[0][1]
+    # stdin bytes must be base64-decodable and decode back to the original.
+    import base64 as _b64
+
+    assert _b64.b64decode(stdin_bytes.decode("ascii")) == _TINY_PNG
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_command_line_bounded_for_large_payloads():
+    """Regression for the QA Round 2 F1 finding: Windows CreateProcess caps
+    lpCommandLine at 32,767 chars. The previous implementation interpolated
+    the base64 inline, which blew the cap for any image >~24 KB raw. The
+    fixed implementation pipes via stdin, so the constructed argv stays a
+    fixed ~400 chars regardless of payload size.
+    """
+    big_png = _TINY_PNG + (b"\x00" * (1024 * 1024))  # 1 MB+
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(big_png, "image/png")
+
+    cmd = mock.call_args[0][0]
+    cmdline_len = sum(len(arg) for arg in cmd) + max(0, len(cmd) - 1)  # +spaces
+    assert cmdline_len < 32_767, (
+        f"PowerShell command line is {cmdline_len} chars; CreateProcess caps "
+        f"lpCommandLine at 32,767. Inputs of any size must use stdin."
+    )
+    # Bytes must flow over stdin proportional to the input.
+    stdin_bytes = mock.call_args[0][1]
+    assert len(stdin_bytes) > 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_unsupported_mime():
+    with pytest.raises(ClipboardError, match="Windows"):
+        await _windows_write_image(b"\x00", "image/webp")
+
+
+# ---------------------------------------------------------------------------
+# Image write — public API (write_clipboard_image)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_dispatches():
+    """write_clipboard_image dispatches to the right backend."""
+    mock_writer = AsyncMock()
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._IMAGE_WRITERS", {"x11": mock_writer}),
+    ):
+        await write_clipboard_image(_TINY_PNG, "image/png")
+
+    mock_writer.assert_called_once_with(_TINY_PNG, "image/png")
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_rejects_unsupported_mime():
+    with pytest.raises(ClipboardError, match="Unsupported"):
+        await write_clipboard_image(_TINY_PNG, "image/gif")
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_rejects_oversized():
+    """Image larger than the cap raises ClipboardSizeError before the backend runs."""
+    huge = _TINY_PNG + (b"\x00" * (15 * 1024 * 1024))
+    mock_writer = AsyncMock()
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._IMAGE_WRITERS", {"x11": mock_writer}),
+    ):
+        with pytest.raises(ClipboardSizeError):
+            await write_clipboard_image(huge, "image/png")
+    mock_writer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_rejects_png_with_jpeg_mime():
+    """Magic byte mismatch must be caught before any subprocess runs."""
+    mock_writer = AsyncMock()
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._IMAGE_WRITERS", {"x11": mock_writer}),
+    ):
+        with pytest.raises(ClipboardError, match="JPEG header"):
+            await write_clipboard_image(_TINY_PNG, "image/jpeg")
+    mock_writer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_rejects_jpeg_with_png_mime():
+    mock_writer = AsyncMock()
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._IMAGE_WRITERS", {"x11": mock_writer}),
+    ):
+        with pytest.raises(ClipboardError, match="PNG header"):
+            await write_clipboard_image(_TINY_JPEG, "image/png")
+    mock_writer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_image_rejects_garbage():
+    """Random bytes claiming to be PNG must be rejected on the magic check."""
+    with pytest.raises(ClipboardError, match="PNG header"):
+        await write_clipboard_image(b"not an image at all", "image/png")
+
+
+# ---------------------------------------------------------------------------
+# Image write — clipboard_copy_image tool
+# ---------------------------------------------------------------------------
+
+
+def _b64(data: bytes) -> str:
+    import base64
+
+    return base64.b64encode(data).decode("ascii")
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_success_png():
+    with patch("mcp_clipboard.server.write_clipboard_image", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy_image(_b64(_TINY_PNG), "image/png")
+
+    mock.assert_called_once_with(_TINY_PNG, "image/png")
+    assert "image/png" in result
+    assert "Copied" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_success_jpeg():
+    with patch("mcp_clipboard.server.write_clipboard_image", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy_image(_b64(_TINY_JPEG), "image/jpeg")
+
+    mock.assert_called_once_with(_TINY_JPEG, "image/jpeg")
+    assert "image/jpeg" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_default_mime_is_png():
+    with patch("mcp_clipboard.server.write_clipboard_image", new_callable=AsyncMock) as mock:
+        await clipboard_copy_image(_b64(_TINY_PNG))
+
+    assert mock.call_args[0][1] == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_normalizes_mime_case():
+    with patch("mcp_clipboard.server.write_clipboard_image", new_callable=AsyncMock) as mock:
+        await clipboard_copy_image(_b64(_TINY_PNG), "  IMAGE/PNG  ")
+
+    assert mock.call_args[0][1] == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_rejects_unsupported_mime():
+    result = await clipboard_copy_image(_b64(_TINY_PNG), "image/gif")
+    assert "Unsupported" in result
+    assert "image/gif" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_rejects_invalid_base64():
+    result = await clipboard_copy_image("not!base64!", "image/png")
+    assert "valid base64" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_surfaces_clipboard_error():
+    with patch(
+        "mcp_clipboard.server.write_clipboard_image",
+        side_effect=ClipboardError("backend exploded"),
+    ):
+        result = await clipboard_copy_image(_b64(_TINY_PNG), "image/png")
+    assert "Error writing image" in result
+    assert "backend exploded" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_surfaces_size_error():
+    with patch(
+        "mcp_clipboard.server.write_clipboard_image",
+        side_effect=ClipboardSizeError("too big"),
+    ):
+        result = await clipboard_copy_image(_b64(_TINY_PNG), "image/png")
+    assert "Error writing image" in result
+    assert "too big" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_surfaces_magic_mismatch():
+    """A host model passing PNG bytes with mime_type='image/jpeg' should
+    get a clean error from the tool, not a stack trace."""
+    result = await clipboard_copy_image(_b64(_TINY_PNG), "image/jpeg")
+    assert "Error writing image" in result
+    assert "JPEG header" in result
 
 
 # ---------------------------------------------------------------------------

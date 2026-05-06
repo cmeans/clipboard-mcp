@@ -46,9 +46,10 @@ git tag test-v0.1.x && git push origin test-v0.1.x  # triggers test-publish.yml 
 
 Three-layer design with clean separation:
 
-- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 4 tools:
+- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 5 tools:
   - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Images are returned as base64-encoded image content. Audio/video are detected and reported.
   - `clipboard_copy(content)` — Writes text to the system clipboard.
+  - `clipboard_copy_image(image_data, mime_type)` — Writes a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through, no re-encoding. Magic bytes are validated against the declared MIME.
   - `clipboard_read_raw(mime_type)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types.
   - `clipboard_list_formats()` — Lists available MIME types on clipboard.
 

@@ -19,3 +19,8 @@ are returned directly as image content for visual analysis. Only use
 
 Use `clipboard_copy` to write text to the clipboard when the user wants to copy
 formatted output, cleaned-up data, or any text for use outside the conversation.
+
+Use `clipboard_copy_image` to write a PNG or JPEG image to the clipboard. Pass
+base64-encoded bytes (the same encoding `clipboard_paste` returns for image
+content). Use this when the user has produced or fetched an image and wants to
+paste it elsewhere; for text content, use `clipboard_copy` instead.

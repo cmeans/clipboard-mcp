@@ -678,6 +678,91 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Backend image writers (binary)
+# ---------------------------------------------------------------------------
+
+# MIME types accepted by clipboard_copy_image. Limited to PNG and JPEG in
+# v1: these are what users actually copy (screenshots, photos), and shipping
+# pass-through avoids a re-encoding dependency. Other formats (GIF, WebP,
+# TIFF, BMP) can be added later without taking on Pillow.
+_WRITABLE_IMAGE_MIME_TO_UTI: dict[str, str] = {
+    "image/png": "public.png",
+    "image/jpeg": "public.jpeg",
+}
+
+WRITABLE_IMAGE_MIMES: frozenset[str] = frozenset(_WRITABLE_IMAGE_MIME_TO_UTI)
+
+
+async def _wayland_write_image(data: bytes, mime_type: str) -> None:
+    await _run_with_stdin(["wl-copy", "--type", mime_type], data, env=_wayland_env())
+
+
+async def _x11_write_image(data: bytes, mime_type: str) -> None:
+    await _run_with_stdin(
+        ["xclip", "-selection", "clipboard", "-target", mime_type, "-i"],
+        data,
+    )
+
+
+async def _macos_write_image(data: bytes, mime_type: str) -> None:
+    uti = _WRITABLE_IMAGE_MIME_TO_UTI.get(mime_type)
+    if uti is None:
+        raise ClipboardError(
+            f"macOS clipboard image write does not support MIME type {mime_type!r}. "
+            f"Supported: {', '.join(sorted(_WRITABLE_IMAGE_MIME_TO_UTI))}"
+        )
+    b64 = base64.b64encode(data).decode("ascii")
+    # AppleScript per-line literal limit is 32,767 chars; chunk to avoid it
+    # for any image larger than ~24 KB after base64 encoding.
+    b64_chunks = [b64[i : i + _APPLESCRIPT_CHUNK] for i in range(0, len(b64), _APPLESCRIPT_CHUNK)]
+    if not b64_chunks:
+        b64_chunks = [""]
+    b64_lines = [f'set b64 to "{b64_chunks[0]}"']
+    for chunk in b64_chunks[1:]:
+        b64_lines.append(f'set b64 to b64 & "{chunk}"')
+    script = (
+        'use framework "AppKit"\n'
+        'use framework "Foundation"\n'
+        + "\n".join(b64_lines)
+        + "\n"
+        + "set decoded to (current application's NSData's alloc()'s "
+        "initWithBase64EncodedString:b64 options:0)\n"
+        "set pb to current application's NSPasteboard's generalPasteboard()\n"
+        "pb's clearContents()\n"
+        f'pb\'s setData:decoded forType:"{uti}"\n'
+    )
+    await _run(["osascript", "-e", script], allow_empty_exit=False)
+
+
+async def _windows_write_image(data: bytes, mime_type: str) -> None:
+    if mime_type not in WRITABLE_IMAGE_MIMES:
+        raise ClipboardError(
+            f"Windows clipboard image write does not support MIME type {mime_type!r}. "
+            f"Supported: {', '.join(sorted(WRITABLE_IMAGE_MIMES))}"
+        )
+    # The base64 payload flows over stdin, NOT inline in the script: Windows
+    # CreateProcess caps lpCommandLine at 32,767 chars, so interpolating the
+    # base64 directly would fail at the OS layer for any image larger than
+    # ~24 KB raw. Mirrors the stdin pattern in _windows_write_typed.
+    # SetImage takes a System.Drawing.Image; FromStream auto-detects PNG vs
+    # JPEG from the magic header, so no per-MIME branching is needed.
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        "$b64 = [Console]::In.ReadToEnd(); "
+        "$bytes = [Convert]::FromBase64String($b64); "
+        "$ms = New-Object System.IO.MemoryStream(,$bytes); "
+        "$img = [System.Drawing.Image]::FromStream($ms); "
+        "[System.Windows.Forms.Clipboard]::SetImage($img)"
+    )
+    b64 = base64.b64encode(data).decode("ascii")
+    await _run_with_stdin(
+        ["powershell", "-NoProfile", "-Command", script],
+        b64.encode("ascii"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -751,6 +836,13 @@ _TYPED_WRITERS = {
     "windows": _windows_write_typed,
 }
 
+_IMAGE_WRITERS = {
+    "wayland": _wayland_write_image,
+    "x11": _x11_write_image,
+    "macos": _macos_write_image,
+    "windows": _windows_write_image,
+}
+
 
 async def read_clipboard(mime_type: str = "text/plain") -> str:
     """Read the clipboard content in the specified MIME type.
@@ -821,6 +913,55 @@ async def write_clipboard(content: str) -> None:
     """Write plain text to the system clipboard."""
     backend = _get_backend()
     await _WRITERS[backend](content)
+
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _validate_image_magic(data: bytes, mime_type: str) -> None:
+    """Verify the bytes start with the expected magic for the declared MIME.
+
+    Catches the host model declaring an image MIME for non-image bytes and
+    catches PNG-vs-JPEG mismatches before they reach the OS pasteboard, where
+    a wrong-format paste can be confusing or crash some receiving apps.
+    """
+    if mime_type == "image/png" and not data.startswith(_PNG_MAGIC):
+        raise ClipboardError(
+            "image_data does not have a PNG header; declared mime_type='image/png'"
+        )
+    if mime_type == "image/jpeg" and not data.startswith(_JPEG_MAGIC):
+        raise ClipboardError(
+            "image_data does not have a JPEG header; declared mime_type='image/jpeg'"
+        )
+
+
+async def write_clipboard_image(data: bytes, mime_type: str) -> None:
+    """Write a binary image to the system clipboard.
+
+    Accepts ``image/png`` and ``image/jpeg`` only in v1. Bytes are passed
+    through to the platform clipboard with no re-encoding. Magic bytes are
+    validated against the declared MIME type, and total size is capped at
+    ``MCP_CLIPBOARD_MAX_IMAGE_BYTES`` (default 10 MB).
+
+    Raises :exc:`ClipboardError` for unsupported MIME types or mismatched
+    headers, and :exc:`ClipboardSizeError` when the payload exceeds the cap.
+    """
+    if mime_type not in WRITABLE_IMAGE_MIMES:
+        raise ClipboardError(
+            f"Unsupported image MIME type: {mime_type!r}. "
+            f"Supported: {', '.join(sorted(WRITABLE_IMAGE_MIMES))}"
+        )
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise ClipboardSizeError(
+            f"Image exceeds clipboard write limit "
+            f"({len(data):,} bytes, max {_MAX_IMAGE_BYTES:,}). "
+            f"Set MCP_CLIPBOARD_MAX_IMAGE_BYTES to increase."
+        )
+    _validate_image_magic(data, mime_type)
+
+    backend = _get_backend()
+    await _IMAGE_WRITERS[backend](data, mime_type)
 
 
 async def write_clipboard_typed(content: str, mime_type: str) -> None:

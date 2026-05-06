@@ -4,6 +4,24 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- New `clipboard_copy_image(image_data, mime_type)` tool: write a PNG or
+  JPEG to the system clipboard from base64-encoded bytes. Closes the
+  read/write asymmetry for binary content (we already returned six image
+  formats on read but had no way to put one back). Pass-through with no
+  re-encoding — no new runtime dependencies. Magic bytes are validated
+  against the declared MIME type, and the existing
+  `MCP_CLIPBOARD_MAX_IMAGE_BYTES` cap (default 10 MB) is enforced. All
+  four backends supported: Wayland (`wl-copy --type`), X11
+  (`xclip -selection clipboard -target -i`), macOS (NSPasteboard
+  `setData:forType:` via osascript), Windows
+  (`Clipboard::SetImage` via PowerShell, base64 piped over stdin so the
+  payload never touches `CreateProcess`'s 32,767-char `lpCommandLine`
+  cap). Linux validated under Xvfb in CI; macOS and Windows unit-tested
+  only per repo convention.
+  Other formats (GIF, WebP, TIFF, BMP) intentionally deferred — can land
+  in a follow-up without taking on Pillow. (#111) - closes #108.
+
 ### Changed
 - Sweep British to American spellings in source comments, test fixtures,
   and historical CHANGELOG prose: `behaviour` → `behavior` in
