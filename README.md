@@ -64,6 +64,19 @@ When you produce a shell command for the user to run, also copy it to the clipbo
 
 Claude Code will then copy every command it suggests without you having to ask.
 
+### Bonus: read your X11/Wayland selection without Ctrl-C
+
+Linux desktops have two clipboards: the **CLIPBOARD** that Ctrl-C / Ctrl-V uses, and the **PRIMARY** selection. PRIMARY is whatever text you currently have highlighted, pasted by middle-click. It updates as soon as you select something; you don't have to copy it.
+
+mcp-clipboard reads PRIMARY too. Pass `selection="primary"` to `clipboard_paste`, `clipboard_read_raw`, or `clipboard_list_formats` and the server reads the selection buffer instead of the Ctrl-C clipboard. Some workflows this enables:
+
+- **Terminal triage.** An error message scrolls past, mouse-select it, ask the model what it means. Your Ctrl-C buffer stays intact for whatever you had on it.
+- **vim / IDE visual selection.** `v`-select a function, ask the model to explain it or refactor it.
+- **Browser / PDF reading.** Drag-select a paragraph, ask "what's this saying?" without leaving the reading flow.
+- **Two-buffer workflows.** Keep a snippet in CLIPBOARD (Ctrl-C) and pull a different one through PRIMARY in the same conversation.
+
+Linux only. macOS and Windows have no equivalent buffer; passing `selection="primary"` on those platforms returns a clear error.
+
 ## Tools
 
 | Tool | Description |
