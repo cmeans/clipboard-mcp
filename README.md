@@ -25,6 +25,7 @@
 [![linux downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-linux-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
 [![macos downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-macos-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
 [![windows downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fmcp-clipboard%2Fos-windows-30d-non-ci.json)](https://pypi.org/project/mcp-clipboard/)
+[![SafeSkill 50/100](https://img.shields.io/badge/SafeSkill-50%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/cmeans-mcp-clipboard)
 
 An MCP server that gives your AI assistant direct access to your system clipboard: read what you copied, or write clean text straight to it. Works with any MCP-compatible client, including Claude Code, Claude Desktop, Cursor, Windsurf, and others.
 
