@@ -24,3 +24,13 @@ Use `clipboard_copy_image` to write a PNG or JPEG image to the clipboard. Pass
 base64-encoded bytes (the same encoding `clipboard_paste` returns for image
 content). Use this when the user has produced or fetched an image and wants to
 paste it elsewhere; for text content, use `clipboard_copy` instead.
+
+Use `clipboard_copy_markdown` when the user wants formatted output to paste
+into a rich-text target (Slack, Gmail, Notion, Word, Google Docs, Discord) —
+bulleted lists, headings, links, code, bold/italic. The markdown is rendered
+to HTML and (on macOS/Windows) both formats land on the clipboard atomically
+so each paste target picks the right one. On Wayland/X11 only `text/html`
+is set due to a single-MIME-per-call limit (Wayland auto-advertises a
+`text/plain` target whose bytes are the rendered HTML, not the markdown
+source); for a plain-text paste of the markdown source on Linux, call
+`clipboard_copy` with the markdown source directly.

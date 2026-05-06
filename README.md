@@ -67,7 +67,8 @@ Claude Code will then copy every command it suggests without you having to ask.
 | Tool | Description |
 | --- | --- |
 | `clipboard_paste` | **Primary tool.** Read any clipboard content: tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types. Images are returned as image content the model can see. |
-| `clipboard_copy` | Write text content to the system clipboard. Accepts an optional `mime_type` parameter (`text/plain` by default; also `text/html`, `text/rtf`, or any `text/*` on Wayland/X11). |
+| `clipboard_copy` | Write text content to the system clipboard. Accepts an optional `mime_type` parameter (`text/plain` by default; also `text/html`, `text/rtf`, `image/svg+xml`, or any `text/*` on Wayland/X11). |
+| `clipboard_copy_markdown` | Render markdown to HTML and place both formats on the clipboard so paste targets pick the right one — Slack/Gmail/Notion/Discord get rich text; vim/terminal get the source. macOS/Windows write both atomically; Wayland/X11 are single-MIME and write only `text/html`. |
 | `clipboard_copy_image` | Write a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through with no re-encoding; magic bytes are validated against the declared MIME. Use `clipboard_copy` for text. |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard. |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic). Any non-binary type passes through; only `image/*`, `audio/*`, `video/*`, and `application/octet-stream` are rejected. Use `clipboard_paste` for images. |
@@ -252,7 +253,7 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 
 * **Audio and video are not supported.** If the clipboard contains audio or video, the server reports the format but cannot return the content.
 * **Image write supports PNG and JPEG only via `clipboard_copy_image`.** Pass-through, no re-encoding. Other binary formats (GIF, WebP, TIFF, BMP) are not yet writable. SVG rides the typed-text path via `clipboard_copy(mime_type="image/svg+xml")` since SVG is XML.
-* **Writing multiple MIME types atomically is not supported** on Wayland/X11. For example, writing both `text/html` and `text/plain` in a single clipboard operation requires owning the clipboard selection across calls.
+* **Writing multiple MIME types atomically is not supported** on Wayland/X11. `wl-copy` and `xclip` carry a single MIME per invocation, so `clipboard_copy_markdown` writes only `text/html` on those platforms. On Wayland, `wl-copy` auto-advertises `text/plain` for UTF-8 content but the bytes returned are the rendered HTML markup (not the markdown source) — vim users pasting after the tool runs will see `<h1>...` etc. On X11, plain-text targets see an empty clipboard. For a plain-text paste of the markdown source, call `clipboard_copy(markdown_source)` directly. macOS and Windows do support atomic multi-format writes via NSPasteboard / `DataObject`.
 * **Text content is truncated at 50KB** to avoid overwhelming the model's context window.
 * **X11, macOS, and Windows are untested** on real hardware. Implementations are complete and should work, but edge cases are possible. Bug reports and PRs are welcome.
 
@@ -290,6 +291,7 @@ mcp-clipboard/
 │   │   ├── server.md
 │   │   ├── clipboard_copy.md
 │   │   ├── clipboard_copy_image.md
+│   │   ├── clipboard_copy_markdown.md
 │   │   ├── clipboard_paste.md
 │   │   ├── clipboard_read_raw.md
 │   │   └── clipboard_list_formats.md

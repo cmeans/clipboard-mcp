@@ -18,20 +18,26 @@ from mcp_clipboard.clipboard import (
     _detect_backend,
     _find_wayland_display,
     _macos_write_image,
+    _macos_write_multi,
     _macos_write_typed,
+    _pick_single_mime,
     _wayland_env,
     _wayland_write_image,
+    _wayland_write_multi,
     _wayland_write_typed,
     _windows_html_clipboard_wrap,
     _windows_write_image,
+    _windows_write_multi,
     _windows_write_typed,
     _x11_write_image,
+    _x11_write_multi,
     _x11_write_typed,
     list_clipboard_formats,
     read_clipboard,
     read_clipboard_image,
     write_clipboard,
     write_clipboard_image,
+    write_clipboard_multi_format,
     write_clipboard_typed,
 )
 from mcp_clipboard.server import (
@@ -39,6 +45,7 @@ from mcp_clipboard.server import (
     _load_instruction,
     clipboard_copy,
     clipboard_copy_image,
+    clipboard_copy_markdown,
     clipboard_list_formats,
     clipboard_paste,
     clipboard_read_raw,
@@ -3323,6 +3330,309 @@ async def test_clipboard_copy_image_surfaces_magic_mismatch():
     result = await clipboard_copy_image(_b64(_TINY_PNG), "image/jpeg")
     assert "Error writing image" in result
     assert "JPEG header" in result
+
+
+# ---------------------------------------------------------------------------
+# Markdown -> rich-text write — clipboard_copy_markdown (#109)
+# ---------------------------------------------------------------------------
+
+
+_SAMPLE_MARKDOWN = "# Title\n\n- one\n- two\n\n**bold** and `code`."
+
+
+def test_pick_single_mime_prefers_html():
+    chosen = _pick_single_mime({"text/plain": "p", "text/html": "h"})
+    assert chosen == ("text/html", "h")
+
+
+def test_pick_single_mime_falls_back_to_plain():
+    chosen = _pick_single_mime({"text/plain": "p"})
+    assert chosen == ("text/plain", "p")
+
+
+def test_pick_single_mime_unknown_falls_back_to_first_key():
+    """If neither html nor plain is present, return the first dict entry."""
+    chosen = _pick_single_mime({"text/csv": "c", "application/foo": "f"})
+    assert chosen == ("text/csv", "c")
+
+
+def test_pick_single_mime_empty_returns_none():
+    assert _pick_single_mime({}) is None
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_multi_picks_html():
+    """Wayland is single-MIME-per-call; multi-format dispatch picks text/html."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_multi({"text/html": "<p>hi</p>", "text/plain": "hi"})
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "wl-copy"
+    assert "--type" in cmd and "text/html" in cmd
+    assert "text/plain" not in cmd  # plain dropped
+    assert mock.call_args[0][1] == b"<p>hi</p>"
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_multi_falls_back_to_plain():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_multi({"text/plain": "just text"})
+
+    cmd = mock.call_args[0][0]
+    assert "text/plain" in cmd
+    assert mock.call_args[0][1] == b"just text"
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_multi_empty_is_noop():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_multi({})
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_x11_write_multi_picks_html():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_multi({"text/html": "<p>hi</p>", "text/plain": "hi"})
+
+    cmd = mock.call_args[0][0]
+    assert cmd[0] == "xclip"
+    assert "-target" in cmd and "text/html" in cmd
+    assert mock.call_args[0][1] == b"<p>hi</p>"
+
+
+@pytest.mark.asyncio
+async def test_x11_write_multi_empty_is_noop():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_multi({})
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_macos_write_multi_one_clear_n_setdata():
+    """The macOS multi-format script must call clearContents exactly once and
+    setData:forType: once per format. Atomic write semantics depend on it."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_multi({"text/html": "<p>hi</p>", "text/plain": "hi"})
+
+    cmd = mock.call_args[0][0]
+    assert cmd == ["osascript", "-"]
+    script = mock.call_args[0][1].decode("utf-8")
+    assert script.count("pb's clearContents()") == 1
+    assert script.count("setData:") == 2
+    assert "public.html" in script
+    assert "public.utf8-plain-text" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_multi_drops_unknown_mimes():
+    """Unsupported MIMEs are skipped silently — multi-format is best-effort."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_multi({"text/html": "<p>hi</p>", "application/foo": "x"})
+
+    script = mock.call_args[0][1].decode("utf-8")
+    assert script.count("setData:") == 1
+    assert "public.html" in script
+    assert "application/foo" not in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_multi_empty_after_filter_is_noop():
+    """If no recognized MIMEs survive filtering, no subprocess is invoked."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_multi({"application/octet-stream": "x"})
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_macos_write_multi_chunks_large_content_per_format():
+    """Each format's base64 must respect the 32,767-char per-line AppleScript
+    parser limit, even though the total script is now stdin-piped."""
+    big_html = "<p>" + ("X" * 100_000) + "</p>"
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_multi({"text/html": big_html, "text/plain": "small"})
+
+    script = mock.call_args[0][1].decode("utf-8")
+    for line in script.split("\n"):
+        assert len(line) < 32_767, f"AppleScript line exceeds limit: {len(line)} chars"
+    # Chunking must have happened for the large format.
+    assert "set b64_0 to b64_0 &" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_write_multi_emits_setdata_per_format():
+    """Windows multi-format script must invoke SetData once per recognized MIME."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_multi({"text/html": "<p>hi</p>", "text/plain": "hi"})
+
+    cmd = mock.call_args[0][0]
+    script = " ".join(cmd)
+    assert "DataObject" in script
+    assert "DataFormats]::Html" in script
+    assert "DataFormats]::Text" in script
+    assert "SetDataObject" in script
+
+    # Stdin is JSON with both encoded entries.
+    import json as _json
+
+    payload = _json.loads(mock.call_args[0][1].decode("utf-8"))
+    assert "html" in payload
+    assert "text" in payload
+
+
+@pytest.mark.asyncio
+async def test_windows_write_multi_html_is_cf_html_wrapped():
+    """text/html on Windows must be CF_HTML-wrapped (Version:0.9 header etc)
+    matching the existing _windows_write_typed convention."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_multi({"text/html": "<p>hi</p>"})
+
+    import base64 as _b64
+    import json as _json
+
+    payload = _json.loads(mock.call_args[0][1].decode("utf-8"))
+    decoded = _b64.b64decode(payload["html"]).decode("utf-8")
+    assert decoded.startswith("Version:0.9")
+    assert "StartHTML:" in decoded
+    assert "<!--StartFragment-->" in decoded
+    assert "<p>hi</p>" in decoded
+
+
+@pytest.mark.asyncio
+async def test_windows_write_multi_empty_after_filter_is_noop():
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_multi({"application/foo": "x"})
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_windows_write_multi_supports_rtf():
+    """text/rtf is one of the three formats Windows multi-format encodes —
+    covers the rtf branch in both the encode loop and the script-builder."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_multi({"text/rtf": r"{\rtf1 hi}"})
+
+    cmd = mock.call_args[0][0]
+    script = " ".join(cmd)
+    assert "DataFormats]::Rtf" in script
+
+    import base64 as _b64
+    import json as _json
+
+    payload = _json.loads(mock.call_args[0][1].decode("utf-8"))
+    assert "rtf" in payload
+    assert _b64.b64decode(payload["rtf"]).decode("utf-8") == r"{\rtf1 hi}"
+
+
+@pytest.mark.asyncio
+async def test_macos_write_multi_empty_content_per_format_chunk_fallback():
+    """Even if a recognized MIME has empty content, the script builder must
+    produce syntactically valid AppleScript via the [""] chunks fallback —
+    matches the defensive parity with _macos_pasteboard_script."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_multi({"text/html": "", "text/plain": "hi"})
+
+    script = mock.call_args[0][1].decode("utf-8")
+    # The empty html still produces a valid `set b64_0 to ""` line.
+    assert 'set b64_0 to ""' in script
+    # The non-empty plain still chunks normally.
+    assert "public.utf8-plain-text" in script
+
+
+@pytest.mark.asyncio
+async def test_write_clipboard_multi_format_dispatches():
+    mock_writer = AsyncMock()
+    with (
+        patch("mcp_clipboard.clipboard._get_backend", return_value="x11"),
+        patch.dict("mcp_clipboard.clipboard._MULTI_WRITERS", {"x11": mock_writer}),
+    ):
+        await write_clipboard_multi_format({"text/html": "<p>hi</p>"})
+
+    mock_writer.assert_called_once_with({"text/html": "<p>hi</p>"})
+
+
+# --- clipboard_copy_markdown tool surface ---
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_renders_and_writes_both_formats():
+    """The tool renders markdown -> HTML and writes both formats via
+    write_clipboard_multi_format."""
+    with patch("mcp_clipboard.server.write_clipboard_multi_format", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy_markdown(_SAMPLE_MARKDOWN)
+
+    formats = mock.call_args[0][0]
+    assert set(formats) == {"text/html", "text/plain"}
+    # Plain is the markdown source verbatim.
+    assert formats["text/plain"] == _SAMPLE_MARKDOWN
+    # HTML contains the rendered structure.
+    assert "<h1>Title</h1>" in formats["text/html"]
+    assert "<ul>" in formats["text/html"]
+    assert "<strong>bold</strong>" in formats["text/html"]
+    assert "<code>code</code>" in formats["text/html"]
+    # Confirmation surfaces both byte counts.
+    assert "Copied" in result
+    assert "markdown" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_escapes_raw_html_by_default():
+    """Raw HTML in the markdown source must be escaped, not passed through.
+    This is the safe-by-construction posture: a model wanting hand-crafted
+    HTML must opt in via clipboard_copy(mime_type='text/html')."""
+    with patch("mcp_clipboard.server.write_clipboard_multi_format", new_callable=AsyncMock) as mock:
+        await clipboard_copy_markdown("<script>alert(1)</script>\n\n# Title")
+
+    html = mock.call_args[0][0]["text/html"]
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "<h1>Title</h1>" in html
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_empty_string_handles_cleanly():
+    with patch("mcp_clipboard.server.write_clipboard_multi_format", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy_markdown("")
+
+    formats = mock.call_args[0][0]
+    assert formats["text/plain"] == ""
+    assert formats["text/html"] == ""
+    assert "Copied" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_rejects_oversized():
+    """Oversized markdown source is rejected before render or write."""
+    huge = "x" * (3 * 1024 * 1024)  # 3 MB; default cap is 1 MiB
+    with patch("mcp_clipboard.server.write_clipboard_multi_format", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy_markdown(huge)
+
+    assert "exceeds clipboard write limit" in result
+    mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_surfaces_clipboard_error():
+    with patch(
+        "mcp_clipboard.server.write_clipboard_multi_format",
+        side_effect=ClipboardError("backend exploded"),
+    ):
+        result = await clipboard_copy_markdown(_SAMPLE_MARKDOWN)
+    assert "Error writing to clipboard" in result
+    assert "backend exploded" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_markdown_surfaces_render_error():
+    """If markdown-it raises during render, the tool returns a clean error
+    rather than letting the exception propagate up to the MCP transport."""
+    with patch(
+        "mcp_clipboard.server._render_markdown_to_html",
+        side_effect=RuntimeError("parser exploded"),
+    ):
+        result = await clipboard_copy_markdown(_SAMPLE_MARKDOWN)
+    assert "Failed to render markdown" in result
+    assert "parser exploded" in result
 
 
 # ---------------------------------------------------------------------------

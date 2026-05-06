@@ -46,9 +46,10 @@ git tag test-v0.1.x && git push origin test-v0.1.x  # triggers test-publish.yml 
 
 Three-layer design with clean separation:
 
-- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 5 tools:
+- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 6 tools:
   - `clipboard_paste(output_format)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Images are returned as base64-encoded image content. Audio/video are detected and reported.
   - `clipboard_copy(content)` — Writes text to the system clipboard.
+  - `clipboard_copy_markdown(text)` — Renders markdown to HTML and places both formats on the clipboard so paste targets pick the right one. macOS/Windows write both atomically via multi-format clipboard APIs; Wayland/X11 are single-MIME and write only `text/html`.
   - `clipboard_copy_image(image_data, mime_type)` — Writes a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through, no re-encoding. Magic bytes are validated against the declared MIME.
   - `clipboard_read_raw(mime_type)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types.
   - `clipboard_list_formats()` — Lists available MIME types on clipboard.
@@ -68,7 +69,7 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 ## Key Details
 
 - Python 3.11+ required
-- Only runtime dependency: `mcp[cli]>=1.2.0`
+- Runtime dependencies: `mcp[cli]>=1.2.0`, `markdown-it-py>=3.0` (for `clipboard_copy_markdown` rendering)
 - HTML parsing uses stdlib `html.parser` (no BeautifulSoup)
 - Pytest config is in `pyproject.toml` (no separate pytest.ini)
 - Entry point: `mcp_clipboard.server:main()`
