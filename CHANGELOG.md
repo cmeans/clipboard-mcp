@@ -22,6 +22,16 @@ All notable changes to this project will be documented here.
   `^## \[VERSION\]` rather than mcp-synology's `^## VERSION( |\()`.
   (#127) - closes #126.
 
+### Changed
+- README: surface the X11/Wayland PRIMARY-selection feature as a featured
+  `### Bonus` subsection in `## Why This Exists`, alongside the table-paste
+  pitch and the fixes-copying-from-Claude-Code pitch. Adds a short
+  explanation of CLIPBOARD vs PRIMARY plus four concrete workflow callouts
+  (terminal triage, vim/IDE visual selection, browser/PDF reading,
+  two-buffer workflows) so a Linux user skimming the README can find the
+  feature without reading every parameter description in the tools table.
+  Docs only; no code change. Closes #123.
+
 ## [2.5.1] - 2026-05-05
 
 ### Fixed
