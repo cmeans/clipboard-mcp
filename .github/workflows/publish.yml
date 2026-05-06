@@ -29,8 +29,21 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
-    needs: build
+  validate-server-json:
+    # Closes #114. Release-time backstop in case the registry schema or
+    # publisher version changes between PR-merge and tag-push. ci.yml runs
+    # the same check on every PR. Gating publish-pypi on this prevents the
+    # half-publish failure mode where PyPI accepts a release (irreversible
+    # on a per-version basis) but the registry leg fails on schema drift.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-mcp-publisher
+      - name: Validate server.json against registry schema
+        run: ./mcp-publisher validate server.json
+
+  publish-pypi:
+    needs: [build, validate-server-json]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -44,3 +57,44 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-registry:
+    # Publish (or update) the server entry in the official MCP registry.
+    # Runs after publish-pypi because the registry validates that the
+    # referenced PyPI package+version exists before accepting the entry.
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/install-mcp-publisher
+
+      - name: Authenticate to MCP registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server.json to MCP registry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Idempotent: the registry rejects re-publishing an existing
+          # version (anchored to upstream ErrInvalidVersion in
+          # internal/database/database.go). Re-running a partially-failed
+          # tag should treat duplicate-version as a no-op rather than crash.
+          # If the upstream error text changes, this falls through to
+          # `exit $status` and fails loudly — preferable to silently
+          # swallowing a real publish error.
+          set +e
+          output=$(./mcp-publisher publish 2>&1)
+          status=$?
+          echo "$output"
+          if [ $status -eq 0 ]; then
+            exit 0
+          fi
+          if echo "$output" | grep -qF 'cannot publish duplicate version'; then
+            echo "::warning::Version $TAG already exists in MCP registry — treating as no-op"
+            exit 0
+          fi
+          exit $status

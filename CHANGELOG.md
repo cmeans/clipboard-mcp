@@ -4,6 +4,25 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- Register with the MCP Server registry at
+  `registry.modelcontextprotocol.io`. New `server.json` (root) carries
+  the registry manifest; `scripts/sync-server-json.py` is the
+  single-source-of-truth sync from `pyproject.toml`'s `[project].version`
+  to `server.json`'s two version fields, with a `--check` mode that CI
+  uses to fail PRs that drift. New composite action
+  `.github/actions/install-mcp-publisher` pins `mcp-publisher` to the
+  v1.7.6+ audience binding (the registry rolled out a new OIDC audience
+  on 2026-04-30 that older `mcp-publisher` releases fail authentication
+  against). `ci.yml` gains `version-sync` and `validate-server-json`
+  jobs; `publish.yml` gains a release-time `validate-server-json` gate
+  (now a `needs:` of the renamed `publish-pypi` job) and a new
+  `publish-registry` job that runs after `publish-pypi` (the registry
+  validates the referenced PyPI package+version before accepting the
+  entry). The registry publish is idempotent — duplicate-version errors
+  from rerunning a partially-failed tag are treated as a no-op. (#120) -
+  closes #114.
+
 ## [2.4.0] - 2026-05-05
 
 ### Fixed

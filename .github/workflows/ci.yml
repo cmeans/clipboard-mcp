@@ -93,3 +93,30 @@ jobs:
         env:
           MCP_CLIPBOARD_BACKEND: x11
         run: xvfb-run -a uv run pytest tests/test_integration_x11.py -m integration -v
+
+  version-sync:
+    # Closes #114. server.json carries two version fields (top-level and
+    # packages[0]) that have to match pyproject.toml. The sync script is
+    # the single source of truth; this gate fails PRs that bump
+    # pyproject.toml without re-running it. Stdlib-only, no `uv sync`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify server.json matches pyproject.toml
+        run: python scripts/sync-server-json.py --check
+
+  validate-server-json:
+    # Closes #114. Validate server.json against the MCP registry schema
+    # using the same pinned mcp-publisher version that release-time uses.
+    # Catches schema drift (new required fields, type changes) at PR time
+    # rather than at tag-push time, preventing the half-published failure
+    # mode where PyPI accepts a release but the registry leg fails.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-mcp-publisher
+      - name: Validate server.json against registry schema
+        run: ./mcp-publisher validate server.json
