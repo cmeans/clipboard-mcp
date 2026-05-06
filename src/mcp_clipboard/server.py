@@ -120,6 +120,22 @@ _TEXT_READABLE_MIMES = frozenset({"image/svg+xml"})
 # MIME type validation: type and subtype must start with a letter.
 _MIME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*/[a-zA-Z][\w.+\-]*(;\s*[\w.+\-]+=[\w.+\-]+)*$")
 
+# Selections accepted by the read tools. "primary" routes to X11 PRIMARY /
+# Wayland primary selection; macOS and Windows reject it explicitly. (#110)
+_VALID_SELECTIONS_TOOL: frozenset[str] = frozenset({"clipboard", "primary"})
+
+
+def _validate_tool_selection(selection: str) -> str | None:
+    """Validate a `selection` argument from a tool call. Returns a friendly
+    error message if invalid, or None if OK. The string is what the host
+    model sees, so phrase it for the model."""
+    if selection not in _VALID_SELECTIONS_TOOL:
+        return (
+            f"Invalid selection: {selection!r}. "
+            f"Supported: {', '.join(sorted(_VALID_SELECTIONS_TOOL))}."
+        )
+    return None
+
 
 def _safe_code_fence(text: str) -> str:
     """Return a backtick fence long enough to wrap ``text`` without escape.
@@ -140,7 +156,9 @@ def _safe_code_fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
+async def _read_clipboard_content(
+    selection: str = "clipboard",
+) -> tuple[list[list[str]], str, str]:
     """Read clipboard and attempt to extract tabular data.
 
     Returns (rows, html, text) where rows may be empty if no table found.
@@ -152,7 +170,7 @@ async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
 
     # Strategy 1: Try HTML clipboard (most reliable for spreadsheets)
     try:
-        html = await read_clipboard("text/html")
+        html = await read_clipboard("text/html", selection)
         if html:
             rows = parse_html_table(html)
     except ClipboardError as e:
@@ -161,7 +179,7 @@ async def _read_clipboard_content() -> tuple[list[list[str]], str, str]:
     # Strategy 2: Fall back to TSV in plain text
     if not rows:
         try:
-            text = await read_clipboard("text/plain")
+            text = await read_clipboard("text/plain", selection)
             if text:
                 rows = parse_tsv(text)
         except ClipboardError as e:
@@ -226,6 +244,7 @@ def _format_non_tabular(text: str) -> str:
 async def clipboard_paste(
     output_format: str = "markdown",
     include_schema: bool = False,
+    selection: str = "clipboard",
 ):
     # NOTE: No return type annotation here by design.  The true type is
     # `str | Image`, but annotating it that way causes FastMCP to call
@@ -239,14 +258,19 @@ async def clipboard_paste(
             f"Unknown output_format: {output_format!r}. "
             f"Valid options: {', '.join(sorted(_VALID_FORMATS))}"
         )
+    selection = selection.strip().lower()
+    selection_err = _validate_tool_selection(selection)
+    if selection_err is not None:
+        return selection_err
 
     logger.debug(
-        "clipboard_paste called: output_format=%r include_schema=%r",
+        "clipboard_paste called: output_format=%r include_schema=%r selection=%r",
         output_format,
         include_schema,
+        selection,
     )
 
-    rows, html, text = await _read_clipboard_content()
+    rows, html, text = await _read_clipboard_content(selection)
 
     # If we found tabular data, format it
     if rows:
@@ -280,7 +304,7 @@ async def clipboard_paste(
     # Strategy 3: RTF fallback — try text/rtf when HTML and plain text are empty
     if not content.strip():
         try:
-            rtf = await read_clipboard("text/rtf")
+            rtf = await read_clipboard("text/rtf", selection)
             if rtf.strip():
                 truncated = len(rtf) > _MAX_CONTENT_CHARS
                 display = rtf[:_MAX_CONTENT_CHARS]
@@ -295,7 +319,7 @@ async def clipboard_paste(
     # If no text content at all, check whether the clipboard holds binary data
     if not content.strip():
         try:
-            formats = await list_clipboard_formats()
+            formats = await list_clipboard_formats(selection)
             image_formats = [f for f in formats if f.startswith("image/")]
             if image_formats:
                 # Prefer PNG (match by base type to handle parameter suffixes)
@@ -304,7 +328,7 @@ async def clipboard_paste(
                     image_formats[0],
                 )
                 try:
-                    data = await read_clipboard_image(mime)
+                    data = await read_clipboard_image(mime, selection)
                     if data:
                         fmt = base_mime_type(mime).split("/", 1)[1].lower()
                         if fmt not in _IMAGE_SUBTYPE_ALLOWLIST:
@@ -346,6 +370,7 @@ async def clipboard_paste(
 )
 async def clipboard_read_raw(
     mime_type: str = "text/plain",
+    selection: str = "clipboard",
 ) -> str:
     base_type = base_mime_type(mime_type)
     if not _MIME_RE.match(base_type):
@@ -361,9 +386,13 @@ async def clipboard_read_raw(
             f"This tool only supports text-based formats (e.g. text/plain, text/html, "
             f"image/svg+xml, application/json)."
         )
+    selection = selection.strip().lower()
+    selection_err = _validate_tool_selection(selection)
+    if selection_err is not None:
+        return selection_err
 
     try:
-        content = await read_clipboard(mime_type)
+        content = await read_clipboard(mime_type, selection)
     except ClipboardError as e:
         return f"Error reading clipboard: {e}"
 
@@ -391,9 +420,13 @@ async def clipboard_read_raw(
         "openWorldHint": False,
     },
 )
-async def clipboard_list_formats() -> str:
+async def clipboard_list_formats(selection: str = "clipboard") -> str:
+    selection = selection.strip().lower()
+    selection_err = _validate_tool_selection(selection)
+    if selection_err is not None:
+        return selection_err
     try:
-        formats = await list_clipboard_formats()
+        formats = await list_clipboard_formats(selection)
     except ClipboardError as e:
         return f"Error listing clipboard formats: {e}"
 

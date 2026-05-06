@@ -187,6 +187,49 @@ async def test_x11_list_formats_after_svg_write():
 
 
 @pytest.mark.asyncio
+async def test_x11_primary_selection_round_trip():
+    """Write to X11 PRIMARY directly via xclip, read it back via
+    read_clipboard(selection='primary'). Verifies #110: the PRIMARY buffer
+    is reachable as a separate read source."""
+    payload = "selected text in PRIMARY"
+    proc = await asyncio.create_subprocess_exec(
+        "xclip",
+        "-selection",
+        "primary",
+        stdin=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate(input=payload.encode())
+    assert proc.returncode == 0
+
+    primary = await read_clipboard("text/plain", selection="primary")
+    assert primary.strip() == payload
+
+    # The default CLIPBOARD selection is independent — must not return PRIMARY's
+    # contents just because we wrote to PRIMARY.
+    clipboard = await read_clipboard("text/plain", selection="clipboard")
+    assert clipboard.strip() != payload
+
+
+@pytest.mark.asyncio
+async def test_x11_primary_list_formats():
+    """list_clipboard_formats reports targets advertised on PRIMARY only."""
+    payload = "advertise me on primary"
+    proc = await asyncio.create_subprocess_exec(
+        "xclip",
+        "-selection",
+        "primary",
+        stdin=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate(input=payload.encode())
+    assert proc.returncode == 0
+
+    formats = await list_clipboard_formats(selection="primary")
+    assert any("STRING" in f or "text" in f for f in formats), (
+        f"primary text targets missing from {formats}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_x11_multi_format_write_picks_html():
     """write_clipboard_multi_format on X11 picks the highest-preference MIME
     (text/html) and writes only that one — xclip is single-MIME-per-call.

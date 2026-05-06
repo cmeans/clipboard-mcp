@@ -66,12 +66,12 @@ Claude Code will then copy every command it suggests without you having to ask.
 
 | Tool | Description |
 | --- | --- |
-| `clipboard_paste` | **Primary tool.** Read any clipboard content: tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types. Images are returned as image content the model can see. |
+| `clipboard_paste` | **Primary tool.** Read any clipboard content: tables, text, code, JSON, URLs, images. Tables are formatted as Markdown/JSON/CSV; pass `include_schema=true` to append inferred column types. Images are returned as image content the model can see. Optional `selection="primary"` reads the X11/Wayland PRIMARY selection (middle-click / select-text-to-paste buffer) instead of the default Ctrl-C clipboard. |
 | `clipboard_copy` | Write text content to the system clipboard. Accepts an optional `mime_type` parameter (`text/plain` by default; also `text/html`, `text/rtf`, `image/svg+xml`, or any `text/*` on Wayland/X11). |
 | `clipboard_copy_markdown` | Render markdown to HTML and place both formats on the clipboard so paste targets pick the right one — Slack/Gmail/Notion/Discord get rich text; vim/terminal get the source. macOS/Windows write both atomically; Wayland/X11 are single-MIME and write only `text/html`. |
 | `clipboard_copy_image` | Write a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through with no re-encoding; magic bytes are validated against the declared MIME. Use `clipboard_copy` for text. |
-| `clipboard_list_formats` | List what MIME types are currently on the clipboard. |
-| `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic). Any non-binary type passes through; only `image/*`, `audio/*`, `video/*`, and `application/octet-stream` are rejected. Use `clipboard_paste` for images. |
+| `clipboard_list_formats` | List what MIME types are currently on the clipboard. Accepts `selection="primary"` for the X11/Wayland PRIMARY selection. |
+| `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic). Any non-binary type passes through; only `image/*`, `audio/*`, `video/*`, and `application/octet-stream` are rejected. Use `clipboard_paste` for images. Accepts `selection="primary"` for the X11/Wayland PRIMARY selection. |
 
 ## Setup
 

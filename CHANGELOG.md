@@ -5,6 +5,21 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- X11 PRIMARY / Wayland primary-selection support on the read tools:
+  `clipboard_paste`, `clipboard_read_raw`, and `clipboard_list_formats`
+  now accept an optional `selection` argument (`"clipboard"` default,
+  `"primary"` for the middle-click / select-text-to-paste buffer).
+  Wayland uses `wl-paste --primary`; X11 uses `xclip -selection primary`.
+  macOS and Windows have no PRIMARY analog and return a clear
+  `selection={selection!r}` error if anything other than `"clipboard"`
+  is passed. Power-user workflow: select text in a terminal or browser
+  without Ctrl-C, then `clipboard_paste(selection="primary")` returns
+  it. Public APIs `read_clipboard`, `list_clipboard_formats`, and
+  `read_clipboard_image` gained the same `selection` parameter.
+  Linux validated under Xvfb in CI (PRIMARY round-trip plus list
+  formats); macOS and Windows reject paths unit-tested. Write-side
+  PRIMARY support deferred — issue #110 noted lower priority for it.
+  (#122) - closes #110.
 - New `clipboard_copy_markdown(text)` tool: render a markdown source string
   to HTML (via `markdown-it-py` with raw-HTML pass-through disabled, so the
   rendered output is safe by construction) and write both `text/html` and

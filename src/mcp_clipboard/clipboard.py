@@ -277,27 +277,62 @@ def _detect_backend() -> str:
 # Backend implementations
 # ---------------------------------------------------------------------------
 
+# Selections supported by the X11 + Wayland read paths. "clipboard" is the
+# default Ctrl-C buffer; "primary" is the X11 PRIMARY selection (middle-click
+# / select-text-to-paste) which Wayland mirrors via wl-paste --primary on
+# most compositors. macOS and Windows have no analog and reject "primary".
+_VALID_SELECTIONS: frozenset[str] = frozenset({"clipboard", "primary"})
 
-async def _wayland_read(mime_type: str) -> str:
-    return await _run(["wl-paste", "--type", mime_type], env=_wayland_env())
+
+def _wayland_primary_args(selection: str) -> list[str]:
+    """Return the wl-paste/wl-copy --primary flag (or empty list)."""
+    return ["--primary"] if selection == "primary" else []
 
 
-async def _wayland_list_formats() -> list[str]:
-    raw = await _run(["wl-paste", "--list-types"], env=_wayland_env())
+def _validate_selection(selection: str) -> None:
+    if selection not in _VALID_SELECTIONS:
+        raise ClipboardError(
+            f"Invalid selection: {selection!r}. Supported: {', '.join(sorted(_VALID_SELECTIONS))}"
+        )
+
+
+async def _wayland_read(mime_type: str, selection: str = "clipboard") -> str:
+    _validate_selection(selection)
+    args = ["wl-paste", "--type", mime_type, *_wayland_primary_args(selection)]
+    return await _run(args, env=_wayland_env())
+
+
+async def _wayland_list_formats(selection: str = "clipboard") -> list[str]:
+    _validate_selection(selection)
+    args = ["wl-paste", "--list-types", *_wayland_primary_args(selection)]
+    raw = await _run(args, env=_wayland_env())
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
-async def _x11_read(mime_type: str) -> str:
-    # xclip uses -target for MIME, -selection clipboard for the main clipboard
-    return await _run(["xclip", "-selection", "clipboard", "-target", mime_type, "-o"])
+async def _x11_read(mime_type: str, selection: str = "clipboard") -> str:
+    _validate_selection(selection)
+    return await _run(["xclip", "-selection", selection, "-target", mime_type, "-o"])
 
 
-async def _x11_list_formats() -> list[str]:
-    raw = await _run(["xclip", "-selection", "clipboard", "-target", "TARGETS", "-o"])
+async def _x11_list_formats(selection: str = "clipboard") -> list[str]:
+    _validate_selection(selection)
+    raw = await _run(["xclip", "-selection", selection, "-target", "TARGETS", "-o"])
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
-async def _macos_read(mime_type: str) -> str:
+def _reject_non_clipboard_selection(selection: str, platform_name: str) -> None:
+    """macOS and Windows have no PRIMARY-selection analog. Reject explicitly
+    so the host model gets a clean error rather than silently falling back
+    to the system clipboard (which would mask intent mismatches)."""
+    if selection != "clipboard":
+        raise ClipboardError(
+            f"{platform_name} does not support selection={selection!r}; "
+            f"only the 'clipboard' selection exists on this platform."
+        )
+
+
+async def _macos_read(mime_type: str, selection: str = "clipboard") -> str:
+    _reject_non_clipboard_selection(selection, "macOS")
     if mime_type == "text/html":
         # osascript to get HTML from clipboard
         script = (
@@ -342,7 +377,8 @@ _UTI_TO_MIME: dict[str, str] = {
 }
 
 
-async def _macos_list_formats() -> list[str]:
+async def _macos_list_formats(selection: str = "clipboard") -> list[str]:
+    _reject_non_clipboard_selection(selection, "macOS")
     script = (
         'use framework "AppKit"\n'
         "set pb to current application's NSPasteboard's generalPasteboard()\n"
@@ -365,7 +401,8 @@ async def _macos_list_formats() -> list[str]:
     return result
 
 
-async def _windows_read(mime_type: str) -> str:
+async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
+    _reject_non_clipboard_selection(selection, "Windows")
     if mime_type == "text/html":
         # PowerShell: Get HTML format from clipboard
         script = (
@@ -423,7 +460,8 @@ _WIN_TO_MIME: dict[str, str] = {
 }
 
 
-async def _windows_list_formats() -> list[str]:
+async def _windows_list_formats(selection: str = "clipboard") -> list[str]:
+    _reject_non_clipboard_selection(selection, "Windows")
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "[System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()"
@@ -447,15 +485,19 @@ async def _windows_list_formats() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-async def _wayland_read_image(mime_type: str) -> bytes:
-    return await _run_binary(["wl-paste", "--type", mime_type], env=_wayland_env())
+async def _wayland_read_image(mime_type: str, selection: str = "clipboard") -> bytes:
+    _validate_selection(selection)
+    args = ["wl-paste", "--type", mime_type, *_wayland_primary_args(selection)]
+    return await _run_binary(args, env=_wayland_env())
 
 
-async def _x11_read_image(mime_type: str) -> bytes:
-    return await _run_binary(["xclip", "-selection", "clipboard", "-target", mime_type, "-o"])
+async def _x11_read_image(mime_type: str, selection: str = "clipboard") -> bytes:
+    _validate_selection(selection)
+    return await _run_binary(["xclip", "-selection", selection, "-target", mime_type, "-o"])
 
 
-async def _macos_read_image(mime_type: str) -> bytes:
+async def _macos_read_image(mime_type: str, selection: str = "clipboard") -> bytes:
+    _reject_non_clipboard_selection(selection, "macOS")
     # Map MIME to UTI for NSPasteboard lookup -- reject unknown types
     # to prevent AppleScript injection via crafted MIME strings (#24)
     mime_to_uti = {v: k for k, v in _UTI_TO_MIME.items() if v.startswith("image/")}
@@ -487,7 +529,8 @@ _WINDOWS_IMAGE_FORMATS: dict[str, str] = {
 }
 
 
-async def _windows_read_image(mime_type: str) -> bytes:
+async def _windows_read_image(mime_type: str, selection: str = "clipboard") -> bytes:
+    _reject_non_clipboard_selection(selection, "Windows")
     # Map MIME to .NET ImageFormat -- reject unknown types (#34)
     dotnet_format = _WINDOWS_IMAGE_FORMATS.get(mime_type)
     if dotnet_format is None:
@@ -1043,7 +1086,7 @@ _MULTI_WRITERS = {
 }
 
 
-async def read_clipboard(mime_type: str = "text/plain") -> str:
+async def read_clipboard(mime_type: str = "text/plain", selection: str = "clipboard") -> str:
     """Read the clipboard content in the specified MIME type.
 
     Returns an empty string if the requested format is not available.
@@ -1052,50 +1095,62 @@ async def read_clipboard(mime_type: str = "text/plain") -> str:
     ``text/plain;charset=utf-8``).  If the exact requested type is not
     found, this function falls back to listing available formats and
     retrying with a matching suffixed variant.
+
+    ``selection`` selects which X11/Wayland buffer to read: ``"clipboard"``
+    (default, the Ctrl-C buffer) or ``"primary"`` (X11 PRIMARY / middle-
+    click selection; Wayland's analogous primary selection on most
+    compositors). macOS and Windows have no PRIMARY analog and raise
+    :exc:`ClipboardError` for any non-default selection. (#110)
     """
     backend = _get_backend()
-    result = await _READERS[backend](mime_type)
+    result = await _READERS[backend](mime_type, selection)
 
     # Wayland / X11 pass the MIME type verbatim to wl-paste / xclip which
     # may do strict matching.  Resolve via format listing when needed.
     if not result and backend in ("wayland", "x11"):
         base = base_mime_type(mime_type)
-        formats = await _FORMAT_LISTERS[backend]()
+        formats = await _FORMAT_LISTERS[backend](selection)
         for fmt in formats:
             if fmt != mime_type and base_mime_type(fmt) == base:
-                result = await _READERS[backend](fmt)
+                result = await _READERS[backend](fmt, selection)
                 if result:
                     break
 
     return result
 
 
-async def list_clipboard_formats() -> list[str]:
-    """Return the list of MIME/format types currently available on the clipboard."""
+async def list_clipboard_formats(selection: str = "clipboard") -> list[str]:
+    """Return the list of MIME/format types currently available on the clipboard.
+
+    ``selection`` is ``"clipboard"`` (default) or ``"primary"`` — see
+    :func:`read_clipboard` for the per-platform contract. (#110)
+    """
     backend = _get_backend()
-    return await _FORMAT_LISTERS[backend]()
+    return await _FORMAT_LISTERS[backend](selection)
 
 
-async def read_clipboard_image(mime_type: str = "image/png") -> bytes:
+async def read_clipboard_image(mime_type: str = "image/png", selection: str = "clipboard") -> bytes:
     """Read binary image data from the clipboard.
 
     Returns raw bytes of the image, or empty bytes if not available.
 
     Like :func:`read_clipboard`, falls back to a matching suffixed MIME
-    type when the exact requested type is not available.
+    type when the exact requested type is not available, and accepts a
+    ``selection`` parameter (``"clipboard"`` default; ``"primary"`` on
+    Wayland/X11). (#110)
 
     Raises :exc:`ClipboardSizeError` when the image exceeds
     ``MCP_CLIPBOARD_MAX_IMAGE_BYTES`` (default 10 MB).
     """
     backend = _get_backend()
-    result = await _IMAGE_READERS[backend](mime_type)
+    result = await _IMAGE_READERS[backend](mime_type, selection)
 
     if not result and backend in ("wayland", "x11"):
         base = base_mime_type(mime_type)
-        formats = await _FORMAT_LISTERS[backend]()
+        formats = await _FORMAT_LISTERS[backend](selection)
         for fmt in formats:
             if fmt != mime_type and base_mime_type(fmt) == base:
-                result = await _IMAGE_READERS[backend](fmt)
+                result = await _IMAGE_READERS[backend](fmt, selection)
                 if result:
                     break
 

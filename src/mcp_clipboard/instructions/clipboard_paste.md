@@ -37,6 +37,11 @@ Args:
     include_schema: When True and the clipboard contains a table, append a
         column-type schema table after the data. Inferred types: integer, float,
         currency, percentage, date, boolean, text. Defaults to False.
+    selection: Which buffer to read. Defaults to "clipboard" (the standard
+        Ctrl-C / Cmd-C clipboard). Pass "primary" to read the X11 PRIMARY
+        selection (middle-click / select-text-to-paste buffer) or the
+        analogous Wayland primary selection. macOS and Windows have no
+        PRIMARY analog and will return an error if "primary" is passed.
 
 Returns:
     The clipboard content, formatted appropriately for the content type.
