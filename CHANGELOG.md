@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-05-05
+
 ### Added
 - X11 PRIMARY / Wayland primary-selection support on the read tools:
   `clipboard_paste`, `clipboard_read_raw`, and `clipboard_list_formats`
