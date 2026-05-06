@@ -28,6 +28,8 @@
 
 An MCP server that gives your AI assistant direct access to your system clipboard: read what you copied, or write clean text straight to it. Works with any MCP-compatible client, including Claude Code, Claude Desktop, Cursor, Windsurf, and others.
 
+<!-- mcp-name: io.github.cmeans/mcp-clipboard -->
+
 ## Why This Exists
 
 ### Pasting loses structure

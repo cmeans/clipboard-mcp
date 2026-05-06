@@ -4,6 +4,25 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-05-05
+
+### Fixed
+- Add `mcp-name: io.github.cmeans/mcp-clipboard` HTML comment to
+  `README.md` for MCP-registry ownership validation. The v2.5.0
+  `publish-registry` job (the first-ever firing of the registry-
+  publish workflow added in #120) failed with
+  `registry validation failed for package 0 (mcp-clipboard): PyPI
+  package 'mcp-clipboard' ownership validation failed. The server
+  name 'io.github.cmeans/mcp-clipboard' must appear as
+  'mcp-name: io.github.cmeans/mcp-clipboard' in the package README`.
+  The token has to ship in the README that lands on PyPI (not just in
+  the repo), so this is a release-time fix: the comment lives at the
+  top of `README.md` (matching the mcp-synology convention) and gets
+  baked into the wheel by hatchling on build. v2.5.0 stays on PyPI
+  but is unregistered; v2.5.1 carries the validating README and will
+  register on tag-push. (#125) - closes the v2.5.0 publish-registry
+  failure.
+
 ## [2.5.0] - 2026-05-05
 
 ### Added
