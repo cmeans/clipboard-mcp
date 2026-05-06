@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-05-05
+
 ### Fixed
 - macOS clipboard write paths (`_macos_write_typed` for HTML/RTF/SVG and
   `_macos_write_image` for PNG/JPEG) now pipe their AppleScript over
