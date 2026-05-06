@@ -2742,6 +2742,102 @@ async def test_windows_write_typed_unsupported():
 
 
 # ---------------------------------------------------------------------------
+# SVG write — typed-text path through clipboard_copy (#112)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_SVG = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+    '<rect width="10" height="10" fill="red"/>'
+    "</svg>"
+)
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_accepts_svg_mime():
+    """SVG must NOT be rejected as binary; it dispatches to typed-text write."""
+    with patch("mcp_clipboard.server.write_clipboard_typed", new_callable=AsyncMock) as mock:
+        result = await clipboard_copy(_SAMPLE_SVG, mime_type="image/svg+xml")
+
+    mock.assert_called_once_with(_SAMPLE_SVG, "image/svg+xml")
+    assert "image/svg+xml" in result
+    assert "Cannot write binary" not in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_copy_image_png_still_rejected_as_binary():
+    """clipboard_copy continues to reject true binary image MIME types and now
+    points the host model at the dedicated image-write tool."""
+    result = await clipboard_copy("data", mime_type="image/png")
+    assert "Cannot write binary" in result
+    assert "clipboard_copy_image" in result
+
+
+@pytest.mark.asyncio
+async def test_wayland_write_typed_svg():
+    """_wayland_write_typed passes --type image/svg+xml through unchanged."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _wayland_write_typed(_SAMPLE_SVG, "image/svg+xml")
+
+    cmd = mock.call_args[0][0]
+    assert "--type" in cmd
+    assert "image/svg+xml" in cmd
+    assert mock.call_args[0][1] == _SAMPLE_SVG.encode()
+
+
+@pytest.mark.asyncio
+async def test_x11_write_typed_svg():
+    """_x11_write_typed passes -target image/svg+xml through unchanged."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _x11_write_typed(_SAMPLE_SVG, "image/svg+xml")
+
+    cmd = mock.call_args[0][0]
+    assert "-target" in cmd
+    assert "image/svg+xml" in cmd
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_svg():
+    """_macos_write_typed uses NSPasteboard with public.svg-image UTI."""
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+        await _macos_write_typed(_SAMPLE_SVG, "image/svg+xml")
+
+    script = mock.call_args[0][0][-1]
+    assert "public.svg-image" in script
+    assert "NSPasteboard" in script
+    assert "setData" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_unsupported_lists_svg():
+    """The unsupported-MIME error message advertises SVG as supported."""
+    with pytest.raises(ClipboardError, match="image/svg\\+xml"):
+        await _macos_write_typed("data", "text/csv")
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_svg():
+    """_windows_write_typed sets a DataObject custom format 'image/svg+xml'."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed(_SAMPLE_SVG, "image/svg+xml")
+
+    cmd = mock.call_args[0][0]
+    script = " ".join(cmd)
+    assert "DataObject" in script
+    assert "'image/svg+xml'" in script
+    assert "SetDataObject" in script
+    # Content flows over stdin, not in the script body.
+    assert mock.call_args[0][1] == _SAMPLE_SVG.encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_unsupported_lists_svg():
+    """The unsupported-MIME error message advertises SVG as supported."""
+    with pytest.raises(ClipboardError, match="image/svg\\+xml"):
+        await _windows_write_typed("data", "text/csv")
+
+
+# ---------------------------------------------------------------------------
 # 27. _windows_html_clipboard_wrap unit tests
 # ---------------------------------------------------------------------------
 

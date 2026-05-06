@@ -236,14 +236,14 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 | RTF | Returned in a fenced code block (macOS, Windows, and Wayland/X11 via pass-through) |
 | Plain text | Returned as-is |
 | Images (PNG, etc.) | Returned as an MCP image content block the model can see and analyze |
-| SVG | Readable as text via `clipboard_read_raw` with `image/svg+xml`, or returned as image via `clipboard_paste` |
+| SVG | Readable as text via `clipboard_read_raw` with `image/svg+xml`, or returned as image via `clipboard_paste`. Writable via `clipboard_copy(mime_type="image/svg+xml")` — apps that consume SVG (Inkscape, Figma, browsers) get the image; text editors get the source. |
 | Audio / video | Not supported; returns a message identifying the format |
 
 ## How It Works
 
 1. **Platform detection:** At startup, the server detects your clipboard backend (Wayland, X11, macOS, or Windows) and selects the appropriate system commands.
 2. **Reading (`clipboard_paste`):** Calls the platform's clipboard read command. Tries `text/html` first (Google Sheets and Excel put `<table>` markup on the clipboard), parses with Python's built-in `html.parser`. Falls back to `text/plain` tab-separated values, then `text/rtf`, then checks for images.
-3. **Writing text (`clipboard_copy`):** Pipes text to the platform's clipboard write command (`wl-copy`, `xclip -selection clipboard`, `pbcopy`, or PowerShell `Set-Clipboard`). Supports a `mime_type` parameter for writing typed content (e.g. `text/html`, `text/rtf`).
+3. **Writing text (`clipboard_copy`):** Pipes text to the platform's clipboard write command (`wl-copy`, `xclip -selection clipboard`, `pbcopy`, or PowerShell `Set-Clipboard`). Supports a `mime_type` parameter for writing typed content (e.g. `text/html`, `text/rtf`, `image/svg+xml`).
 4. **Writing images (`clipboard_copy_image`):** Decodes base64 PNG or JPEG bytes and writes them to the platform's clipboard via `wl-copy --type`, `xclip -target`, NSPasteboard `setData:forType:` (macOS), or `Clipboard::SetImage` (Windows). Magic bytes are validated against the declared MIME type before any subprocess runs.
 5. **Image passthrough on read:** If the clipboard contains an image (PNG, etc.), it's returned as a base64-encoded MCP image content block that the model can see and analyze.
 6. **Content classification:** Non-tabular text content is classified as JSON, URL, code, or plain text and returned with appropriate formatting (pretty-printed JSON, fenced code blocks, etc.).
@@ -251,7 +251,7 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 ## Limitations
 
 * **Audio and video are not supported.** If the clipboard contains audio or video, the server reports the format but cannot return the content.
-* **Image write supports PNG and JPEG only.** `clipboard_copy_image` is pass-through, no re-encoding. Other formats (GIF, WebP, TIFF, BMP, SVG) are not yet writable; SVG is text and round-trips today via `clipboard_paste` / `clipboard_read_raw`.
+* **Image write supports PNG and JPEG only via `clipboard_copy_image`.** Pass-through, no re-encoding. Other binary formats (GIF, WebP, TIFF, BMP) are not yet writable. SVG rides the typed-text path via `clipboard_copy(mime_type="image/svg+xml")` since SVG is XML.
 * **Writing multiple MIME types atomically is not supported** on Wayland/X11. For example, writing both `text/html` and `text/plain` in a single clipboard operation requires owning the clipboard selection across calls.
 * **Text content is truncated at 50KB** to avoid overwhelming the model's context window.
 * **X11, macOS, and Windows are untested** on real hardware. Implementations are complete and should work, but edge cases are possible. Bug reports and PRs are welcome.

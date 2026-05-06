@@ -155,3 +155,31 @@ async def test_x11_write_image_advertises_target():
     await write_clipboard_image(_TINY_PNG, "image/png")
     formats = await list_clipboard_formats()
     assert any(f == "image/png" for f in formats), f"image/png not in {formats}"
+
+
+@pytest.mark.asyncio
+async def test_x11_round_trip_svg_typed():
+    """SVG round-trips through xclip's image/svg+xml target unchanged.
+
+    SVG is text (XML) but rides the typed-write path under an image MIME.
+    Verifies #112: clipboard_copy(mime_type='image/svg+xml') reaches the
+    OS pasteboard and reads back byte-identical.
+    """
+    svg = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+        '<rect width="10" height="10" fill="red"/>'
+        "</svg>"
+    )
+    await write_clipboard_typed(svg, "image/svg+xml")
+    result = await read_clipboard("image/svg+xml")
+    assert result.strip() == svg
+
+
+@pytest.mark.asyncio
+async def test_x11_list_formats_after_svg_write():
+    """After writing SVG, xclip -target TARGETS reports image/svg+xml."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    await write_clipboard_typed(svg, "image/svg+xml")
+    formats = await list_clipboard_formats()
+    assert any(f == "image/svg+xml" for f in formats), f"image/svg+xml not in {formats}"

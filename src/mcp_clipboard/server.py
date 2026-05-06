@@ -444,12 +444,13 @@ async def clipboard_copy(
         )
     is_binary = (
         any(mime_type.startswith(p) for p in _BINARY_MIME_PREFIXES)
-        or mime_type in _BINARY_MIME_EXACT
-    )
+        and mime_type not in _TEXT_READABLE_MIMES
+    ) or mime_type in _BINARY_MIME_EXACT
     if is_binary:
         return (
             f"Cannot write binary MIME type {mime_type!r} to clipboard. "
-            "clipboard_copy supports text content only."
+            "clipboard_copy supports text content only. "
+            "For PNG or JPEG images, use clipboard_copy_image."
         )
     try:
         if mime_type == "text/plain":
