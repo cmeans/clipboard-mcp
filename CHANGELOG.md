@@ -4,6 +4,20 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- macOS clipboard write paths (`_macos_write_typed` for HTML/RTF/SVG and
+  `_macos_write_image` for PNG/JPEG) now pipe their AppleScript over
+  stdin via `osascript -` instead of passing it as a single `-e <script>`
+  argv element. The previous form would have hit macOS's default
+  ~1 MiB `ARG_MAX` cap for any payload above ~750 KB after base64
+  framing — typical phone photos (1-5 MB JPEG) tripped this in practice
+  via the new `clipboard_copy_image` path. Chunked-base64 source
+  formatting is preserved (AppleScript's per-line parser limit applies
+  even to scripts read from stdin), and a shared `_macos_pasteboard_script`
+  helper now backs both write paths. Two new regression tests assert the
+  argv length stays under `ARG_MAX` regardless of payload size, mirroring
+  the post-#111 Windows pattern. (#117) - closes #113.
+
 ### Added
 - `clipboard_copy` now accepts `mime_type="image/svg+xml"`. SVG is XML
   and the read path already treated it as text-readable, but the write

@@ -2641,22 +2641,24 @@ async def test_macos_write_typed_plain():
 
 @pytest.mark.asyncio
 async def test_macos_write_typed_html():
-    """_macos_write_typed uses osascript with public.html UTI for text/html."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    """_macos_write_typed pipes osascript via stdin (`osascript -`) for text/html."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed("<b>hello</b>", "text/html")
 
-    script = mock.call_args[0][0][-1]
+    cmd = mock.call_args[0][0]
+    assert cmd == ["osascript", "-"]
+    script = mock.call_args[0][1].decode("utf-8")
     assert "public.html" in script
     assert "NSPasteboard" in script
 
 
 @pytest.mark.asyncio
 async def test_macos_write_typed_rtf():
-    """_macos_write_typed uses osascript with public.rtf UTI for text/rtf."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    """_macos_write_typed uses public.rtf UTI for text/rtf."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed(r"{\rtf1 hello}", "text/rtf")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     assert "public.rtf" in script
 
 
@@ -2670,10 +2672,10 @@ async def test_macos_write_typed_unsupported():
 @pytest.mark.asyncio
 async def test_macos_write_typed_empty_content():
     """Empty HTML content must still produce a valid (empty-b64) AppleScript."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed("", "text/html")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     # range(0, 0, _APPLESCRIPT_CHUNK) is empty, so the chunk-list fallback
     # to [""] must keep the script syntactically valid.
     assert 'set b64 to ""' in script
@@ -2683,18 +2685,41 @@ async def test_macos_write_typed_empty_content():
 @pytest.mark.asyncio
 async def test_macos_write_typed_large_content_chunks_base64():
     """Large HTML content must split base64 across multiple AppleScript
-    statements so no single line exceeds AppleScript's 32,767-char limit."""
+    statements so no single line exceeds AppleScript's 32,767-char per-line
+    parser limit. The limit applies to script source even when piped over
+    stdin, so chunking is preserved post-#113."""
     # 100 KB of HTML -> ~133 KB base64; well over the per-line cap
     large_html = "<p>" + ("X" * 100_000) + "</p>"
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed(large_html, "text/html")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     # Split into AppleScript source lines and check each stays under the limit.
     for line in script.split("\n"):
         assert len(line) < 32_767, f"AppleScript line exceeds limit: {len(line)} chars"
     # Concatenation must be present (proves the chunking happened).
     assert "set b64 to b64 &" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_typed_command_line_bounded_for_large_payloads():
+    """Regression for #113: macOS osascript -e <script> would blow ARG_MAX
+    (~1 MiB) for HTML/RTF/SVG content above ~750 KB. After the fix, the
+    script flows over stdin via `osascript -`, so argv stays a fixed ~13
+    chars regardless of payload size."""
+    big = "<p>" + ("X" * 1_000_000) + "</p>"  # 1 MB+
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_typed(big, "text/html")
+
+    cmd = mock.call_args[0][0]
+    cmdline_len = sum(len(arg) for arg in cmd) + max(0, len(cmd) - 1)
+    assert cmdline_len < 1_048_576, (
+        f"macOS osascript argv is {cmdline_len} chars; default ARG_MAX is "
+        f"~1 MiB. Inputs of any size must use stdin via `osascript -`."
+    )
+    assert cmd == ["osascript", "-"]
+    # The base64-decoded script (over stdin) must scale with the payload.
+    assert len(mock.call_args[0][1]) > 1_000_000
 
 
 @pytest.mark.asyncio
@@ -2799,10 +2824,10 @@ async def test_x11_write_typed_svg():
 @pytest.mark.asyncio
 async def test_macos_write_typed_svg():
     """_macos_write_typed uses NSPasteboard with public.svg-image UTI."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_typed(_SAMPLE_SVG, "image/svg+xml")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     assert "public.svg-image" in script
     assert "NSPasteboard" in script
     assert "setData" in script
@@ -3002,11 +3027,13 @@ async def test_x11_write_image_passes_target_and_bytes():
 
 @pytest.mark.asyncio
 async def test_macos_write_image_uses_correct_uti():
-    """_macos_write_image generates an osascript with the matching UTI."""
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    """_macos_write_image pipes osascript via stdin with the matching UTI."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_image(_TINY_PNG, "image/png")
 
-    script = mock.call_args[0][0][-1]
+    cmd = mock.call_args[0][0]
+    assert cmd == ["osascript", "-"]
+    script = mock.call_args[0][1].decode("utf-8")
     assert "public.png" in script
     assert "NSPasteboard" in script
     assert "setData" in script
@@ -3014,10 +3041,10 @@ async def test_macos_write_image_uses_correct_uti():
 
 @pytest.mark.asyncio
 async def test_macos_write_image_jpeg_uti():
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_image(_TINY_JPEG, "image/jpeg")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     assert "public.jpeg" in script
 
 
@@ -3031,13 +3058,14 @@ async def test_macos_write_image_unsupported_mime():
 async def test_macos_write_image_chunks_large_base64():
     """A large image must split base64 across multiple AppleScript lines.
 
-    Mirrors _macos_write_typed's per-line-limit handling.
+    Mirrors _macos_write_typed's per-line-limit handling. The 32,767-char
+    AppleScript parser limit applies even to scripts piped over stdin.
     """
     big_png = _TINY_PNG + (b"\x00" * 100_000)
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_image(big_png, "image/png")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     for line in script.split("\n"):
         assert len(line) < 32_767, f"AppleScript line exceeds limit: {len(line)} chars"
     assert "set b64 to b64 &" in script  # chunking happened
@@ -3052,12 +3080,33 @@ async def test_macos_write_image_empty_payload_chunk_fallback():
     `_macos_write_typed`) so the AppleScript stays valid even if called
     directly with `b""`.
     """
-    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock) as mock:
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _macos_write_image(b"", "image/png")
 
-    script = mock.call_args[0][0][-1]
+    script = mock.call_args[0][1].decode("utf-8")
     assert 'set b64 to ""' in script
     assert "public.png" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_write_image_command_line_bounded_for_large_payloads():
+    """Regression for #113: macOS osascript -e <script> would blow ARG_MAX
+    (~1 MiB) for any image above ~750 KB after base64 framing — typical
+    phone photos are 1-5 MB JPEG, so this triggered in practice. After the
+    fix, the script flows over stdin via `osascript -`."""
+    big_png = _TINY_PNG + (b"\x00" * (1024 * 1024))  # 1 MB+
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _macos_write_image(big_png, "image/png")
+
+    cmd = mock.call_args[0][0]
+    cmdline_len = sum(len(arg) for arg in cmd) + max(0, len(cmd) - 1)
+    assert cmdline_len < 1_048_576, (
+        f"macOS osascript argv is {cmdline_len} chars; default ARG_MAX is "
+        f"~1 MiB. Large images must use stdin via `osascript -`."
+    )
+    assert cmd == ["osascript", "-"]
+    # The base64-framed script (over stdin) must scale with the payload.
+    assert len(mock.call_args[0][1]) > 1_000_000
 
 
 @pytest.mark.asyncio
