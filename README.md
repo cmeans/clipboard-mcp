@@ -94,7 +94,7 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 
 `mcp-clipboard` is a Python package on PyPI. Any Python tool that can install and launch console-script entry points works for running it as an MCP server. The two most common choices are [pipx](https://pipx.pypa.io/) and [uv](https://docs.astral.sh/uv/); both appear in the install-counts badges at the top of this README and both are in active use. Pick whichever you have or prefer:
 
-- **pipx**: install instructions per platform are in the [official pipx install docs](https://pipx.pypa.io/stable/installation/). On most distros pipx is available via the system package manager (`apt`, `dnf`, `pacman`, `brew`, etc.).
+- **pipx**: install instructions per platform are in the [official pipx install docs](https://pipx.pypa.io/stable/how-to/install-pipx/). On most distros pipx is available via the system package manager (`apt`, `dnf`, `pacman`, `brew`, etc.).
 - **uv**: install instructions per platform are in the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/). Astral documents package-manager paths, signed standalone-binary downloads, and shell installers for each platform.
 
 Verify your chosen runner is on `PATH`:
