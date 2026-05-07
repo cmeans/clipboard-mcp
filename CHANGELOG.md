@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
-## [2.5.2] - 2026-05-07
+## [2.6.0] - 2026-05-07
 
 ### Fixed
 - Windows: non-ASCII characters (em dash, en dash, curly quotes,
