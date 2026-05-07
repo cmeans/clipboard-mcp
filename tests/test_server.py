@@ -4044,3 +4044,67 @@ def test_version_fallback_when_not_installed():
 
     # Restore the real version
     importlib.reload(mcp_clipboard)
+
+
+# ---------------------------------------------------------------------------
+# CLI flags: --version / --help / --check (#130)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_version_prints_and_exits(capsys, monkeypatch):
+    """`mcp-clipboard --version` prints version and returns without starting the server."""
+    from mcp_clipboard.server import main
+
+    monkeypatch.setattr("sys.argv", ["mcp-clipboard", "--version"])
+    with patch("mcp_clipboard.server.mcp.run") as mock_run:
+        main()
+
+    mock_run.assert_not_called()
+    out = capsys.readouterr().out
+    assert "mcp-clipboard" in out
+    # Version string should be present (any non-empty version is fine).
+    assert any(c.isdigit() for c in out), f"No version number in output: {out!r}"
+
+
+def test_cli_help_prints_and_exits(capsys, monkeypatch):
+    """`mcp-clipboard --help` prints help and returns without starting the server."""
+    from mcp_clipboard.server import main
+
+    monkeypatch.setattr("sys.argv", ["mcp-clipboard", "--help"])
+    with patch("mcp_clipboard.server.mcp.run") as mock_run:
+        main()
+
+    mock_run.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Usage" in out
+    assert "--check" in out
+    assert "https://github.com/cmeans/mcp-clipboard" in out
+
+
+def test_cli_check_success_returns_0(capsys, monkeypatch):
+    """--check exits 0 when the platform backend is reachable."""
+    from mcp_clipboard.server import _run_check
+
+    with patch("mcp_clipboard.server._detect_backend", return_value="wayland"):
+        rc = _run_check()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wayland" in out
+    assert "OK" in out
+
+
+def test_cli_check_failure_returns_1(capsys, monkeypatch):
+    """--check exits 1 with a diagnostic when no backend is reachable."""
+    from mcp_clipboard.server import _run_check
+
+    with patch(
+        "mcp_clipboard.server._detect_backend",
+        side_effect=ClipboardError("No clipboard tool found. Install wl-paste or xclip."),
+    ):
+        rc = _run_check()
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "NOT AVAILABLE" in captured.err
+    assert "wl-paste" in captured.err

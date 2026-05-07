@@ -12,6 +12,7 @@ import binascii
 import json
 import logging
 import os
+import platform as _platform
 import re
 import sys
 from pathlib import Path
@@ -21,10 +22,12 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 from mcp.types import Icon
 
+from . import __version__
 from .clipboard import (
     WRITABLE_IMAGE_MIMES,
     ClipboardError,
     ClipboardSizeError,
+    _detect_backend,  # private but used here for --check
     base_mime_type,
     list_clipboard_formats,
     read_clipboard,
@@ -585,8 +588,51 @@ async def clipboard_copy_markdown(text: str) -> str:
     )
 
 
+_HELP_TEXT = """\
+mcp-clipboard: MCP server for reading and writing the system clipboard.
+
+This is a stdio MCP server. Running it directly will start the server and
+wait for JSON-RPC input on stdin; you almost certainly want to invoke it
+through an MCP client (Claude Desktop, Claude Code, etc.) instead.
+
+Usage:
+  mcp-clipboard            Start the stdio MCP server.
+  mcp-clipboard --check    Verify the platform backend is reachable, then exit.
+  mcp-clipboard --version  Print the installed version and exit.
+  mcp-clipboard --help     Print this help and exit.
+  mcp-clipboard --debug    Start the server with debug logging.
+
+Setup:
+  https://github.com/cmeans/mcp-clipboard#setup
+"""
+
+
+def _run_check() -> int:
+    """Diagnose whether the platform backend is reachable. Returns exit code."""
+    print(f"mcp-clipboard {__version__}")
+    print(f"Platform: {_platform.system()} ({_platform.release()})")
+    try:
+        backend = _detect_backend()
+    except ClipboardError as e:
+        print("Backend: NOT AVAILABLE", file=sys.stderr)
+        print(f"  {e}", file=sys.stderr)
+        return 1
+    print(f"Backend: {backend} (detected)")
+    print("OK: mcp-clipboard should work on this system.")
+    return 0
+
+
 def main() -> None:
     """Entry point for the mcp-clipboard command."""
+    if "--version" in sys.argv or "-V" in sys.argv:
+        print(f"mcp-clipboard {__version__}")
+        return
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(_HELP_TEXT)
+        return
+    if "--check" in sys.argv:
+        sys.exit(_run_check())
+
     _configure_logging()
     # Strip --debug before FastMCP sees argv
     sys.argv = [a for a in sys.argv if a != "--debug"]

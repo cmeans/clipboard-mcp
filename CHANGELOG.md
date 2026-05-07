@@ -24,6 +24,19 @@ All notable changes to this project will be documented here.
   reproduced. Closes #129.
 
 ### Added
+- CLI flags `--version`, `--help`, `--check` on the `mcp-clipboard`
+  command. Running the binary directly previously gave no signal that
+  anything had happened (it would silently start a stdio server and
+  block on input), forcing new users to wire it into an MCP client
+  before they could verify their install worked at all. The new flags
+  give a fast feedback loop: `--version` prints the installed version,
+  `--help` summarizes usage and points at the README setup section,
+  and `--check` runs platform detection (calling the same
+  `_detect_backend()` the runtime uses) and reports whether the
+  backend is reachable. `--check` exits 1 with a stderr diagnostic
+  when no backend is available so it can also serve as a CI smoke
+  check. Closes #130.
+
 - New `github-release` job in `publish.yml` auto-creates (or updates) a
   GitHub Release matching the pushed tag, with notes pulled from the
   matching `## [VERSION]` section of `CHANGELOG.md`. Idempotent: if a
@@ -42,6 +55,21 @@ All notable changes to this project will be documented here.
   (#127) - closes #126.
 
 ### Changed
+- README setup section restructured into a five-step quick-start
+  (install uv → install Linux backend tool → verify via
+  `uvx mcp-clipboard --check` → register with the MCP client →
+  confirm end-to-end). Adds explicit Windows PowerShell `uv` install
+  instructions, a Windows-specific note that Claude Desktop caches
+  `PATH` at launch (so a `uv` install done after Claude Desktop
+  started won't be visible until the tray-quit-and-relaunch), and a
+  pointer to the Claude Desktop MCP log location for
+  troubleshooting. The previous structure assumed `uv` was already
+  present and that running the binary would give visible feedback;
+  the new structure mirrors what a new Windows user actually needs
+  in order from "I just heard about this" to "Claude Desktop is
+  using mcp-clipboard". Companion to the new CLI flags above.
+  Closes #130.
+
 - README: surface the X11/Wayland PRIMARY-selection feature as a featured
   `### Bonus` subsection in `## Why This Exists`, alongside the table-paste
   pitch and the fixes-copying-from-Claude-Code pitch. Adds a short

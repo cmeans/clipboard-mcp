@@ -90,11 +90,37 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 
 ## Setup
 
-### Prerequisites
+### Step 1: Install uv
 
-**Python 3.11+** and one of: [uv](https://docs.astral.sh/uv/) (recommended), [pipx](https://pipx.pypa.io/), or pip.
+mcp-clipboard runs through `uvx` (which is `uv tool run`). Skip this step if `uv --version` already prints a version.
 
-You also need a platform-specific clipboard tool:
+- **Windows (PowerShell, no admin needed):**
+
+  ```powershell
+  irm https://astral.sh/uv/install.ps1 | iex
+  ```
+
+  Close and reopen your terminal so the updated `PATH` takes effect, then:
+
+  ```powershell
+  uv --version
+  ```
+
+- **macOS / Linux:**
+
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  ```bash
+  uv --version
+  ```
+
+If `uv --version` doesn't work after install, see the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/) for shell-specific PATH guidance.
+
+### Step 2: Install the platform clipboard tool (Linux only)
+
+macOS and Windows have everything they need built in. Linux needs one CLI utility:
 
 | Platform | Tool | Install |
 | --- | --- | --- |
@@ -106,19 +132,42 @@ You also need a platform-specific clipboard tool:
 
 > **Platform status:** Linux with Wayland is tested and actively used. X11, macOS, and Windows implementations are complete but untested on real hardware. Bug reports and PRs are welcome.
 
-### Claude Code
+### Step 3: Verify mcp-clipboard works on your system
+
+Before wiring it into a client, confirm the package installs and detects your platform correctly:
+
+```bash
+uvx mcp-clipboard --check
+```
+
+Expected output:
+
+```
+mcp-clipboard 2.5.1
+Platform: Windows (10.0.22631)
+Backend: windows (detected)
+OK: mcp-clipboard should work on this system.
+```
+
+If you see `Backend: NOT AVAILABLE`, follow the platform-specific hint in the error message (typically: install the Linux clipboard tool from Step 2) and re-run.
+
+### Step 4: Register the server with your MCP client
+
+#### Claude Code
 
 ```bash
 claude mcp add clipboard --scope user -- uvx mcp-clipboard
 ```
 
-### Claude Desktop
+#### Claude Desktop
 
-Add to your Claude Desktop config:
+Locate your Claude Desktop config file (paste the path into your file manager's address bar to jump straight there):
 
 - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add an entry to `mcpServers`:
 
 ```json
 {
@@ -131,9 +180,23 @@ Add to your Claude Desktop config:
 }
 ```
 
-### Other MCP clients
+Save the file, then **fully quit and relaunch Claude Desktop** for the new server to load.
+
+> **Windows tip:** Claude Desktop caches `PATH` from the moment it launches, so a `uv` install that happened after Claude Desktop was started won't be visible until restart. If the snippet above produces "Server failed to start" or "uvx not found", right-click the Claude Desktop tray icon, choose **Quit**, then reopen Claude Desktop. A taskbar-X close just hides the window; the cached environment is still there.
+
+#### Other MCP clients
 
 Any client that supports MCP stdio servers can use mcp-clipboard. The simplest approach is `uvx mcp-clipboard`. Consult your client's documentation for how to register MCP servers.
+
+### Step 5: Confirm it works end-to-end
+
+In your client, ask:
+
+> What's on my clipboard?
+
+The client should call `clipboard_paste` and return the content. If you copied a spreadsheet selection or a URL beforehand, you'll see it formatted appropriately.
+
+If nothing happens or you get a tool error, re-run `uvx mcp-clipboard --check` to confirm the package install is healthy, then check your client's MCP server logs (Claude Desktop: **Settings → Developer → Open MCP Logs**).
 
 ### Installing from source
 
