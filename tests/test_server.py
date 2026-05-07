@@ -4108,3 +4108,20 @@ def test_cli_check_failure_returns_1(capsys, monkeypatch):
     captured = capsys.readouterr()
     assert "NOT AVAILABLE" in captured.err
     assert "wl-paste" in captured.err
+
+
+def test_cli_check_dispatches_through_main(monkeypatch):
+    """`mcp-clipboard --check` exits via sys.exit(rc) and never reaches mcp.run."""
+    from mcp_clipboard.server import main
+
+    monkeypatch.setattr("sys.argv", ["mcp-clipboard", "--check"])
+    with (
+        patch("mcp_clipboard.server._detect_backend", return_value="wayland"),
+        patch("mcp_clipboard.server.mcp.run") as mock_run,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    # _run_check returned 0; main() called sys.exit(0).
+    assert exc_info.value.code == 0
+    mock_run.assert_not_called()

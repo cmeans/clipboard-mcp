@@ -58,11 +58,19 @@ All notable changes to this project will be documented here.
 - README setup section restructured into a five-step quick-start
   (install uv → install Linux backend tool → verify via
   `uvx mcp-clipboard --check` → register with the MCP client →
-  confirm end-to-end). Adds explicit Windows PowerShell `uv` install
-  instructions, a Windows-specific note that Claude Desktop caches
-  `PATH` at launch (so a `uv` install done after Claude Desktop
-  started won't be visible until the tray-quit-and-relaunch), and a
-  pointer to the Claude Desktop MCP log location for
+  confirm end-to-end). The `uv` install step leads with package-
+  manager paths that pull signed binaries from auditable
+  repositories (`winget` on Windows, `brew` on macOS, distro
+  package managers on Linux) plus `pipx` as a cross-platform
+  fallback; the upstream curl-piped-to-shell installer is reachable
+  via a link to the [official uv install
+  docs](https://docs.astral.sh/uv/getting-started/installation/)
+  but isn't quoted in the README itself, so security-conscious
+  users aren't asked to run a script piped from the internet to
+  their shell. Adds a Windows-specific note that Claude Desktop
+  caches `PATH` at launch (so a `uv` install done after Claude
+  Desktop started won't be visible until the tray-quit-and-relaunch)
+  and a pointer to the Claude Desktop MCP log location for
   troubleshooting. The previous structure assumed `uv` was already
   present and that running the binary would give visible feedback;
   the new structure mirrors what a new Windows user actually needs

@@ -92,31 +92,58 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 
 ### Step 1: Install uv
 
-mcp-clipboard runs through `uvx` (which is `uv tool run`). Skip this step if `uv --version` already prints a version.
+mcp-clipboard runs through `uvx` (which is `uv tool run`). Skip this step if `uv --version` already prints a version. Pick the path that matches your platform; all of the options below pull signed binaries from package repositories you can audit, no curl-piped-to-shell required.
 
-- **Windows (PowerShell, no admin needed):**
+#### Windows (winget)
 
-  ```powershell
-  irm https://astral.sh/uv/install.ps1 | iex
-  ```
+```powershell
+winget install --id=astral-sh.uv -e
+```
 
-  Close and reopen your terminal so the updated `PATH` takes effect, then:
+`winget` is built into Windows 10 1809+ and Windows 11; it pulls the package signed by Astral from the Microsoft store catalog. Close and reopen your terminal so the new `PATH` takes effect, then verify:
 
-  ```powershell
-  uv --version
-  ```
+```powershell
+uv --version
+```
 
-- **macOS / Linux:**
+#### macOS (Homebrew)
 
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
+```bash
+brew install uv
+```
 
-  ```bash
-  uv --version
-  ```
+```bash
+uv --version
+```
 
-If `uv --version` doesn't work after install, see the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/) for shell-specific PATH guidance.
+If you don't have Homebrew yet, install it first from [brew.sh](https://brew.sh/). The Homebrew installer will prompt to install the macOS Command Line Tools (~3 GB) if they're missing; that's a one-time prerequisite for Homebrew itself, not for `uv`.
+
+#### Linux (distro package manager)
+
+| Distro | Command |
+| --- | --- |
+| **Fedora 40+** | `sudo dnf install uv` |
+| **Arch / Manjaro** | `sudo pacman -S uv` |
+| **openSUSE Tumbleweed** | `sudo zypper install uv` |
+| **NixOS / nix-env** | `nix-env -iA nixpkgs.uv` |
+
+```bash
+uv --version
+```
+
+#### Cross-platform fallback (pipx)
+
+If your distro doesn't ship `uv` and you'd rather not add a third-party repo, install via [pipx](https://pipx.pypa.io/), which isolates `uv` in its own Python venv and adds the binary to your `PATH` automatically:
+
+```bash
+pipx install uv
+```
+
+If you don't have pipx: `sudo apt install pipx` on Ubuntu/Debian, `sudo dnf install pipx` on Fedora, `brew install pipx` on macOS, or `python3 -m pip install --user pipx` as a universal fallback (then run `pipx ensurepath`).
+
+#### Other install paths
+
+For manual binary downloads, the upstream shell-script installer, and Docker images, see the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/). Astral publishes signed standalone binaries with SHA256 checksums on every [GitHub Release](https://github.com/astral-sh/uv/releases) for users who prefer to verify and place the binary themselves.
 
 ### Step 2: Install the platform clipboard tool (Linux only)
 
