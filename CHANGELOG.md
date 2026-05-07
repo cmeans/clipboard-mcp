@@ -4,6 +4,25 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Windows: non-ASCII characters (em dash, en dash, curly quotes,
+  non-Latin scripts, etc.) are no longer corrupted on
+  `clipboard_copy` / `clipboard_copy_markdown`. Root cause was that
+  PowerShell's `[Console]::In.ReadToEnd()` decodes stdin via
+  `[Console]::InputEncoding`, which defaults to the OEM/ANSI code page
+  on Windows (commonly CP1252), so the UTF-8 bytes Python piped in
+  were misread as separate CP1252 characters before `Set-Clipboard`
+  ever ran. Each affected PowerShell write script now sets
+  `[Console]::InputEncoding = [System.Text.Encoding]::UTF8` before
+  reading stdin. Affects `_windows_write` (text/plain) and
+  `_windows_write_typed` for text/plain, text/html (CF_HTML byte
+  offsets are now valid for the round-tripped UTF-8 payload),
+  text/rtf, and image/svg+xml. The base64-on-stdin paths
+  (`_windows_write_multi`, `_windows_write_image`) were already safe
+  because base64 alphabets are ASCII-only, so neither needed changing.
+  Verified on a QEMU Windows guest where the bug originally
+  reproduced. Closes #129.
+
 ### Added
 - New `github-release` job in `publish.yml` auto-creates (or updates) a
   GitHub Release matching the pushed tag, with notes pulled from the

@@ -569,13 +569,22 @@ async def _macos_write(content: str) -> None:
     await _run_with_stdin(["pbcopy"], content.encode())
 
 
+# PowerShell preamble that forces stdin reads to use UTF-8. Without this,
+# [Console]::In.ReadToEnd() decodes via [Console]::InputEncoding which
+# defaults to the OEM/ANSI code page on Windows (commonly CP1252). UTF-8
+# multi-byte sequences from Python's content.encode() get misread as
+# separate CP1252 characters before Set-Clipboard ever runs, corrupting
+# em dashes, curly quotes, non-Latin scripts, etc. (#129)
+_WINDOWS_UTF8_PREAMBLE = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; "
+
+
 async def _windows_write(content: str) -> None:
     await _run_with_stdin(
         [
             "powershell",
             "-NoProfile",
             "-Command",
-            "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+            _WINDOWS_UTF8_PREAMBLE + "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
         ],
         content.encode(),
     )
@@ -745,13 +754,17 @@ def _windows_html_clipboard_wrap(html: str) -> str:
 
 
 async def _windows_write_typed(content: str, mime_type: str) -> None:
+    # Every branch below pipes UTF-8 bytes over stdin and reads them with
+    # [Console]::In.ReadToEnd(). The _WINDOWS_UTF8_PREAMBLE on each script
+    # is what makes that read interpret the bytes as UTF-8 rather than the
+    # default OEM/ANSI code page. See #129.
     if mime_type == "text/plain":
         await _run_with_stdin(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+                _WINDOWS_UTF8_PREAMBLE + "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
             ],
             content.encode(),
         )
@@ -760,7 +773,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
     if mime_type == "text/html":
         cf_html = _windows_html_clipboard_wrap(content)
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData([System.Windows.Forms.DataFormats]::Html, $content); "
@@ -774,7 +787,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
 
     if mime_type == "text/rtf":
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData([System.Windows.Forms.DataFormats]::Rtf, $content); "
@@ -792,7 +805,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
         # format on the DataObject. Older apps fall through to text paste,
         # which is acceptable since SVG IS text.
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData('image/svg+xml', $content); "
