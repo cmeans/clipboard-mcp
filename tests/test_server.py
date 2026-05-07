@@ -2881,6 +2881,71 @@ async def test_windows_write_typed_unsupported_lists_svg():
 
 
 @pytest.mark.asyncio
+async def test_windows_read_html_uses_console_write_to_suppress_trailing_crlf():
+    """`_windows_read` for text/html ends with `[Console]::Write($data)` rather
+    than a bare `$data` expression, so PowerShell's default Out-Default
+    formatter doesn't append a trailing CRLF to the returned content. Same
+    pattern is required across every Windows read branch (#138 round 3 follow-up
+    after live-VM testing showed `\\r\\n` glued onto the SVG payload)."""
+    from mcp_clipboard.clipboard import _windows_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="<b>hi</b>"):
+        await _windows_read("text/html")
+
+    # Last script in the powershell -Command argv slot
+    script = await _capture_last_powershell_script("text/html")
+    assert "[Console]::Write(" in script, (
+        "text/html branch must use [Console]::Write to suppress PowerShell's "
+        f"default-formatter trailing CRLF. Script: {script}"
+    )
+    # Bare `$data` at the end (the old buggy pattern) must not appear at the
+    # tail of the script. Match-on-end to avoid catching `$data` inside the
+    # GetData() capture or inside the [Console]::Write argument.
+    assert not script.rstrip().endswith("$data"), (
+        f"text/html script still ends with bare $data: {script}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_read_plain_uses_console_write_with_get_clipboard_raw():
+    """`_windows_read` for text/plain uses `Get-Clipboard -Raw` (single string,
+    preserves CRLF) wrapped in `[Console]::Write` rather than a bare
+    `Get-Clipboard` (returns array of lines, default formatter rejoins)."""
+    script = await _capture_last_powershell_script("text/plain")
+    assert "[Console]::Write(" in script
+    assert "Get-Clipboard -Raw" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_read_rtf_uses_console_write_to_suppress_trailing_crlf():
+    """text/rtf branch ends with `[Console]::Write($data)`, not bare `$data`."""
+    script = await _capture_last_powershell_script("text/rtf")
+    assert "[Console]::Write(" in script
+    assert not script.rstrip().endswith("$data")
+
+
+@pytest.mark.asyncio
+async def test_windows_read_svg_uses_console_write_to_suppress_trailing_crlf():
+    """image/svg+xml branch ends with `[Console]::Write($data)`. Live testing
+    on a QEMU Windows guest reproduced a trailing `\\r\\n` glued onto the SVG
+    payload before this fix landed."""
+    script = await _capture_last_powershell_script("image/svg+xml")
+    assert "[Console]::Write(" in script
+    assert not script.rstrip().endswith("$data")
+
+
+async def _capture_last_powershell_script(mime: str) -> str:
+    """Helper: invoke `_windows_read(mime)` with `_run` mocked, return the
+    last argv element passed to powershell -Command."""
+    from mcp_clipboard.clipboard import _windows_read
+
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="x") as m:
+        await _windows_read(mime)
+    cmd = m.call_args[0][0]
+    return cmd[-1]
+
+
+@pytest.mark.asyncio
 async def test_windows_read_svg_uses_data_object_get_data():
     """_windows_read for image/svg+xml calls Clipboard::GetData('image/svg+xml')
     via PowerShell, mirroring the custom-format string used on the write side."""

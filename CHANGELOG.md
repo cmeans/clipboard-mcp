@@ -25,6 +25,21 @@ All notable changes to this project will be documented here.
   source" clipboard still returns the viewable PNG as before. The
   Linux backends (Wayland/X11) were already correct via passthrough
   on `wl-paste --type` / `xclip -target`.
+- Trailing CRLF on Windows clipboard reads. Live testing on a QEMU
+  Windows guest after the SVG fix landed showed a `\r\n` sequence
+  glued onto the read-back payload (visible as a blank line between
+  the closing `</svg>` and the closing fence in `clipboard_paste`'s
+  output). Root cause: every `_windows_read` branch was ending its
+  PowerShell script with a bare expression (`$data` for HTML/RTF/SVG,
+  `Get-Clipboard` for text/plain), which flows through PowerShell's
+  default Out-Default formatter and gets a trailing CRLF appended.
+  All four branches now end with `[Console]::Write($data)` (or
+  `[Console]::Write((Get-Clipboard -Raw))` for the text/plain path,
+  using `-Raw` so multi-line clipboard content is preserved as a
+  single string with original line endings rather than reassembled
+  by the formatter). `[Console]::Write` writes the value byte-for-byte
+  with no implicit newline; passing `$null` is a no-op so the prior
+  `if ($data -eq $null) { return }` guards are also gone.
 
 ## [2.6.0] - 2026-05-07
 
