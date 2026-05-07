@@ -2969,6 +2969,59 @@ async def test_clipboard_paste_prefers_raster_over_svg_when_both_present():
 
 
 @pytest.mark.asyncio
+async def test_clipboard_paste_truncates_oversized_svg():
+    """SVG longer than _MAX_CONTENT_CHARS is truncated with a marker line,
+    matching the RTF fallback's truncation behavior."""
+    from mcp_clipboard.server import _MAX_CONTENT_CHARS
+
+    big_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg">'
+        + ("<rect/>" * (_MAX_CONTENT_CHARS // 7))
+        + "</svg>"
+    )
+    assert len(big_svg) > _MAX_CONTENT_CHARS
+
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch(
+            "mcp_clipboard.server.read_clipboard",
+            new=AsyncMock(side_effect=lambda mime, sel: big_svg if mime == "image/svg+xml" else ""),
+        ),
+    ):
+        result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "[truncated at" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_logs_and_falls_through_when_svg_read_errors():
+    """If the SVG text read raises ClipboardError, the auto-dispatch logs and
+    falls through to the binary-format check rather than crashing."""
+
+    def _raise_on_svg(mime: str, sel: str) -> str:
+        if mime == "image/svg+xml":
+            raise ClipboardError("boom")
+        return ""
+
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch("mcp_clipboard.server.read_clipboard", new=AsyncMock(side_effect=_raise_on_svg)),
+    ):
+        result = await clipboard_paste()
+
+    # SVG read raised; no raster, no binary, so we end up at "Clipboard is empty."
+    assert isinstance(result, str)
+    assert "Clipboard is empty" in result
+
+
+@pytest.mark.asyncio
 async def test_clipboard_paste_does_not_route_svg_through_image_read_path():
     """Regression: the auto-dispatch must NOT call read_clipboard_image with
     'image/svg+xml'. That was the original Windows breakage -- the binary
