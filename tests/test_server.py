@@ -2886,9 +2886,7 @@ async def test_windows_read_svg_uses_data_object_get_data():
     via PowerShell, mirroring the custom-format string used on the write side."""
     from mcp_clipboard.clipboard import _windows_read
 
-    with patch(
-        "mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)
-    ) as mock:
+    with patch("mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)) as mock:
         result = await _windows_read("image/svg+xml")
 
     assert result == _SAMPLE_SVG
@@ -2906,9 +2904,7 @@ async def test_macos_read_svg_uses_public_svg_image_uti():
     and decodes UTF-8 to a string."""
     from mcp_clipboard.clipboard import _macos_read
 
-    with patch(
-        "mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)
-    ) as mock:
+    with patch("mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)) as mock:
         result = await _macos_read("image/svg+xml")
 
     assert result == _SAMPLE_SVG
@@ -2937,7 +2933,9 @@ async def test_clipboard_paste_returns_svg_as_fenced_text_when_only_svg_present(
         ),
         patch(
             "mcp_clipboard.server.read_clipboard",
-            new=AsyncMock(side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""),
+            new=AsyncMock(
+                side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""
+            ),
         ),
     ):
         result = await clipboard_paste()
@@ -2987,7 +2985,9 @@ async def test_clipboard_paste_does_not_route_svg_through_image_read_path():
         patch("mcp_clipboard.server.read_clipboard_image", new=image_read),
         patch(
             "mcp_clipboard.server.read_clipboard",
-            new=AsyncMock(side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""),
+            new=AsyncMock(
+                side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""
+            ),
         ),
     ):
         await clipboard_paste()
