@@ -56,26 +56,27 @@ All notable changes to this project will be documented here.
 
 ### Changed
 - README setup section restructured into a five-step quick-start
-  (install uv → install Linux backend tool → verify via
-  `uvx mcp-clipboard --check` → register with the MCP client →
-  confirm end-to-end). The `uv` install step leads with package-
-  manager paths that pull signed binaries from auditable
-  repositories (`winget` on Windows, `brew` on macOS, distro
-  package managers on Linux) plus `pipx` as a cross-platform
-  fallback; the upstream curl-piped-to-shell installer is reachable
-  via a link to the [official uv install
-  docs](https://docs.astral.sh/uv/getting-started/installation/)
-  but isn't quoted in the README itself, so security-conscious
-  users aren't asked to run a script piped from the internet to
-  their shell. Adds a Windows-specific note that Claude Desktop
-  caches `PATH` at launch (so a `uv` install done after Claude
-  Desktop started won't be visible until the tray-quit-and-relaunch)
+  (install a Python package runner → install Linux backend tool →
+  verify via `--check` → register with the MCP client → confirm
+  end-to-end). Step 1 acknowledges that mcp-clipboard is a regular
+  PyPI package and either of the two runners advertised in the
+  README's install-counts badges (`pipx` and `uv`) works to install
+  and launch it; the section links to the official pipx and uv
+  install docs rather than reproducing per-platform commands, so
+  the install path stays accurate as upstream packaging changes.
+  Steps 3, 4, and 5 show both `pipx run mcp-clipboard` and
+  `uvx mcp-clipboard` forms in the verification command, the Claude
+  Code/Desktop snippets, and the troubleshooting fallback. Adds a
+  Windows-specific note that Claude Desktop caches the environment
+  (including `PATH`) at launch, so a runner installed after Claude
+  Desktop started won't be visible until the tray-quit-and-relaunch,
   and a pointer to the Claude Desktop MCP log location for
-  troubleshooting. The previous structure assumed `uv` was already
-  present and that running the binary would give visible feedback;
-  the new structure mirrors what a new Windows user actually needs
-  in order from "I just heard about this" to "Claude Desktop is
-  using mcp-clipboard". Companion to the new CLI flags above.
+  troubleshooting. The previous structure assumed `uv` was the only
+  way to run mcp-clipboard and that running the binary would give
+  visible feedback; the new structure reflects the project's actual
+  bi-runner support and gives a new user a path from "I just heard
+  about this" to "the MCP host is using mcp-clipboard" without
+  pinning their tool choice. Companion to the new CLI flags above.
   Closes #130.
 
 - README: surface the X11/Wayland PRIMARY-selection feature as a featured

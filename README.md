@@ -90,60 +90,24 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 
 ## Setup
 
-### Step 1: Install uv
+### Step 1: Install a Python package runner
 
-mcp-clipboard runs through `uvx` (which is `uv tool run`). Skip this step if `uv --version` already prints a version. Pick the path that matches your platform; all of the options below pull signed binaries from package repositories you can audit, no curl-piped-to-shell required.
+`mcp-clipboard` is a Python package on PyPI. Any Python tool that can install and launch console-script entry points works for running it as an MCP server. The two most common choices are [pipx](https://pipx.pypa.io/) and [uv](https://docs.astral.sh/uv/); both appear in the install-counts badges at the top of this README and both are in active use. Pick whichever you have or prefer:
 
-#### Windows (winget)
+- **pipx**: install instructions per platform are in the [official pipx install docs](https://pipx.pypa.io/stable/installation/). On most distros pipx is available via the system package manager (`apt`, `dnf`, `pacman`, `brew`, etc.).
+- **uv**: install instructions per platform are in the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/). Astral documents package-manager paths, signed standalone-binary downloads, and shell installers for each platform.
 
-```powershell
-winget install --id=astral-sh.uv -e
-```
-
-`winget` is built into Windows 10 1809+ and Windows 11; it pulls the package signed by Astral from the Microsoft store catalog. Close and reopen your terminal so the new `PATH` takes effect, then verify:
-
-```powershell
-uv --version
-```
-
-#### macOS (Homebrew)
+Verify your chosen runner is on `PATH`:
 
 ```bash
-brew install uv
+pipx --version   # if you chose pipx
 ```
 
 ```bash
-uv --version
+uv --version     # if you chose uv
 ```
 
-If you don't have Homebrew yet, install it first from [brew.sh](https://brew.sh/). The Homebrew installer will prompt to install the macOS Command Line Tools (~3 GB) if they're missing; that's a one-time prerequisite for Homebrew itself, not for `uv`.
-
-#### Linux (distro package manager)
-
-| Distro | Command |
-| --- | --- |
-| **Fedora 40+** | `sudo dnf install uv` |
-| **Arch / Manjaro** | `sudo pacman -S uv` |
-| **openSUSE Tumbleweed** | `sudo zypper install uv` |
-| **NixOS / nix-env** | `nix-env -iA nixpkgs.uv` |
-
-```bash
-uv --version
-```
-
-#### Cross-platform fallback (pipx)
-
-If your distro doesn't ship `uv` and you'd rather not add a third-party repo, install via [pipx](https://pipx.pypa.io/), which isolates `uv` in its own Python venv and adds the binary to your `PATH` automatically:
-
-```bash
-pipx install uv
-```
-
-If you don't have pipx: `sudo apt install pipx` on Ubuntu/Debian, `sudo dnf install pipx` on Fedora, `brew install pipx` on macOS, or `python3 -m pip install --user pipx` as a universal fallback (then run `pipx ensurepath`).
-
-#### Other install paths
-
-For manual binary downloads, the upstream shell-script installer, and Docker images, see the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/). Astral publishes signed standalone binaries with SHA256 checksums on every [GitHub Release](https://github.com/astral-sh/uv/releases) for users who prefer to verify and place the binary themselves.
+The rest of this section shows commands for both runners; substitute the one you installed.
 
 ### Step 2: Install the platform clipboard tool (Linux only)
 
@@ -161,18 +125,24 @@ macOS and Windows have everything they need built in. Linux needs one CLI utilit
 
 ### Step 3: Verify mcp-clipboard works on your system
 
-Before wiring it into a client, confirm the package installs and detects your platform correctly:
+Before wiring it into a client, confirm the package installs and detects your platform correctly. With pipx:
+
+```bash
+pipx run mcp-clipboard --check
+```
+
+Or with uv:
 
 ```bash
 uvx mcp-clipboard --check
 ```
 
-Expected output:
+Both forms fetch the package on demand without a permanent install (use `pipx install mcp-clipboard` or `uv tool install mcp-clipboard` first if you'd rather install it persistently). Expected output:
 
 ```
 mcp-clipboard 2.5.1
-Platform: Windows (10.0.22631)
-Backend: windows (detected)
+Platform: ...
+Backend: ... (detected)
 OK: mcp-clipboard should work on this system.
 ```
 
@@ -180,7 +150,17 @@ If you see `Backend: NOT AVAILABLE`, follow the platform-specific hint in the er
 
 ### Step 4: Register the server with your MCP client
 
+The MCP host launches `mcp-clipboard` via a `command` + `args` pair. Both pipx and uv expose a one-shot run subcommand that fetches and executes the package, so the most convenient configs use those forms.
+
 #### Claude Code
+
+With pipx:
+
+```bash
+claude mcp add clipboard --scope user -- pipx run mcp-clipboard
+```
+
+With uv:
 
 ```bash
 claude mcp add clipboard --scope user -- uvx mcp-clipboard
@@ -194,7 +174,20 @@ Locate your Claude Desktop config file (paste the path into your file manager's 
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
-Add an entry to `mcpServers`:
+Add an entry to `mcpServers` using one of the forms below. With pipx:
+
+```json
+{
+  "mcpServers": {
+    "clipboard": {
+      "command": "pipx",
+      "args": ["run", "mcp-clipboard"]
+    }
+  }
+}
+```
+
+Or with uv:
 
 ```json
 {
@@ -209,11 +202,11 @@ Add an entry to `mcpServers`:
 
 Save the file, then **fully quit and relaunch Claude Desktop** for the new server to load.
 
-> **Windows tip:** Claude Desktop caches `PATH` from the moment it launches, so a `uv` install that happened after Claude Desktop was started won't be visible until restart. If the snippet above produces "Server failed to start" or "uvx not found", right-click the Claude Desktop tray icon, choose **Quit**, then reopen Claude Desktop. A taskbar-X close just hides the window; the cached environment is still there.
+> **Windows tip:** Claude Desktop caches the environment (including `PATH`) from the moment it launches. If `pipx`/`uvx` was installed after Claude Desktop was started, Claude Desktop will not see it until restart. If the snippet above produces "Server failed to start" or a "command not found" style error in the MCP logs, right-click the Claude Desktop tray icon, choose **Quit**, then reopen Claude Desktop. A taskbar-X close just hides the window; the cached environment is still there.
 
 #### Other MCP clients
 
-Any client that supports MCP stdio servers can use mcp-clipboard. The simplest approach is `uvx mcp-clipboard`. Consult your client's documentation for how to register MCP servers.
+Any client that supports MCP stdio servers can use mcp-clipboard. Common one-shot forms are `pipx run mcp-clipboard` and `uvx mcp-clipboard`; if you've installed mcp-clipboard persistently (`pipx install mcp-clipboard` or `uv tool install mcp-clipboard`), the resulting `mcp-clipboard` binary on `PATH` also works as the `command`. Consult your client's documentation for how to register MCP servers.
 
 ### Step 5: Confirm it works end-to-end
 
@@ -223,7 +216,7 @@ In your client, ask:
 
 The client should call `clipboard_paste` and return the content. If you copied a spreadsheet selection or a URL beforehand, you'll see it formatted appropriately.
 
-If nothing happens or you get a tool error, re-run `uvx mcp-clipboard --check` to confirm the package install is healthy, then check your client's MCP server logs (Claude Desktop: **Settings → Developer → Open MCP Logs**).
+If nothing happens or you get a tool error, re-run `--check` (whichever runner you used in Step 3) to confirm the package install is healthy, then check your client's MCP server logs (each MCP host exposes them differently; consult your client's documentation).
 
 ### Installing from source
 
