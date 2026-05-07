@@ -26,6 +26,7 @@ from mcp_clipboard.clipboard import (
     _wayland_write_multi,
     _wayland_write_typed,
     _windows_html_clipboard_wrap,
+    _windows_write,
     _windows_write_image,
     _windows_write_multi,
     _windows_write_typed,
@@ -1511,7 +1512,6 @@ async def test_read_clipboard_image_dispatches():
 from mcp_clipboard.clipboard import (
     _macos_write,
     _wayland_write,
-    _windows_write,
     _x11_write,
 )
 
@@ -2867,6 +2867,106 @@ async def test_windows_write_typed_unsupported_lists_svg():
     """The unsupported-MIME error message advertises SVG as supported."""
     with pytest.raises(ClipboardError, match="image/svg\\+xml"):
         await _windows_write_typed("data", "text/csv")
+
+
+# ---------------------------------------------------------------------------
+# Windows UTF-8 stdin encoding (#129)
+#
+# PowerShell's [Console]::In.ReadToEnd() decodes stdin using
+# [Console]::InputEncoding, which defaults to the OEM/ANSI code page on
+# Windows (commonly CP1252) -- not UTF-8. Writing UTF-8 bytes (Python's
+# default .encode()) to that stream silently corrupts non-ASCII characters
+# before Set-Clipboard ever sees them. Every Windows write script that
+# pipes text content over stdin must explicitly set InputEncoding to UTF-8
+# before reading.
+# ---------------------------------------------------------------------------
+
+
+def _windows_powershell_script(call_args: tuple) -> str:
+    """Extract the PowerShell -Command script from a _run_with_stdin call."""
+    cmd = call_args[0]
+    # cmd is ["powershell", "-NoProfile", "-Command", "<script>"]
+    return cmd[3]
+
+
+def _assert_utf8_input_encoding(script: str) -> None:
+    """Assert the PowerShell script sets InputEncoding to UTF-8 before reading stdin."""
+    assert "[Console]::InputEncoding" in script, (
+        "PowerShell script must set [Console]::InputEncoding before reading stdin "
+        "(otherwise non-ASCII chars are corrupted on Windows). Script: " + script
+    )
+    assert "UTF8" in script, "InputEncoding must be set to UTF-8. Script: " + script
+    # Encoding setup must precede the stdin read it governs.
+    encoding_idx = script.index("[Console]::InputEncoding")
+    read_idx = script.index("[Console]::In.ReadToEnd()")
+    assert encoding_idx < read_idx, (
+        "InputEncoding must be set BEFORE [Console]::In.ReadToEnd(); "
+        f"found InputEncoding at {encoding_idx}, ReadToEnd at {read_idx}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_write_sets_utf8_input_encoding():
+    """_windows_write must set UTF-8 InputEncoding before reading stdin (#129)."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write("hello")
+
+    _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
+
+
+@pytest.mark.asyncio
+async def test_windows_write_passes_utf8_bytes_for_non_ascii():
+    """_windows_write encodes content as UTF-8 (em dash round-trips correctly)."""
+    em_dash_text = "before — after"
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write(em_dash_text)
+
+    # Stdin payload must be UTF-8 bytes -- the 3-byte sequence 0xE2 0x80 0x94
+    # for U+2014, NOT a CP1252 single byte 0x97.
+    stdin_bytes = mock.call_args[0][1]
+    assert stdin_bytes == em_dash_text.encode("utf-8")
+    assert b"\xe2\x80\x94" in stdin_bytes
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_plain_sets_utf8_input_encoding():
+    """_windows_write_typed text/plain must set UTF-8 InputEncoding (#129)."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed("hello", "text/plain")
+
+    _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_html_sets_utf8_input_encoding():
+    """_windows_write_typed text/html must set UTF-8 InputEncoding (#129).
+
+    The CF_HTML byte offsets in the header are computed against UTF-8 bytes
+    in Python; if PowerShell reads stdin as CP1252 the offsets are off and
+    the fragment markers point into garbage.
+    """
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed("<b>hi</b>", "text/html")
+
+    _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_rtf_sets_utf8_input_encoding():
+    """_windows_write_typed text/rtf must set UTF-8 InputEncoding (#129)."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed(r"{\rtf1 hi}", "text/rtf")
+
+    _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
+
+
+@pytest.mark.asyncio
+async def test_windows_write_typed_svg_sets_utf8_input_encoding():
+    """_windows_write_typed image/svg+xml must set UTF-8 InputEncoding (#129)."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed(_SAMPLE_SVG, "image/svg+xml")
+
+    _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
 
 
 # ---------------------------------------------------------------------------
