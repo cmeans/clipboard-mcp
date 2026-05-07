@@ -55,6 +55,17 @@ All notable changes to this project will be documented here.
   (#127) - closes #126.
 
 ### Changed
+- Platform status corrected in two README locations and `CLAUDE.md`.
+  The previous claim that "Windows implementations are complete but
+  untested on real hardware" was stale: in v2.5.x the Windows code
+  paths were exercised end-to-end on a Windows 11 QEMU guest, which
+  surfaced and resolved the UTF-8 stdin encoding bug (#129).
+  Updated copies: the `> **Platform status:**` callout in the Setup
+  section, the corresponding bullet in `## Limitations`, and the
+  Conventions section of `CLAUDE.md`. X11 and macOS still hold the
+  "complete with unit tests but unverified on live hardware" status
+  honestly; bug reports and PRs are still welcome there.
+
 - README setup section restructured into a five-step quick-start
   (install a Python package runner → install Linux backend tool →
   verify via `--check` → register with the MCP client → confirm
