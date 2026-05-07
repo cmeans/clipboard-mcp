@@ -2926,7 +2926,6 @@ async def test_clipboard_paste_returns_svg_as_fenced_text_when_only_svg_present(
     """When the clipboard has only image/svg+xml (no text, no raster image),
     clipboard_paste returns the SVG markup in an ```svg fenced code block."""
     with (
-        patch("mcp_clipboard.server.read_clipboard", new=AsyncMock(return_value="")),
         patch(
             "mcp_clipboard.server.list_clipboard_formats",
             new=AsyncMock(return_value=["image/svg+xml"]),
@@ -3030,7 +3029,6 @@ async def test_clipboard_paste_does_not_route_svg_through_image_read_path():
     image_read = AsyncMock()  # would record the call if it happened
 
     with (
-        patch("mcp_clipboard.server.read_clipboard", new=AsyncMock(return_value="")),
         patch(
             "mcp_clipboard.server.list_clipboard_formats",
             new=AsyncMock(return_value=["image/svg+xml"]),
