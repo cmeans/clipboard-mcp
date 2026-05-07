@@ -24,6 +24,19 @@ All notable changes to this project will be documented here.
   reproduced. Closes #129.
 
 ### Added
+- CLI flags `--version`, `--help`, `--check` on the `mcp-clipboard`
+  command. Running the binary directly previously gave no signal that
+  anything had happened (it would silently start a stdio server and
+  block on input), forcing new users to wire it into an MCP client
+  before they could verify their install worked at all. The new flags
+  give a fast feedback loop: `--version` prints the installed version,
+  `--help` summarizes usage and points at the README setup section,
+  and `--check` runs platform detection (calling the same
+  `_detect_backend()` the runtime uses) and reports whether the
+  backend is reachable. `--check` exits 1 with a stderr diagnostic
+  when no backend is available so it can also serve as a CI smoke
+  check. Closes #130.
+
 - New `github-release` job in `publish.yml` auto-creates (or updates) a
   GitHub Release matching the pushed tag, with notes pulled from the
   matching `## [VERSION]` section of `CHANGELOG.md`. Idempotent: if a
@@ -42,6 +55,41 @@ All notable changes to this project will be documented here.
   (#127) - closes #126.
 
 ### Changed
+- Platform status corrected in two README locations and `CLAUDE.md`.
+  The previous claim that "Windows implementations are complete but
+  untested on real hardware" was stale: in v2.5.x the Windows code
+  paths were exercised end-to-end on a QEMU Windows guest, which
+  surfaced and resolved the UTF-8 stdin encoding bug (#129).
+  Updated copies: the `> **Platform status:**` callout in the Setup
+  section, the corresponding bullet in `## Limitations`, and the
+  Conventions section of `CLAUDE.md`. X11 and macOS still hold the
+  "complete with unit tests but unverified on live hardware" status
+  honestly; bug reports and PRs are still welcome there.
+
+- README setup section restructured into a five-step quick-start
+  (install a Python package runner → install Linux backend tool →
+  verify via `--check` → register with the MCP client → confirm
+  end-to-end). Step 1 acknowledges that mcp-clipboard is a regular
+  PyPI package and either of the two runners advertised in the
+  README's install-counts badges (`pipx` and `uv`) works to install
+  and launch it; the section links to the official pipx and uv
+  install docs rather than reproducing per-platform commands, so
+  the install path stays accurate as upstream packaging changes.
+  Steps 3, 4, and 5 show both `pipx run mcp-clipboard` and
+  `uvx mcp-clipboard` forms in the verification command, the Claude
+  Code/Desktop snippets, and the troubleshooting fallback. Adds a
+  Windows-specific note that Claude Desktop caches the environment
+  (including `PATH`) at launch, so a runner installed after Claude
+  Desktop started won't be visible until the tray-quit-and-relaunch,
+  and a pointer to the Claude Desktop MCP log location for
+  troubleshooting. The previous structure assumed `uv` was the only
+  way to run mcp-clipboard and that running the binary would give
+  visible feedback; the new structure reflects the project's actual
+  bi-runner support and gives a new user a path from "I just heard
+  about this" to "the MCP host is using mcp-clipboard" without
+  pinning their tool choice. Companion to the new CLI flags above.
+  Closes #130.
+
 - README: surface the X11/Wayland PRIMARY-selection feature as a featured
   `### Bonus` subsection in `## Why This Exists`, alongside the table-paste
   pitch and the fixes-copying-from-Claude-Code pitch. Adds a short

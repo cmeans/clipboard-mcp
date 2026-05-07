@@ -90,11 +90,28 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 
 ## Setup
 
-### Prerequisites
+### Step 1: Install a Python package runner
 
-**Python 3.11+** and one of: [uv](https://docs.astral.sh/uv/) (recommended), [pipx](https://pipx.pypa.io/), or pip.
+`mcp-clipboard` is a Python package on PyPI. Any Python tool that can install and launch console-script entry points works for running it as an MCP server. The two most common choices are [pipx](https://pipx.pypa.io/) and [uv](https://docs.astral.sh/uv/); both appear in the install-counts badges at the top of this README and both are in active use. Pick whichever you have or prefer:
 
-You also need a platform-specific clipboard tool:
+- **pipx**: install instructions per platform are in the [official pipx install docs](https://pipx.pypa.io/stable/how-to/install-pipx/). On most distros pipx is available via the system package manager (`apt`, `dnf`, `pacman`, `brew`, etc.).
+- **uv**: install instructions per platform are in the [official uv install docs](https://docs.astral.sh/uv/getting-started/installation/). Astral documents package-manager paths, signed standalone-binary downloads, and shell installers for each platform.
+
+Verify your chosen runner is on `PATH`:
+
+```bash
+pipx --version   # if you chose pipx
+```
+
+```bash
+uv --version     # if you chose uv
+```
+
+The rest of this section shows commands for both runners; substitute the one you installed.
+
+### Step 2: Install the platform clipboard tool (Linux only)
+
+macOS and Windows have everything they need built in. Linux needs one CLI utility:
 
 | Platform | Tool | Install |
 | --- | --- | --- |
@@ -104,21 +121,73 @@ You also need a platform-specific clipboard tool:
 | **macOS** | Built-in | No install needed (`pbcopy` / `pbpaste`) |
 | **Windows** | Built-in | No install needed (PowerShell) |
 
-> **Platform status:** Linux with Wayland is tested and actively used. X11, macOS, and Windows implementations are complete but untested on real hardware. Bug reports and PRs are welcome.
+> **Platform status:** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a QEMU Windows guest (a real Windows-only encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129), was found and fixed via that testing in v2.5.x). X11 and macOS implementations are complete but unverified beyond the unit tests. Bug reports and PRs are welcome.
 
-### Claude Code
+### Step 3: Verify mcp-clipboard works on your system
+
+Before wiring it into a client, confirm the package installs and detects your platform correctly. With pipx:
+
+```bash
+pipx run mcp-clipboard --check
+```
+
+Or with uv:
+
+```bash
+uvx mcp-clipboard --check
+```
+
+Both forms fetch the package on demand without a permanent install (use `pipx install mcp-clipboard` or `uv tool install mcp-clipboard` first if you'd rather install it persistently). Expected output:
+
+```
+mcp-clipboard 2.5.1
+Platform: ...
+Backend: ... (detected)
+OK: mcp-clipboard should work on this system.
+```
+
+If you see `Backend: NOT AVAILABLE`, follow the platform-specific hint in the error message (typically: install the Linux clipboard tool from Step 2) and re-run.
+
+### Step 4: Register the server with your MCP client
+
+The MCP host launches `mcp-clipboard` via a `command` + `args` pair. Both pipx and uv expose a one-shot run subcommand that fetches and executes the package, so the most convenient configs use those forms.
+
+#### Claude Code
+
+With pipx:
+
+```bash
+claude mcp add clipboard --scope user -- pipx run mcp-clipboard
+```
+
+With uv:
 
 ```bash
 claude mcp add clipboard --scope user -- uvx mcp-clipboard
 ```
 
-### Claude Desktop
+#### Claude Desktop
 
-Add to your Claude Desktop config:
+Locate your Claude Desktop config file (paste the path into your file manager's address bar to jump straight there):
 
 - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add an entry to `mcpServers` using one of the forms below. With pipx:
+
+```json
+{
+  "mcpServers": {
+    "clipboard": {
+      "command": "pipx",
+      "args": ["run", "mcp-clipboard"]
+    }
+  }
+}
+```
+
+Or with uv:
 
 ```json
 {
@@ -131,9 +200,23 @@ Add to your Claude Desktop config:
 }
 ```
 
-### Other MCP clients
+Save the file, then **fully quit and relaunch Claude Desktop** for the new server to load.
 
-Any client that supports MCP stdio servers can use mcp-clipboard. The simplest approach is `uvx mcp-clipboard`. Consult your client's documentation for how to register MCP servers.
+> **Windows tip:** Claude Desktop caches the environment (including `PATH`) from the moment it launches. If `pipx`/`uvx` was installed after Claude Desktop was started, Claude Desktop will not see it until restart. If the snippet above produces "Server failed to start" or a "command not found" style error in the MCP logs, right-click the Claude Desktop tray icon, choose **Quit**, then reopen Claude Desktop. A taskbar-X close just hides the window; the cached environment is still there.
+
+#### Other MCP clients
+
+Any client that supports MCP stdio servers can use mcp-clipboard. Common one-shot forms are `pipx run mcp-clipboard` and `uvx mcp-clipboard`; if you've installed mcp-clipboard persistently (`pipx install mcp-clipboard` or `uv tool install mcp-clipboard`), the resulting `mcp-clipboard` binary on `PATH` also works as the `command`. Consult your client's documentation for how to register MCP servers.
+
+### Step 5: Confirm it works end-to-end
+
+In your client, ask:
+
+> What's on my clipboard?
+
+The client should call `clipboard_paste` and return the content. If you copied a spreadsheet selection or a URL beforehand, you'll see it formatted appropriately.
+
+If nothing happens or you get a tool error, re-run `--check` (whichever runner you used in Step 3) to confirm the package install is healthy, then check your client's MCP server logs (each MCP host exposes them differently; consult your client's documentation).
 
 ### Installing from source
 
@@ -270,7 +353,7 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 * **Image write supports PNG and JPEG only via `clipboard_copy_image`.** Pass-through, no re-encoding. Other binary formats (GIF, WebP, TIFF, BMP) are not yet writable. SVG rides the typed-text path via `clipboard_copy(mime_type="image/svg+xml")` since SVG is XML.
 * **Writing multiple MIME types atomically is not supported** on Wayland/X11. `wl-copy` and `xclip` carry a single MIME per invocation, so `clipboard_copy_markdown` writes only `text/html` on those platforms. On Wayland, `wl-copy` auto-advertises `text/plain` for UTF-8 content but the bytes returned are the rendered HTML markup (not the markdown source) — vim users pasting after the tool runs will see `<h1>...` etc. On X11, plain-text targets see an empty clipboard. For a plain-text paste of the markdown source, call `clipboard_copy(markdown_source)` directly. macOS and Windows do support atomic multi-format writes via NSPasteboard / `DataObject`.
 * **Text content is truncated at 50KB** to avoid overwhelming the model's context window.
-* **X11, macOS, and Windows are untested** on real hardware. Implementations are complete and should work, but edge cases are possible. Bug reports and PRs are welcome.
+* **Platform coverage is uneven.** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a QEMU Windows guest as of v2.5.x (which surfaced and resolved a Windows-only UTF-8 stdin encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129)). X11 and macOS implementations are complete and have unit tests but have not been verified beyond that. Bug reports and PRs are welcome, especially for X11 and macOS.
 
 ## Development
 

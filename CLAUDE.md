@@ -76,7 +76,7 @@ Tests use `pytest` with `pytest-asyncio` (async mode: auto). All pytest config i
 - Tool descriptions live in `src/mcp_clipboard/instructions/*.md` — edit those files to change what the host model sees
 - `pyproject.toml` `artifacts` setting ensures instruction `.md` files are included in the wheel
 - PyPI package name, command, and import are all `mcp-clipboard` / `mcp_clipboard`
-- Linux with Wayland is tested on real hardware; X11 has unit tests but is unverified on live hardware; macOS and Windows are complete but untested
+- Linux with Wayland is tested on real hardware. Windows has been exercised end-to-end on a QEMU Windows guest as of v2.5.x (#129, the UTF-8 stdin encoding bug, was found and fixed via that testing). X11 has unit tests but is unverified on live hardware. macOS is complete with unit tests but has not been exercised on real hardware.
 - `clipboard_paste` intentionally has no return type annotation — adding `-> str | Image` causes FastMCP to fail Pydantic schema generation for `Image`
 
 ## Conventions
