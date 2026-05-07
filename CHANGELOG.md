@@ -58,7 +58,7 @@ All notable changes to this project will be documented here.
 - Platform status corrected in two README locations and `CLAUDE.md`.
   The previous claim that "Windows implementations are complete but
   untested on real hardware" was stale: in v2.5.x the Windows code
-  paths were exercised end-to-end on a Windows 11 QEMU guest, which
+  paths were exercised end-to-end on a QEMU Windows guest, which
   surfaced and resolved the UTF-8 stdin encoding bug (#129).
   Updated copies: the `> **Platform status:**` callout in the Setup
   section, the corresponding bullet in `## Limitations`, and the

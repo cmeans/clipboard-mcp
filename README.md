@@ -121,7 +121,7 @@ macOS and Windows have everything they need built in. Linux needs one CLI utilit
 | **macOS** | Built-in | No install needed (`pbcopy` / `pbpaste`) |
 | **Windows** | Built-in | No install needed (PowerShell) |
 
-> **Platform status:** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a Windows 11 guest VM (a real Windows-only encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129), was found and fixed via that testing in v2.5.x). X11 and macOS implementations are complete but unverified beyond the unit tests. Bug reports and PRs are welcome.
+> **Platform status:** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a QEMU Windows guest (a real Windows-only encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129), was found and fixed via that testing in v2.5.x). X11 and macOS implementations are complete but unverified beyond the unit tests. Bug reports and PRs are welcome.
 
 ### Step 3: Verify mcp-clipboard works on your system
 
@@ -353,7 +353,7 @@ If you have access to a custom system prompt (e.g. in a Claude Desktop project o
 * **Image write supports PNG and JPEG only via `clipboard_copy_image`.** Pass-through, no re-encoding. Other binary formats (GIF, WebP, TIFF, BMP) are not yet writable. SVG rides the typed-text path via `clipboard_copy(mime_type="image/svg+xml")` since SVG is XML.
 * **Writing multiple MIME types atomically is not supported** on Wayland/X11. `wl-copy` and `xclip` carry a single MIME per invocation, so `clipboard_copy_markdown` writes only `text/html` on those platforms. On Wayland, `wl-copy` auto-advertises `text/plain` for UTF-8 content but the bytes returned are the rendered HTML markup (not the markdown source) — vim users pasting after the tool runs will see `<h1>...` etc. On X11, plain-text targets see an empty clipboard. For a plain-text paste of the markdown source, call `clipboard_copy(markdown_source)` directly. macOS and Windows do support atomic multi-format writes via NSPasteboard / `DataObject`.
 * **Text content is truncated at 50KB** to avoid overwhelming the model's context window.
-* **Platform coverage is uneven.** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a Windows 11 guest VM as of v2.5.x (which surfaced and resolved a Windows-only UTF-8 stdin encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129)). X11 and macOS implementations are complete and have unit tests but have not been verified beyond that. Bug reports and PRs are welcome, especially for X11 and macOS.
+* **Platform coverage is uneven.** Linux with Wayland is tested and actively used. Windows has been exercised end-to-end on a QEMU Windows guest as of v2.5.x (which surfaced and resolved a Windows-only UTF-8 stdin encoding bug, [#129](https://github.com/cmeans/mcp-clipboard/issues/129)). X11 and macOS implementations are complete and have unit tests but have not been verified beyond that. Bug reports and PRs are welcome, especially for X11 and macOS.
 
 ## Development
 
