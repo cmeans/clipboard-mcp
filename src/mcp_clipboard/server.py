@@ -319,43 +319,74 @@ async def clipboard_paste(
         except ClipboardError as e:
             logger.debug("RTF clipboard read failed: %s", e)
 
-    # If no text content at all, check whether the clipboard holds binary data
+    # If no text content at all, list formats and dispatch by what's there.
     if not content.strip():
         try:
             formats = await list_clipboard_formats(selection)
-            image_formats = [f for f in formats if f.startswith("image/")]
-            if image_formats:
-                # Prefer PNG (match by base type to handle parameter suffixes)
-                mime = next(
-                    (f for f in image_formats if base_mime_type(f) == "image/png"),
-                    image_formats[0],
-                )
-                try:
-                    data = await read_clipboard_image(mime, selection)
-                    if data:
-                        fmt = base_mime_type(mime).split("/", 1)[1].lower()
-                        if fmt not in _IMAGE_SUBTYPE_ALLOWLIST:
-                            fmt = "png"
-                        return Image(data=data, format=fmt)
-                except ClipboardSizeError as e:
-                    return f"Clipboard image too large to return: {e}"
-                except ClipboardError as e:
-                    logger.debug("Image read failed: %s", e)
-            # Non-image binary (audio/video) — report but can't return
-            binary = [
-                f
-                for f in formats
-                if (f.startswith(_BINARY_MIME_PREFIXES) or f in _BINARY_MIME_EXACT)
-                and not f.startswith("image/")
-            ]
-            if binary:
-                fmt_list = ", ".join(binary)
-                return (
-                    f"Clipboard contains binary data ({fmt_list}) which cannot be "
-                    f"returned as text. Audio and video are not supported."
-                )
         except ClipboardError:
-            pass
+            formats = []
+
+        # Split image/* formats: SVG is text-readable XML, everything else
+        # is raster bytes. Routing SVG through the raster image path was
+        # the read-side half of #129's sibling SVG round-trip bug.
+        raster_formats = [
+            f
+            for f in formats
+            if f.startswith("image/") and base_mime_type(f) not in _TEXT_READABLE_MIMES
+        ]
+        svg_formats = [f for f in formats if base_mime_type(f) == "image/svg+xml"]
+
+        # Prefer raster (returns a viewable Image object the host model
+        # can analyze visually) over SVG markup (returned as text below).
+        if raster_formats:
+            mime = next(
+                (f for f in raster_formats if base_mime_type(f) == "image/png"),
+                raster_formats[0],
+            )
+            try:
+                data = await read_clipboard_image(mime, selection)
+                if data:
+                    fmt = base_mime_type(mime).split("/", 1)[1].lower()
+                    if fmt not in _IMAGE_SUBTYPE_ALLOWLIST:
+                        fmt = "png"
+                    return Image(data=data, format=fmt)
+            except ClipboardSizeError as e:
+                return f"Clipboard image too large to return: {e}"
+            except ClipboardError as e:
+                logger.debug("Image read failed: %s", e)
+
+        # SVG-only clipboards: read the markup as text and return a fenced
+        # block so the host model can inspect the source.
+        if svg_formats:
+            try:
+                svg_text = await read_clipboard(svg_formats[0], selection)
+                if svg_text.strip():
+                    truncated = len(svg_text) > _MAX_CONTENT_CHARS
+                    display = svg_text[:_MAX_CONTENT_CHARS]
+                    fence = _safe_code_fence(display)
+                    result = (
+                        f"Clipboard contains SVG ({svg_formats[0]}):\n\n"
+                        f"{fence}svg\n{display}\n{fence}"
+                    )
+                    if truncated:
+                        result += f"\n\n... [truncated at {_MAX_CONTENT_CHARS:,} characters]"
+                    return result
+            except ClipboardError as e:
+                logger.debug("SVG clipboard read failed: %s", e)
+
+        # Non-image binary (audio/video): report but cannot return.
+        binary = [
+            f
+            for f in formats
+            if (f.startswith(_BINARY_MIME_PREFIXES) or f in _BINARY_MIME_EXACT)
+            and not f.startswith("image/")
+        ]
+        if binary:
+            fmt_list = ", ".join(binary)
+            return (
+                f"Clipboard contains binary data ({fmt_list}) which cannot be "
+                f"returned as text. Audio and video are not supported."
+            )
 
     return _format_non_tabular(content)
 

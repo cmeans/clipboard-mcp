@@ -4,6 +4,28 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- SVG clipboard round-trip on Windows and macOS: copying an SVG via
+  `clipboard_copy(mime_type="image/svg+xml")` and then pasting it back
+  no longer returns "Clipboard is empty." Three layered gaps closed:
+  (1) `_windows_read` gained an `image/svg+xml` branch that calls
+  `Clipboard::GetData('image/svg+xml')` (mirroring the custom format
+  string the writer registers) and forces UTF-8 stdout encoding so
+  the round-tripped XML doesn't get mangled by PowerShell's default
+  OEM `OutputEncoding`. (2) `_macos_read` gained an `image/svg+xml`
+  branch that reads `public.svg-image` UTI bytes as UTF-8, and
+  `_UTI_TO_MIME` learned `public.svg-image -> image/svg+xml` so
+  `list_clipboard_formats` surfaces SVG with its MIME type rather
+  than the raw UTI. (3) `clipboard_paste`'s auto-dispatch no longer
+  routes `image/svg+xml` through the binary `read_clipboard_image`
+  path (which raster readers reject as "Unsupported image type");
+  SVG-only clipboards are now read as text and returned in an
+  ```svg fenced code block. Raster images still take precedence
+  over SVG when both are present, so a typical "screenshot + SVG
+  source" clipboard still returns the viewable PNG as before. The
+  Linux backends (Wayland/X11) were already correct via passthrough
+  on `wl-paste --type` / `xclip -target`.
+
 ## [2.6.0] - 2026-05-07
 
 ### Fixed
