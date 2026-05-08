@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-05-07
+
 ### Fixed
 - SVG clipboard round-trip on Windows and macOS: copying an SVG via
   `clipboard_copy(mime_type="image/svg+xml")` and then pasting it back
