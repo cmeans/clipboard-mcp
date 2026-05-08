@@ -2870,13 +2870,17 @@ async def test_windows_write_typed_unsupported_lists_svg():
 
 
 # ---------------------------------------------------------------------------
-# SVG round-trip read paths
+# Windows read trailing-CRLF suppression (#138 round 4)
 #
-# SVG is XML text but conventionally uses image/* MIME type, so it falls
-# into a gap: dispatched as binary by `image/*` filters but rejected by
-# raster image readers as "Unsupported image type". The fix routes SVG
-# through a text-read branch on each backend and through a dedicated
-# `clipboard_paste` SVG-fallback branch when no raster image is available.
+# Every `_windows_read` branch was ending its PowerShell script with a bare
+# expression (`$data` for HTML/RTF/SVG, `Get-Clipboard` for text/plain),
+# which flows through PowerShell's default Out-Default formatter and gets
+# a trailing CRLF appended. Each branch now ends with `[Console]::Write($data)`
+# (or `[Console]::Write((Get-Clipboard -Raw))` for text/plain) so the value
+# is written byte-for-byte with no implicit newline. Live testing on a QEMU
+# Windows guest after the SVG fix landed surfaced the artifact: a `\r\n`
+# was visible between `</svg>` and the closing fence in `clipboard_paste`'s
+# wrapped output.
 # ---------------------------------------------------------------------------
 
 
@@ -2943,6 +2947,17 @@ async def _capture_last_powershell_script(mime: str) -> str:
         await _windows_read(mime)
     cmd = m.call_args[0][0]
     return cmd[-1]
+
+
+# ---------------------------------------------------------------------------
+# SVG round-trip read paths (#136)
+#
+# SVG is XML text but conventionally uses image/* MIME type, so it falls
+# into a gap: dispatched as binary by `image/*` filters but rejected by
+# raster image readers as "Unsupported image type". The fix routes SVG
+# through a text-read branch on each backend and through a dedicated
+# `clipboard_paste` SVG-fallback branch when no raster image is available.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
