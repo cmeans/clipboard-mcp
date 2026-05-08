@@ -418,44 +418,29 @@ async def _macos_list_formats(selection: str = "clipboard") -> list[str]:
 
 
 async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
-    # Every branch below ends in `[Console]::Write($data)` rather than letting
-    # the captured value flow to PowerShell's default Out-Default formatter.
-    # The default formatter appends a trailing CRLF to whatever it prints, so
-    # bare `$data` at the end of a script returns content + `\r\n` to Python's
-    # _run() decoder. `[Console]::Write` writes the string as-is with no
-    # newline appended, preserving byte-exact round-trip for clipboard
-    # content that doesn't have its own trailing newline. `[Console]::Write`
-    # also tolerates `$null` (no-op) so the prior `if ($data -eq $null)`
-    # guards are no longer necessary.
     _reject_non_clipboard_selection(selection, "Windows")
     if mime_type == "text/html":
+        # PowerShell: Get HTML format from clipboard
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "$data = [System.Windows.Forms.Clipboard]::GetData("
-            "[System.Windows.Forms.DataFormats]::Html); "
-            "[Console]::Write($data)"
+            "[System.Windows.Forms.Clipboard]::GetData([System.Windows.Forms.DataFormats]::Html)"
         )
         return await _run(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                script,
+                f"Add-Type -AssemblyName System.Windows.Forms; {script}",
             ],
             allow_empty_exit=False,
         )
 
     if mime_type == "text/plain":
-        # `Get-Clipboard -Raw` returns the entire clipboard as a single string
-        # preserving original line endings; without -Raw it returns an array
-        # of lines and the default formatter rejoins with \n (losing CRLF info
-        # and adding a trailing newline).
         return await _run(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "[Console]::Write((Get-Clipboard -Raw))",
+                "Get-Clipboard",
             ],
             allow_empty_exit=False,
         )
@@ -465,7 +450,7 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData("
             "[System.Windows.Forms.DataFormats]::Rtf); "
-            "[Console]::Write($data)"
+            "if ($data -eq $null) { return }; $data"
         )
         return await _run(
             [
@@ -480,14 +465,14 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
     if mime_type == "image/svg+xml":
         # SVG is written via _windows_write_typed as a custom format string
         # 'image/svg+xml' on the DataObject. Reading it back uses the same
-        # format string. OutputEncoding=UTF8 prevents PowerShell's default
-        # OEM OutputEncoding from mangling the UTF-8 SVG markup on the way
-        # back to Python's _run() decoder.
+        # format string. Output encoding matters here too: PowerShell's
+        # default OutputEncoding can mangle the UTF-8 SVG markup on the way
+        # back to Python's _run() decoder. Force UTF-8 on stdout.
         script = (
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData('image/svg+xml'); "
-            "[Console]::Write($data)"
+            "if ($data -eq $null) { return }; $data"
         )
         return await _run(
             [
