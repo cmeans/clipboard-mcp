@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- `docs/testing/windows-e2e-spec.md` — full end-to-end test
+  specification for mcp-clipboard on Windows, covering Claude Code
+  and Claude Desktop. ~40 numbered tests across wire round-trips,
+  auto-detect formatting, list_formats sanity, read_raw behavior,
+  edge cases, encoding regressions, and (CD-only) human-confirmed
+  render gates. Each run writes per-test result entries plus a
+  run-index entry to awareness for cross-run analysis. Suite spec is
+  also mirrored to awareness `logical_key=mcp-clipboard-windows-e2e-suite`.
+
 ## [2.6.1] - 2026-05-07
 
 ### Fixed
