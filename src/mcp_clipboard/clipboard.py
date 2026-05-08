@@ -361,6 +361,21 @@ async def _macos_read(mime_type: str, selection: str = "clipboard") -> str:
         )
         return await _run(["osascript", "-e", script], allow_empty_exit=False)
 
+    if mime_type == "image/svg+xml":
+        # SVG is written via _macos_write_typed under the "public.svg-image"
+        # UTI (matching the Inkscape/Figma/browser convention). Reading it
+        # back uses the same UTI; the bytes are UTF-8 XML, decoded as text.
+        script = (
+            'use framework "AppKit"\n'
+            "set pb to current application's NSPasteboard's generalPasteboard()\n"
+            'set svgData to pb\'s dataForType:"public.svg-image"\n'
+            'if svgData is missing value then return ""\n'
+            "set svgString to (current application's NSString's alloc()'s "
+            "initWithData:svgData encoding:(current application's NSUTF8StringEncoding))\n"
+            "return svgString as text"
+        )
+        return await _run(["osascript", "-e", script], allow_empty_exit=False)
+
     # Unsupported MIME type — signal "not available" rather than returning wrong content
     return ""
 
@@ -370,6 +385,7 @@ _UTI_TO_MIME: dict[str, str] = {
     "public.utf8-plain-text": "text/plain",
     "public.plain-text": "text/plain",
     "public.rtf": "text/rtf",
+    "public.svg-image": "image/svg+xml",
     "public.png": "image/png",
     "public.tiff": "image/tiff",
     "public.jpeg": "image/jpeg",
@@ -434,6 +450,28 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData("
             "[System.Windows.Forms.DataFormats]::Rtf); "
+            "if ($data -eq $null) { return }; $data"
+        )
+        return await _run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                script,
+            ],
+            allow_empty_exit=False,
+        )
+
+    if mime_type == "image/svg+xml":
+        # SVG is written via _windows_write_typed as a custom format string
+        # 'image/svg+xml' on the DataObject. Reading it back uses the same
+        # format string. Output encoding matters here too: PowerShell's
+        # default OutputEncoding can mangle the UTF-8 SVG markup on the way
+        # back to Python's _run() decoder. Force UTF-8 on stdout.
+        script = (
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$data = [System.Windows.Forms.Clipboard]::GetData('image/svg+xml'); "
             "if ($data -eq $null) { return }; $data"
         )
         return await _run(

@@ -2870,6 +2870,183 @@ async def test_windows_write_typed_unsupported_lists_svg():
 
 
 # ---------------------------------------------------------------------------
+# SVG round-trip read paths
+#
+# SVG is XML text but conventionally uses image/* MIME type, so it falls
+# into a gap: dispatched as binary by `image/*` filters but rejected by
+# raster image readers as "Unsupported image type". The fix routes SVG
+# through a text-read branch on each backend and through a dedicated
+# `clipboard_paste` SVG-fallback branch when no raster image is available.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_windows_read_svg_uses_data_object_get_data():
+    """_windows_read for image/svg+xml calls Clipboard::GetData('image/svg+xml')
+    via PowerShell, mirroring the custom-format string used on the write side."""
+    from mcp_clipboard.clipboard import _windows_read
+
+    with patch("mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)) as mock:
+        result = await _windows_read("image/svg+xml")
+
+    assert result == _SAMPLE_SVG
+    cmd = mock.call_args[0][0]
+    script = " ".join(cmd)
+    assert "GetData('image/svg+xml')" in script
+    # OutputEncoding directive prevents OEM mojibake on the way back.
+    assert "[Console]::OutputEncoding" in script
+    assert "UTF8" in script
+
+
+@pytest.mark.asyncio
+async def test_macos_read_svg_uses_public_svg_image_uti():
+    """_macos_read for image/svg+xml reads the public.svg-image UTI as NSData
+    and decodes UTF-8 to a string."""
+    from mcp_clipboard.clipboard import _macos_read
+
+    with patch("mcp_clipboard.clipboard._run", new=AsyncMock(return_value=_SAMPLE_SVG)) as mock:
+        result = await _macos_read("image/svg+xml")
+
+    assert result == _SAMPLE_SVG
+    script = mock.call_args[0][0][2]
+    assert 'dataForType:"public.svg-image"' in script
+    assert "NSUTF8StringEncoding" in script
+
+
+def test_macos_uti_to_mime_maps_public_svg_image():
+    """list_clipboard_formats on macOS surfaces SVG as image/svg+xml, not as
+    the raw public.svg-image UTI."""
+    from mcp_clipboard.clipboard import _UTI_TO_MIME
+
+    assert _UTI_TO_MIME.get("public.svg-image") == "image/svg+xml"
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_returns_svg_as_fenced_text_when_only_svg_present():
+    """When the clipboard has only image/svg+xml (no text, no raster image),
+    clipboard_paste returns the SVG markup in an ```svg fenced code block."""
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch(
+            "mcp_clipboard.server.read_clipboard",
+            new=AsyncMock(
+                side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""
+            ),
+        ),
+    ):
+        result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "```svg" in result
+    assert _SAMPLE_SVG in result
+    assert "Clipboard contains SVG" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_prefers_raster_over_svg_when_both_present():
+    """When the clipboard has both image/png and image/svg+xml, clipboard_paste
+    returns the rasterized PNG as an Image, not the SVG markup as text."""
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32  # plausible PNG-ish bytes
+
+    with (
+        patch("mcp_clipboard.server.read_clipboard", new=AsyncMock(return_value="")),
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/png", "image/svg+xml"]),
+        ),
+        patch(
+            "mcp_clipboard.server.read_clipboard_image",
+            new=AsyncMock(return_value=png_bytes),
+        ),
+    ):
+        result = await clipboard_paste()
+
+    assert isinstance(result, Image)
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_truncates_oversized_svg():
+    """SVG longer than _MAX_CONTENT_CHARS is truncated with a marker line,
+    matching the RTF fallback's truncation behavior."""
+    from mcp_clipboard.server import _MAX_CONTENT_CHARS
+
+    big_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg">'
+        + ("<rect/>" * (_MAX_CONTENT_CHARS // 7))
+        + "</svg>"
+    )
+    assert len(big_svg) > _MAX_CONTENT_CHARS
+
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch(
+            "mcp_clipboard.server.read_clipboard",
+            new=AsyncMock(side_effect=lambda mime, sel: big_svg if mime == "image/svg+xml" else ""),
+        ),
+    ):
+        result = await clipboard_paste()
+
+    assert isinstance(result, str)
+    assert "[truncated at" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_logs_and_falls_through_when_svg_read_errors():
+    """If the SVG text read raises ClipboardError, the auto-dispatch logs and
+    falls through to the binary-format check rather than crashing."""
+
+    def _raise_on_svg(mime: str, sel: str) -> str:
+        if mime == "image/svg+xml":
+            raise ClipboardError("boom")
+        return ""
+
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch("mcp_clipboard.server.read_clipboard", new=AsyncMock(side_effect=_raise_on_svg)),
+    ):
+        result = await clipboard_paste()
+
+    # SVG read raised; no raster, no binary, so we end up at "Clipboard is empty."
+    assert isinstance(result, str)
+    assert "Clipboard is empty" in result
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_does_not_route_svg_through_image_read_path():
+    """Regression: the auto-dispatch must NOT call read_clipboard_image with
+    'image/svg+xml'. That was the original Windows breakage -- the binary
+    reader rejected SVG as 'Unsupported image type' and clipboard_paste
+    silently returned 'Clipboard is empty'."""
+    image_read = AsyncMock()  # would record the call if it happened
+
+    with (
+        patch(
+            "mcp_clipboard.server.list_clipboard_formats",
+            new=AsyncMock(return_value=["image/svg+xml"]),
+        ),
+        patch("mcp_clipboard.server.read_clipboard_image", new=image_read),
+        patch(
+            "mcp_clipboard.server.read_clipboard",
+            new=AsyncMock(
+                side_effect=lambda mime, sel: _SAMPLE_SVG if mime == "image/svg+xml" else ""
+            ),
+        ),
+    ):
+        await clipboard_paste()
+
+    image_read.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Windows UTF-8 stdin encoding (#129)
 #
 # PowerShell's [Console]::In.ReadToEnd() decodes stdin using
