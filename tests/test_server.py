@@ -1985,8 +1985,23 @@ async def test_run_binary_exit_code_2_raises():
 
 @pytest.mark.asyncio
 async def test_run_binary_returns_raw_bytes():
-    """_run_binary returns raw bytes from stdout."""
-    result = await _run_binary(["printf", "\\x89PNG"])
+    """_run_binary returns raw bytes from stdout.
+
+    Uses /usr/bin/env python3 with -c rather than printf because BSD
+    printf (macOS, BSDs) does not expand \\xNN escape sequences -- it
+    emits the literal characters -- whereas GNU printf (Linux) does.
+    Python's sys.stdout.buffer.write is portable across all platforms.
+    Skipped on Windows where /usr/bin/env is not present.
+    """
+    import sys as _sys
+
+    if _sys.platform == "win32":
+        import pytest as _pytest
+
+        _pytest.skip("python -c stdout-bytes test does not need a Windows variant")
+    result = await _run_binary(
+        ["python3", "-c", "import sys; sys.stdout.buffer.write(b'\\x89PNG')"]
+    )
     assert result == b"\x89PNG"
 
 
