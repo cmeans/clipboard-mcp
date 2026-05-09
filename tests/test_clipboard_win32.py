@@ -239,6 +239,43 @@ def test_open_clipboard_caches_owner_window_across_calls(clipboard_win32, fake_w
         assert call.args == (0x10001,)
 
 
+def test_get_clipboard_hwnd_is_thread_safe(clipboard_win32, fake_win32clipboard):
+    """Concurrent first-callers must not leak HWNDs. clipboard.py dispatches
+    the synchronous Win32 path through asyncio.to_thread, so a burst of
+    concurrent first-calls into _get_clipboard_hwnd is reachable. Without
+    the double-checked lock both callers would race past the None-check and
+    each invoke CreateWindowEx, stranding one window per burst.
+    """
+    import sys as _sys
+    import threading as _threading
+
+    fake_win32gui = _sys.modules["win32gui"]
+
+    n_threads = 32
+    barrier = _threading.Barrier(n_threads)
+    hwnds: list[int] = []
+    hwnds_lock = _threading.Lock()
+
+    def race():
+        barrier.wait()
+        h = clipboard_win32._get_clipboard_hwnd()
+        with hwnds_lock:
+            hwnds.append(h)
+
+    threads = [_threading.Thread(target=race) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert fake_win32gui.CreateWindowEx.call_count == 1, (
+        f"CreateWindowEx must be called exactly once across {n_threads} concurrent "
+        f"first-callers; got {fake_win32gui.CreateWindowEx.call_count}"
+    )
+    assert len(hwnds) == n_threads
+    assert set(hwnds) == {0x10001}, f"all callers must see the same cached HWND; got {set(hwnds)}"
+
+
 def test_open_clipboard_with_retry_succeeds_after_transient_failure(
     clipboard_win32, fake_win32clipboard
 ):

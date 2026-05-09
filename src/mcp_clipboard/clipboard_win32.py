@@ -40,6 +40,7 @@ a confusing pywin32 error later.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -80,6 +81,7 @@ _format_id_cache: dict[str, int] = {}
 
 
 _owner_hwnd: int | None = None
+_owner_hwnd_lock = threading.Lock()
 
 
 def _get_clipboard_hwnd() -> int:
@@ -141,32 +143,41 @@ def _get_clipboard_hwnd() -> int:
     if _owner_hwnd is not None:
         return _owner_hwnd
 
-    import win32con  # type: ignore[import-not-found,import-untyped]
-    import win32gui  # type: ignore[import-not-found,import-untyped]
+    # Double-checked locking: clipboard.py dispatches the synchronous Win32
+    # path through asyncio.to_thread, so two concurrent first-calls could
+    # otherwise each race past the None-check and create two windows
+    # (leaking one HWND per burst). Re-check inside the lock so only one
+    # caller does the CreateWindowEx; the rest see the cached value.
+    with _owner_hwnd_lock:
+        if _owner_hwnd is not None:
+            return _owner_hwnd
 
-    # CreateWindowEx with class="STATIC" (built-in USER32 class, no
-    # registration needed) and parent=HWND_MESSAGE creates a message-only
-    # window: invisible, top-level, and unable to receive UI input. The
-    # other zero parameters mean default extended style, no menu, no
-    # creation params. The handle returned is the HWND we use as the
-    # clipboard owner for the rest of the process's lifetime.
-    _owner_hwnd = int(
-        win32gui.CreateWindowEx(
-            0,  # extended style
-            "STATIC",  # built-in class
-            None,  # window name
-            0,  # style
-            0,  # x
-            0,  # y
-            0,  # width
-            0,  # height
-            win32con.HWND_MESSAGE,  # parent: message-only top-level
-            0,  # menu
-            0,  # hInstance
-            None,  # creation params
+        import win32con  # type: ignore[import-not-found,import-untyped]
+        import win32gui  # type: ignore[import-not-found,import-untyped]
+
+        # CreateWindowEx with class="STATIC" (built-in USER32 class, no
+        # registration needed) and parent=HWND_MESSAGE creates a message-only
+        # window: invisible, top-level, and unable to receive UI input. The
+        # other zero parameters mean default extended style, no menu, no
+        # creation params. The handle returned is the HWND we use as the
+        # clipboard owner for the rest of the process's lifetime.
+        _owner_hwnd = int(
+            win32gui.CreateWindowEx(
+                0,  # extended style
+                "STATIC",  # built-in class
+                None,  # window name
+                0,  # style
+                0,  # x
+                0,  # y
+                0,  # width
+                0,  # height
+                win32con.HWND_MESSAGE,  # parent: message-only top-level
+                0,  # menu
+                0,  # hInstance
+                None,  # creation params
+            )
         )
-    )
-    return _owner_hwnd
+        return _owner_hwnd
 
 
 def _open_clipboard_with_retry(win32clipboard: Any, retries: int = 10, delay_ms: int = 50) -> None:
