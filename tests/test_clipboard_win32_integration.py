@@ -25,7 +25,7 @@ if sys.platform != "win32":
 
 # Imports happen after the skip so non-Windows pytest collection does not
 # trigger the pywin32 import error.
-from mcp_clipboard import clipboard_win32 as _w32  # noqa: E402
+from mcp_clipboard import clipboard_win32 as _w32
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +54,15 @@ def test_plain_utf8_punctuation_roundtrip():
     PowerShell-backed backend lossy-transliterated to ASCII via CP1252.
     Must round-trip byte-for-byte through CF_UNICODETEXT."""
     _reset_clipboard()
-    sample = "before — ‘curly’ “double” … after"
+    # Built from explicit \N escapes so ruff's RUF001 ambiguity check
+    # does not flag the curly quotes / em dash / ellipsis as look-alikes
+    # of ASCII grave/quote/period.
+    sample = (
+        "before \N{EM DASH} \N{LEFT SINGLE QUOTATION MARK}curly"
+        "\N{RIGHT SINGLE QUOTATION MARK} \N{LEFT DOUBLE QUOTATION MARK}"
+        "double\N{RIGHT DOUBLE QUOTATION MARK} \N{HORIZONTAL ELLIPSIS}"
+        " after"
+    )
     _w32.write_text(sample, "text/plain")
     assert _w32.read_text("text/plain") == sample
 

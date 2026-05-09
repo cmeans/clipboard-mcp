@@ -108,7 +108,14 @@ def _import_win32clipboard() -> Any:
     Raises ImportError with a clear message on non-Windows platforms.
     """
     try:
-        import win32clipboard  # type: ignore[import-not-found]
+        # On Linux / macOS pywin32 is not installed (the sys_platform marker
+        # in pyproject.toml constrains it to Windows), so the module is
+        # missing -> ImportError. On Windows pywin32 ships without type
+        # stubs -- types-pywin32 exists on PyPI but adds an extra dep
+        # purely for static analysis. Suppress both error codes here so
+        # mypy is happy on Linux CI (import-not-found) and Windows CI
+        # (import-untyped) without taking on the stub package.
+        import win32clipboard  # type: ignore[import-not-found,import-untyped]
     except ImportError as exc:
         raise ImportError(
             "clipboard_win32 requires pywin32, which is only installed on "
@@ -128,7 +135,9 @@ def _register_format(name: str) -> int:
     if name in _format_id_cache:
         return _format_id_cache[name]
     win32clipboard = _import_win32clipboard()
-    fmt_id = win32clipboard.RegisterClipboardFormat(name)
+    # pywin32 has no type stubs in the configured set; cast to int so mypy
+    # knows the cached value matches the declared return type.
+    fmt_id: int = int(win32clipboard.RegisterClipboardFormat(name))
     _format_id_cache[name] = fmt_id
     return fmt_id
 
@@ -158,7 +167,8 @@ _MIME_TO_FORMAT_NAME: dict[str, str] = {
 def _format_id_for_mime(win32clipboard: Any, mime_type: str) -> int:
     """Resolve a MIME type to its Win32 clipboard format ID."""
     if mime_type == "text/plain":
-        return win32clipboard.CF_UNICODETEXT
+        # pywin32 has no type stubs in the configured set; cast to int.
+        return int(win32clipboard.CF_UNICODETEXT)
     name = _MIME_TO_FORMAT_NAME.get(mime_type)
     if name is None:
         raise ValueError(f"Unsupported MIME type for Win32 clipboard: {mime_type!r}")
@@ -328,7 +338,8 @@ def _format_name(win32clipboard: Any, fmt: int) -> str:
         return standard[fmt]
     # Registered (custom) formats: look up via the Win32 API.
     try:
-        name = win32clipboard.GetClipboardFormatName(fmt)
+        # pywin32 has no type stubs in the configured set; coerce to str.
+        name = str(win32clipboard.GetClipboardFormatName(fmt))
         if name:
             return name
     except Exception:

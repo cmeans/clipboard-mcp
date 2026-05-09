@@ -187,7 +187,12 @@ def _find_wayland_display() -> str | None:
     Scans $XDG_RUNTIME_DIR (falling back to /run/user/<uid>) for wayland-*
     Unix domain sockets.  Returns the socket name (e.g. "wayland-0") or None.
     """
-    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    # os.getuid is POSIX-only (KeyError-free on Linux/macOS, AttributeError on
+    # Windows). The Wayland path is never the active backend on Windows so
+    # the fallback construction is dead anyway, but the test suite mocks
+    # _get_backend to "wayland" on every platform; keep this Windows-safe.
+    getuid = getattr(os, "getuid", lambda: 0)
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{getuid()}")
     runtime_dir = Path(xdg_runtime)
     if not runtime_dir.is_dir():
         return None
@@ -224,7 +229,10 @@ def _wayland_env() -> dict[str, str] | None:
         return None  # both set — let subprocess inherit normally
 
     # Determine the runtime dir (needed by wl-paste even if WAYLAND_DISPLAY is set)
-    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    # os.getuid is POSIX-only -- fall back to 0 on Windows so the path simply
+    # fails the is_dir() check below and we return None.
+    getuid = getattr(os, "getuid", lambda: 0)
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{getuid()}"
     if not Path(xdg_runtime).is_dir():
         return None
 

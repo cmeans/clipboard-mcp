@@ -689,8 +689,19 @@ async def test_paste_empty_clipboard_no_binary():
 
 
 def _fake_runtime_dir(tmp_path, sockets=("wayland-0",)):
-    """Create fake Wayland socket files in a temp dir and return the path."""
+    """Create fake Wayland socket files in a temp dir and return the path.
+
+    Wayland is Linux-only; AF_UNIX is unavailable on Windows and macOS's
+    pytest tmp_path under /private/var/folders/... overruns the AF_UNIX
+    104-byte path limit. Skip the calling test cleanly on non-Linux rather
+    than producing a false failure for Linux-specific code paths."""
     import socket
+    import sys as _sys
+
+    if _sys.platform != "linux":
+        import pytest as _pytest
+
+        _pytest.skip("Wayland AF_UNIX socket helpers are Linux-only")
 
     for name in sockets:
         sock_path = tmp_path / name
