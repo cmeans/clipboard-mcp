@@ -12,6 +12,50 @@ All notable changes to this project will be documented here.
   record `mcp_clipboard_version` from inside an MCP session
   without depending on a shell or filesystem access.
 
+### Added
+- **Cross-platform CI matrix.** `.github/workflows/ci.yml` now runs the
+  unit-test suite on `ubuntu-latest`, `windows-latest`, and `macos-latest`
+  across Python 3.11 / 3.12 / 3.13 with `fail-fast: false`. The Linux
+  cell preserves coverage upload to Codecov; the other cells just run
+  the tests. Per-push verification of the platform-specific code paths
+  replaces what previously required a manual QEMU round-trip.
+- **`integration-windows` CI job.** Exercises the new pywin32-backed
+  Windows clipboard against a real Windows Server 2025 session via the
+  new `tests/test_clipboard_win32_integration.py` suite (round-trips
+  text/plain with non-ASCII, text/html, text/rtf, image/svg+xml,
+  multi-format atomic writes, list_formats; the tests self-skip on
+  non-Windows so they are harmless on local Linux pytest runs).
+
+### Changed
+- **Windows backend rewritten on top of `pywin32`.** Earlier versions
+  shelled out to `powershell -NoProfile -Command "..."` once per MCP
+  tool call. That architecture had two structural defects: (1) a
+  cross-process read-after-write race where the OLE clipboard chain
+  needed to fully propagate a `SetDataObject(.., copy=true)` snapshot
+  from the exiting writer process before a fresh reader subprocess
+  could see it (the silent-no-op symptom captured by mc-005, mc-009,
+  and mc-020 in the Windows e2e suite), and (2) PowerShell stdin /
+  stdout codepage transcoding that lossy-ified non-ASCII codepoints.
+  The new backend in `mcp_clipboard/clipboard_win32.py` keeps clipboard
+  ownership inside the long-lived MCP-server Python process and uses
+  the standard Win32 `OpenClipboard` / `EmptyClipboard` /
+  `SetClipboardData` / `GetClipboardData` / `EnumClipboardFormats` /
+  `RegisterClipboardFormat` / `CloseClipboard` API directly via
+  `pywin32`. No subprocess spawn, no codepage transcoding, no cross-
+  process race, no per-op PowerShell cold-start. text/plain uses
+  `CF_UNICODETEXT` (UTF-16 native); text/html / text/rtf / image/svg+xml
+  use registered custom formats with UTF-8 byte payloads. Multi-format
+  writes (`clipboard_copy_markdown`) commit all formats inside a single
+  `OpenClipboard` transaction, so paste targets see all formats
+  simultaneously without the prior write-multi PowerShell hang. The
+  encoding fixes from #131 (input) and #142 / #132 (output) become
+  structurally unnecessary — there is no console code page in the
+  read or write path. `pywin32` is added as a Windows-only dependency
+  (`sys_platform == 'win32'` marker). Phase 1 covers text formats
+  (text/plain, text/html, text/rtf, image/svg+xml). Phase 2 (a
+  follow-up PR) will port `_windows_read_image` and `_windows_write_image`
+  to `pywin32` with DIB ↔ PNG conversion. Closes #143.
+
 ### Fixed
 - Windows: non-ASCII characters survive `clipboard_paste` and
   `clipboard_read_raw` round-trips. Em dash (U+2014), curly quotes
