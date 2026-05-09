@@ -630,7 +630,7 @@ async def clipboard_copy_markdown(text: str) -> str:
         "openWorldHint": False,
     },
 )
-def clipboard_version() -> dict[str, str]:
+async def clipboard_version() -> dict[str, str]:
     return {"name": "mcp-clipboard", "version": __version__}
 
 

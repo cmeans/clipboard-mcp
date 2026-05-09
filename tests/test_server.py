@@ -4310,11 +4310,12 @@ def test_cli_check_dispatches_through_main(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_clipboard_version_returns_package_version():
+@pytest.mark.asyncio
+async def test_clipboard_version_returns_package_version():
     """clipboard_version returns the live package __version__."""
     from mcp_clipboard import __version__
 
-    result = clipboard_version()
+    result = await clipboard_version()
     assert result == {"name": "mcp-clipboard", "version": __version__}
 
 
