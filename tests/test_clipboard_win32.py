@@ -55,15 +55,28 @@ def fake_win32clipboard() -> MagicMock:
     prior = sys.modules.get("win32clipboard")
     sys.modules["win32clipboard"] = fake
 
-    # _open_clipboard_with_retry now also imports win32gui to obtain the
-    # desktop HWND. Inject a stub that returns a stable non-zero integer so
-    # tests can assert OpenClipboard was called with a non-NULL hwnd (the
-    # invariant that fixes the SetClipboardData silent-no-op for custom
-    # registered formats; see clipboard_win32._get_clipboard_hwnd).
+    # _get_clipboard_hwnd creates a process-owned message-only window via
+    # win32gui.CreateWindowEx(class="STATIC", parent=HWND_MESSAGE). Stub
+    # win32gui and win32con so the tests can run on Linux without pywin32,
+    # and assert that OpenClipboard receives the process-owned HWND (not
+    # NULL, not the desktop, not anything system-owned). The HWND value
+    # 0x10001 is arbitrary; the invariant is "non-NULL and from CreateWindowEx".
     fake_win32gui = MagicMock(name="win32gui")
-    fake_win32gui.GetDesktopWindow.return_value = 0x10001  # stable non-zero
+    fake_win32gui.CreateWindowEx.return_value = 0x10001
     prior_win32gui = sys.modules.get("win32gui")
     sys.modules["win32gui"] = fake_win32gui
+
+    fake_win32con = MagicMock(name="win32con")
+    fake_win32con.HWND_MESSAGE = -3  # the actual Win32 constant, for fidelity
+    prior_win32con = sys.modules.get("win32con")
+    sys.modules["win32con"] = fake_win32con
+
+    # The real module caches the HWND for the lifetime of the process.
+    # Reset between tests so each test starts from "no window created yet"
+    # and CreateWindowEx call counts are deterministic.
+    from mcp_clipboard import clipboard_win32 as _mod
+
+    _mod._owner_hwnd = None
 
     try:
         yield fake
@@ -76,6 +89,11 @@ def fake_win32clipboard() -> MagicMock:
             sys.modules.pop("win32gui", None)
         else:
             sys.modules["win32gui"] = prior_win32gui
+        if prior_win32con is None:
+            sys.modules.pop("win32con", None)
+        else:
+            sys.modules["win32con"] = prior_win32con
+        _mod._owner_hwnd = None
 
 
 @pytest.fixture
@@ -151,22 +169,74 @@ def test_open_clipboard_with_retry_succeeds_on_first_attempt(clipboard_win32, fa
     fake_win32clipboard.OpenClipboard.assert_called_once()
 
 
-def test_open_clipboard_passes_non_null_desktop_hwnd(clipboard_win32, fake_win32clipboard):
-    """Critical regression guard: OpenClipboard must be called with a non-NULL
-    hwnd (the desktop window handle from win32gui.GetDesktopWindow). MSDN
-    explicitly warns that NULL hwnd causes EmptyClipboard to set ownership to
-    NULL and SetClipboardData to fail silently for registered custom formats
-    -- the exact bug class that produced the SVG silent-no-op symptoms in
-    mc-005 / mc-009 / mc-020 of the PR #146 verification run before this fix.
-    The desktop window handle is the simplest stable HWND that gives
-    EmptyClipboard a non-NULL owner so SetClipboardData works for any format."""
+def test_open_clipboard_passes_process_owned_hwnd(clipboard_win32, fake_win32clipboard):
+    """Critical regression guard: OpenClipboard must be called with a process-
+    owned HWND created via CreateWindowEx, not NULL and not a system-owned
+    window like GetDesktopWindow().
+
+    SetClipboardData requires the calling process to be the clipboard owner.
+    EmptyClipboard sets ownership to whatever window was passed to OpenClipboard.
+    NULL or system-owned windows leave us not-the-owner and SetClipboardData
+    silently fails for registered custom formats -- the exact bug class that
+    produced the SVG silent-no-op symptoms in mc-005 / mc-009 / mc-020 of the
+    PR #146 verification runs before this fix.
+
+    The fixture stubs CreateWindowEx to return 0x10001 (representing a
+    message-only "STATIC" window owned by our process); OpenClipboard MUST
+    receive that exact value."""
     fake_win32clipboard.OpenClipboard.return_value = None
 
     clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
 
-    # The fixture stub returns 0x10001 from win32gui.GetDesktopWindow;
-    # OpenClipboard MUST receive that, never 0/None.
     fake_win32clipboard.OpenClipboard.assert_called_once_with(0x10001)
+
+
+def test_open_clipboard_creates_message_only_window(clipboard_win32, fake_win32clipboard):
+    """The HWND we pass to OpenClipboard comes from CreateWindowEx with
+    class='STATIC' (built-in USER32 class, no registration needed) and
+    parent=HWND_MESSAGE (top-level message-only window, never visible).
+    This is the same pattern pyperclip uses, and matches what .NET's
+    Clipboard.SetDataObject and PowerShell's Set-Clipboard do internally
+    via the OLE API."""
+    import sys as _sys
+
+    fake_win32clipboard.OpenClipboard.return_value = None
+
+    clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
+
+    fake_win32gui = _sys.modules["win32gui"]
+    fake_win32con = _sys.modules["win32con"]
+    fake_win32gui.CreateWindowEx.assert_called_once()
+    args = fake_win32gui.CreateWindowEx.call_args[0]
+    # Positional args: (extStyle, className, windowName, style, x, y, w, h,
+    #                   parent, menu, hInstance, lpParam)
+    assert args[1] == "STATIC", f"window class must be 'STATIC', got {args[1]!r}"
+    assert args[8] == fake_win32con.HWND_MESSAGE, (
+        f"parent must be HWND_MESSAGE for a message-only window, got {args[8]!r}"
+    )
+
+
+def test_open_clipboard_caches_owner_window_across_calls(clipboard_win32, fake_win32clipboard):
+    """The owner window is created lazily on first call and cached for the
+    process lifetime. Subsequent OpenClipboard calls reuse the same HWND
+    rather than spawning a new window each time -- otherwise high-frequency
+    clipboard ops would leak windows."""
+    import sys as _sys
+
+    fake_win32clipboard.OpenClipboard.return_value = None
+    fake_win32gui = _sys.modules["win32gui"]
+
+    clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
+    clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
+    clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
+
+    # CreateWindowEx fires once even though _open_clipboard_with_retry was
+    # called three times.
+    assert fake_win32gui.CreateWindowEx.call_count == 1
+    # OpenClipboard fires three times with the same cached HWND.
+    assert fake_win32clipboard.OpenClipboard.call_count == 3
+    for call in fake_win32clipboard.OpenClipboard.call_args_list:
+        assert call.args == (0x10001,)
 
 
 def test_open_clipboard_with_retry_succeeds_after_transient_failure(
