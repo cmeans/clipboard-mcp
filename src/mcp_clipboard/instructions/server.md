@@ -34,3 +34,8 @@ is set due to a single-MIME-per-call limit (Wayland auto-advertises a
 `text/plain` target whose bytes are the rendered HTML, not the markdown
 source); for a plain-text paste of the markdown source on Linux, call
 `clipboard_copy` with the markdown source directly.
+
+Use `clipboard_version` to record or report which build of mcp-clipboard is
+serving the current MCP session. Diagnostic only; useful when the user asks
+which version is installed, or when a test harness needs to capture the
+running version into a result entry.

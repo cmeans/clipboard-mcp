@@ -50,6 +50,7 @@ from mcp_clipboard.server import (
     clipboard_list_formats,
     clipboard_paste,
     clipboard_read_raw,
+    clipboard_version,
 )
 
 # ---------------------------------------------------------------------------
@@ -4302,3 +4303,25 @@ def test_cli_check_dispatches_through_main(monkeypatch):
     # _run_check returned 0; main() called sys.exit(0).
     assert exc_info.value.code == 0
     mock_run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# clipboard_version
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clipboard_version_returns_package_version():
+    """clipboard_version returns the live package __version__."""
+    from mcp_clipboard import __version__
+
+    result = await clipboard_version()
+    assert result == {"name": "mcp-clipboard", "version": __version__}
+
+
+def test_load_instruction_clipboard_version():
+    """The clipboard_version instruction file is shipped and loadable."""
+    result = _load_instruction("clipboard_version")
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "version" in result.lower()

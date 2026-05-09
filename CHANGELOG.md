@@ -4,6 +4,14 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+- New `clipboard_version` MCP tool that returns the running
+  mcp-clipboard package version. Diagnostic surface for hosts and
+  agents that don't otherwise expose `serverInfo` to the model
+  (notably Claude Desktop on Windows). Test harnesses can now
+  record `mcp_clipboard_version` from inside an MCP session
+  without depending on a shell or filesystem access.
+
 ## [2.6.1] - 2026-05-07
 
 ### Fixed

@@ -46,13 +46,14 @@ git tag test-v0.1.x && git push origin test-v0.1.x  # triggers test-publish.yml 
 
 Three-layer design with clean separation:
 
-- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 6 tools:
+- **server.py** — MCP server (`FastMCP`, name `mcp_clipboard`) exposing 7 tools:
   - `clipboard_paste(output_format, include_schema, selection)` — Primary tool. Handles any clipboard content: tables → markdown/json/csv; non-tabular → smart formatting (JSON, code, URL, text). Images are returned as base64-encoded image content. Audio/video are detected and reported. `selection` defaults to `"clipboard"`; pass `"primary"` on X11/Wayland to read the middle-click/select-text-to-paste buffer.
   - `clipboard_copy(content)` — Writes text to the system clipboard.
   - `clipboard_copy_markdown(text)` — Renders markdown to HTML and places both formats on the clipboard so paste targets pick the right one. macOS/Windows write both atomically via multi-format clipboard APIs; Wayland/X11 are single-MIME and write only `text/html`.
   - `clipboard_copy_image(image_data, mime_type)` — Writes a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through, no re-encoding. Magic bytes are validated against the declared MIME.
   - `clipboard_read_raw(mime_type, selection)` — Returns raw clipboard content for a given MIME type (truncated at 50KB). Rejects binary MIME types. Accepts `selection="primary"` on X11/Wayland.
   - `clipboard_list_formats(selection)` — Lists available MIME types on clipboard. Accepts `selection="primary"` on X11/Wayland.
+  - `clipboard_version()` — Returns the running mcp-clipboard package version as `{"name": "mcp-clipboard", "version": "<x.y.z>"}`. Diagnostic surface for hosts that don't expose the standard MCP `serverInfo` block to the model, and for test harnesses that need to record which build served a given run.
 
 - **clipboard.py** — Platform-agnostic clipboard abstraction. Auto-detects backend (Wayland `wl-paste`/`wl-copy`, X11 `xclip`, macOS `osascript`/`pbpaste`/`pbcopy`, Windows PowerShell). All operations are async with 5-second timeout. Exit code 1 means "format not available" (not an error). macOS UTI types and Windows format names are mapped to MIME types in `list_formats`. Supports text read/write and binary image reads.
 
