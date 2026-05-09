@@ -87,6 +87,7 @@ Linux only. macOS and Windows have no equivalent buffer; passing `selection="pri
 | `clipboard_copy_image` | Write a PNG or JPEG image to the system clipboard from base64-encoded bytes. Pass-through with no re-encoding; magic bytes are validated against the declared MIME. Use `clipboard_copy` for text. |
 | `clipboard_list_formats` | List what MIME types are currently on the clipboard. Accepts `selection="primary"` for the X11/Wayland PRIMARY selection. |
 | `clipboard_read_raw` | Return raw clipboard content for a given MIME type (diagnostic). Any non-binary type passes through; only `image/*`, `audio/*`, `video/*`, and `application/octet-stream` are rejected. Use `clipboard_paste` for images. Accepts `selection="primary"` for the X11/Wayland PRIMARY selection. |
+| `clipboard_version` | Return the running mcp-clipboard package version as `{"name": "mcp-clipboard", "version": "<x.y.z>"}`. Diagnostic. Useful for hosts that don't surface the standard MCP `serverInfo` block to the model, and for test harnesses that need to record which build served a given run. |
 
 ## Setup
 
@@ -392,7 +393,8 @@ mcp-clipboard/
 │   │   ├── clipboard_copy_markdown.md
 │   │   ├── clipboard_paste.md
 │   │   ├── clipboard_read_raw.md
-│   │   └── clipboard_list_formats.md
+│   │   ├── clipboard_list_formats.md
+│   │   └── clipboard_version.md
 │   └── icons/               # SVG icons for MCP client display (light/dark)
 │       ├── mcp-clipboard-logo-light.svg
 │       └── mcp-clipboard-logo-dark.svg
