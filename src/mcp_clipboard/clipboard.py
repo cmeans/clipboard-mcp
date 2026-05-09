@@ -417,11 +417,27 @@ async def _macos_list_formats(selection: str = "clipboard") -> list[str]:
     return result
 
 
+# PowerShell's default [Console]::OutputEncoding is the active console code
+# page (typically CP1252 / OEM ANSI on US-English Windows). When Get-Clipboard
+# returns a UTF-16 string and PowerShell pipes it to stdout for our subprocess
+# capture, that encoder best-fit-transliterates non-ASCII codepoints (em dash
+# -> hyphen, curly quote -> straight, ellipsis -> period) and substitutes
+# unmappable ones (CJK, Arabic, emoji) with U+003F. The bytes on the clipboard
+# are correct; only the way back to Python is lossy. Forcing UTF-8 stdout in
+# every read branch eliminates the dependence on the parent's console codepage.
+# See #142 for the diagnostic chain (mc-026/027/028/102 confirmed the clipboard
+# bytes intact while mc-002/003 saw the corruption from the same code path
+# under a different parent codepage). Sibling fix to #129's input-side
+# preamble in _windows_write* (see _WINDOWS_UTF8_PREAMBLE).
+_WINDOWS_UTF8_OUTPUT_PREAMBLE = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+
+
 async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
     _reject_non_clipboard_selection(selection, "Windows")
     if mime_type == "text/html":
-        # PowerShell: Get HTML format from clipboard
         script = (
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE
+            + "Add-Type -AssemblyName System.Windows.Forms; "
             "[System.Windows.Forms.Clipboard]::GetData([System.Windows.Forms.DataFormats]::Html)"
         )
         return await _run(
@@ -429,7 +445,7 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                f"Add-Type -AssemblyName System.Windows.Forms; {script}",
+                script,
             ],
             allow_empty_exit=False,
         )
@@ -440,14 +456,15 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-Clipboard",
+                _WINDOWS_UTF8_OUTPUT_PREAMBLE + "Get-Clipboard",
             ],
             allow_empty_exit=False,
         )
 
     if mime_type == "text/rtf":
         script = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE
+            + "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData("
             "[System.Windows.Forms.DataFormats]::Rtf); "
             "if ($data -eq $null) { return }; $data"
@@ -465,12 +482,10 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
     if mime_type == "image/svg+xml":
         # SVG is written via _windows_write_typed as a custom format string
         # 'image/svg+xml' on the DataObject. Reading it back uses the same
-        # format string. Output encoding matters here too: PowerShell's
-        # default OutputEncoding can mangle the UTF-8 SVG markup on the way
-        # back to Python's _run() decoder. Force UTF-8 on stdout.
+        # format string. Same UTF-8 stdout preamble as the text branches.
         script = (
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-            "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE
+            + "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData('image/svg+xml'); "
             "if ($data -eq $null) { return }; $data"
         )

@@ -996,6 +996,29 @@ async def test_windows_read_rtf():
     assert "Rtf" in cmd[-1]
 
 
+@pytest.mark.parametrize("mime_type", ["text/plain", "text/html", "text/rtf", "image/svg+xml"])
+@pytest.mark.asyncio
+async def test_windows_read_sets_utf8_output_encoding(mime_type):
+    """Every PowerShell-backed _windows_read branch must prepend
+    [Console]::OutputEncoding = UTF8 so non-ASCII codepoints survive the
+    return trip to Python. Without this, PowerShell's stdout encoder defaults
+    to the parent's console code page (typically CP1252 on Windows), which
+    transliterates em dash to hyphen, ellipsis to period, and substitutes
+    unmappable codepoints (CJK, Arabic, emoji) with U+003F. Regression
+    guard for #142."""
+    with patch(
+        "mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=""
+    ) as mock_run:
+        await _windows_read(mime_type)
+
+    cmd = mock_run.call_args[0][0]
+    script = cmd[-1]
+    assert "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8" in script, (
+        f"PowerShell script for {mime_type} is missing the UTF-8 stdout preamble; "
+        f"non-ASCII codepoints will be lossy on round-trip. Script: {script!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_windows_list_formats_maps_names_to_mime():
     """_windows_list_formats maps known Windows format names to MIME types and

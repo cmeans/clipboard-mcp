@@ -12,6 +12,26 @@ All notable changes to this project will be documented here.
   record `mcp_clipboard_version` from inside an MCP session
   without depending on a shell or filesystem access.
 
+### Fixed
+- Windows: non-ASCII characters survive `clipboard_paste` and
+  `clipboard_read_raw` round-trips. Em dash (U+2014), curly quotes
+  (U+2018-U+201D), ellipsis (U+2026), and non-Latin scripts (CJK,
+  Arabic, emoji) were being transliterated to the closest ASCII
+  equivalent or substituted with `?` on the way out of PowerShell.
+  Root cause: `_windows_read` for text/plain, text/html, and
+  text/rtf invoked PowerShell without setting
+  `[Console]::OutputEncoding`, leaving stdout encoded with the
+  parent's active console code page (typically CP1252 on US-English
+  Windows). The clipboard bytes are stored correctly in UTF-16; the
+  loss happened only on the way back to Python. Fix prepends
+  `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;` to
+  every PowerShell-backed `_windows_read` branch, mirroring the
+  existing `_WINDOWS_UTF8_PREAMBLE` on the input side from #131.
+  The Windows e2e suite captured this directly: mc-103 / mc-301 /
+  mc-302 confirm the clipboard bytes round-trip byte-perfect; the
+  same input under different parent codepages produced corrupted
+  vs. clean reads in the same run (mc-002/003 vs mc-026/027/028).
+
 ## [2.6.1] - 2026-05-07
 
 ### Fixed
