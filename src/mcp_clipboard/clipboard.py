@@ -427,8 +427,9 @@ async def _macos_list_formats(selection: str = "clipboard") -> list[str]:
 # every read branch eliminates the dependence on the parent's console codepage.
 # See #142 for the diagnostic chain (mc-026/027/028/102 confirmed the clipboard
 # bytes intact while mc-002/003 saw the corruption from the same code path
-# under a different parent codepage). Sibling fix to #129's input-side
-# preamble in _windows_write* (see _WINDOWS_UTF8_PREAMBLE).
+# under a different parent codepage). Sibling fix to #131's input-side preamble
+# (which closed #129) in _windows_write* (see _WINDOWS_UTF8_PREAMBLE). Also
+# closes #132, the read-direction tracker filed during #131's QA review.
 _WINDOWS_UTF8_OUTPUT_PREAMBLE = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
 
 
