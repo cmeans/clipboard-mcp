@@ -1006,9 +1006,7 @@ async def test_windows_read_sets_utf8_output_encoding(mime_type):
     transliterates em dash to hyphen, ellipsis to period, and substitutes
     unmappable codepoints (CJK, Arabic, emoji) with U+003F. Regression
     guard for #142."""
-    with patch(
-        "mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value=""
-    ) as mock_run:
+    with patch("mcp_clipboard.clipboard._run", new_callable=AsyncMock, return_value="") as mock_run:
         await _windows_read(mime_type)
 
     cmd = mock_run.call_args[0][0]

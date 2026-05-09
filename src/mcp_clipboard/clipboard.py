@@ -436,8 +436,7 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
     _reject_non_clipboard_selection(selection, "Windows")
     if mime_type == "text/html":
         script = (
-            _WINDOWS_UTF8_OUTPUT_PREAMBLE
-            + "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "[System.Windows.Forms.Clipboard]::GetData([System.Windows.Forms.DataFormats]::Html)"
         )
         return await _run(
@@ -463,8 +462,7 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
 
     if mime_type == "text/rtf":
         script = (
-            _WINDOWS_UTF8_OUTPUT_PREAMBLE
-            + "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData("
             "[System.Windows.Forms.DataFormats]::Rtf); "
             "if ($data -eq $null) { return }; $data"
@@ -484,8 +482,7 @@ async def _windows_read(mime_type: str, selection: str = "clipboard") -> str:
         # 'image/svg+xml' on the DataObject. Reading it back uses the same
         # format string. Same UTF-8 stdout preamble as the text branches.
         script = (
-            _WINDOWS_UTF8_OUTPUT_PREAMBLE
-            + "Add-Type -AssemblyName System.Windows.Forms; "
+            _WINDOWS_UTF8_OUTPUT_PREAMBLE + "Add-Type -AssemblyName System.Windows.Forms; "
             "$data = [System.Windows.Forms.Clipboard]::GetData('image/svg+xml'); "
             "if ($data -eq $null) { return }; $data"
         )
