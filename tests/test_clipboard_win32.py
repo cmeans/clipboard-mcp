@@ -54,6 +54,17 @@ def fake_win32clipboard() -> MagicMock:
 
     prior = sys.modules.get("win32clipboard")
     sys.modules["win32clipboard"] = fake
+
+    # _open_clipboard_with_retry now also imports win32gui to obtain the
+    # desktop HWND. Inject a stub that returns a stable non-zero integer so
+    # tests can assert OpenClipboard was called with a non-NULL hwnd (the
+    # invariant that fixes the SetClipboardData silent-no-op for custom
+    # registered formats; see clipboard_win32._get_clipboard_hwnd).
+    fake_win32gui = MagicMock(name="win32gui")
+    fake_win32gui.GetDesktopWindow.return_value = 0x10001  # stable non-zero
+    prior_win32gui = sys.modules.get("win32gui")
+    sys.modules["win32gui"] = fake_win32gui
+
     try:
         yield fake
     finally:
@@ -61,6 +72,10 @@ def fake_win32clipboard() -> MagicMock:
             sys.modules.pop("win32clipboard", None)
         else:
             sys.modules["win32clipboard"] = prior
+        if prior_win32gui is None:
+            sys.modules.pop("win32gui", None)
+        else:
+            sys.modules["win32gui"] = prior_win32gui
 
 
 @pytest.fixture
@@ -136,6 +151,24 @@ def test_open_clipboard_with_retry_succeeds_on_first_attempt(clipboard_win32, fa
     fake_win32clipboard.OpenClipboard.assert_called_once()
 
 
+def test_open_clipboard_passes_non_null_desktop_hwnd(clipboard_win32, fake_win32clipboard):
+    """Critical regression guard: OpenClipboard must be called with a non-NULL
+    hwnd (the desktop window handle from win32gui.GetDesktopWindow). MSDN
+    explicitly warns that NULL hwnd causes EmptyClipboard to set ownership to
+    NULL and SetClipboardData to fail silently for registered custom formats
+    -- the exact bug class that produced the SVG silent-no-op symptoms in
+    mc-005 / mc-009 / mc-020 of the PR #146 verification run before this fix.
+    The desktop window handle is the simplest stable HWND that gives
+    EmptyClipboard a non-NULL owner so SetClipboardData works for any format."""
+    fake_win32clipboard.OpenClipboard.return_value = None
+
+    clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
+
+    # The fixture stub returns 0x10001 from win32gui.GetDesktopWindow;
+    # OpenClipboard MUST receive that, never 0/None.
+    fake_win32clipboard.OpenClipboard.assert_called_once_with(0x10001)
+
+
 def test_open_clipboard_with_retry_succeeds_after_transient_failure(
     clipboard_win32, fake_win32clipboard
 ):
@@ -143,7 +176,7 @@ def test_open_clipboard_with_retry_succeeds_after_transient_failure(
     contention from clipboard inspectors / antivirus."""
     attempts = iter([RuntimeError("locked"), RuntimeError("locked"), None])
 
-    def open_side_effect():
+    def open_side_effect(_hwnd):
         result = next(attempts)
         if isinstance(result, Exception):
             raise result
@@ -358,7 +391,7 @@ def test_write_multi_encodes_before_opening_clipboard(clipboard_win32, fake_win3
     fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _: (
         call_order.append("register") or 0xC600
     )
-    fake_win32clipboard.OpenClipboard.side_effect = lambda: call_order.append("open")
+    fake_win32clipboard.OpenClipboard.side_effect = lambda _hwnd: call_order.append("open")
 
     clipboard_win32.write_multi({"text/html": "<p>hi</p>"})
 
