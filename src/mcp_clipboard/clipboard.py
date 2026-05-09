@@ -804,6 +804,20 @@ def _windows_html_clipboard_wrap(html: str) -> str:
     return header + body
 
 
+# Microsoft's reliable form for Clipboard.SetDataObject takes (data, copy,
+# retryTimes, retryDelay). The two-arg form (data, copy) can silently no-op
+# when the clipboard chain is briefly held by another process (e.g. a
+# clipboard inspector, antivirus hook, or a prior PowerShell instance whose
+# clipboard ownership has not fully released). With retries, the call either
+# eventually succeeds OR throws ExternalException after the budget is
+# exhausted -- which surfaces as a non-zero PowerShell exit so we raise a
+# ClipboardError instead of falsely reporting success. 10 retries x 100 ms
+# = a 1-second ceiling, the value MS recommends in their reliability guide.
+# See #143 for the diagnostic chain (mc-005 / mc-020 / mc-017 silently
+# no-opping while the same write code in a fresher MCP-server process under
+# mc-028 / mc-103 / mc-301 / mc-302 committed correctly).
+
+
 async def _windows_write_typed(content: str, mime_type: str) -> None:
     # Every branch below pipes UTF-8 bytes over stdin and reads them with
     # [Console]::In.ReadToEnd(). The _WINDOWS_UTF8_PREAMBLE on each script
@@ -828,7 +842,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData([System.Windows.Forms.DataFormats]::Html, $content); "
-            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)"
         )
         await _run_with_stdin(
             ["powershell", "-NoProfile", "-Command", script],
@@ -842,7 +856,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData([System.Windows.Forms.DataFormats]::Rtf, $content); "
-            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)"
         )
         await _run_with_stdin(
             ["powershell", "-NoProfile", "-Command", script],
@@ -860,7 +874,7 @@ async def _windows_write_typed(content: str, mime_type: str) -> None:
             "$content = [Console]::In.ReadToEnd(); "
             "$data = New-Object System.Windows.Forms.DataObject; "
             "$data.SetData('image/svg+xml', $content); "
-            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)"
+            "[System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)"
         )
         await _run_with_stdin(
             ["powershell", "-NoProfile", "-Command", script],
@@ -981,7 +995,7 @@ async def _windows_write_multi(formats: dict[str, str]) -> None:
             "$s = [System.Text.Encoding]::UTF8.GetString($b); "
             "$data.SetData([System.Windows.Forms.DataFormats]::Rtf, $s) }"
         )
-    parts.append("[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)")
+    parts.append("[System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)")
     script = "; ".join(parts)
 
     await _run_with_stdin(

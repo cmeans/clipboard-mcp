@@ -13,6 +13,23 @@ All notable changes to this project will be documented here.
   without depending on a shell or filesystem access.
 
 ### Fixed
+- Windows: `clipboard_copy` for typed MIMEs (`text/html`, `text/rtf`,
+  `image/svg+xml`) and `clipboard_copy_markdown` no longer silently
+  no-op when the system clipboard chain is briefly held by another
+  process. The PowerShell scripts now call
+  `Clipboard.SetDataObject(data, copy, retryTimes, retryDelay)` (the
+  four-arg retry overload Microsoft documents as the reliable form)
+  instead of the two-arg `SetDataObject(data, copy)` form. With
+  `retryTimes=10` and `retryDelay=100` (1-second ceiling), the call
+  retries through transient `OpenClipboard` contention from clipboard
+  inspectors, antivirus hooks, and prior PowerShell instances whose
+  clipboard ownership has not fully released. If the retry budget
+  exhausts, `ExternalException` propagates as a non-zero PowerShell
+  exit and the server raises `ClipboardError` instead of falsely
+  reporting success. The Windows e2e suite captured this as the
+  state-dependent SVG dispatch defect: mc-005 / mc-020 / mc-017 saw
+  silent no-ops; mc-028 / mc-103 / mc-301 / mc-302 in a fresher
+  MCP-server process committed correctly. Closes #143.
 - Windows: non-ASCII characters survive `clipboard_paste` and
   `clipboard_read_raw` round-trips. Em dash (U+2014), curly quotes
   (U+2018-U+201D), ellipsis (U+2026), and non-Latin scripts (CJK,

@@ -3182,6 +3182,50 @@ async def test_windows_write_typed_svg_sets_utf8_input_encoding():
     _assert_utf8_input_encoding(_windows_powershell_script(mock.call_args[0]))
 
 
+@pytest.mark.parametrize(
+    "mime_type,sample,encode_arg",
+    [
+        ("text/html", "<p>hi</p>", None),
+        ("text/rtf", r"{\rtf1 hello}", None),
+        ("image/svg+xml", _SAMPLE_SVG, None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_windows_write_typed_uses_setdataobject_with_retry(mime_type, sample, encode_arg):
+    """Every _windows_write_typed branch that uses Clipboard.SetDataObject must
+    use the four-arg overload (data, copy, retryTimes, retryDelay) rather than
+    the silent-no-op two-arg form. Without retries, SetDataObject can silently
+    fail when the clipboard chain is briefly held by another process and the
+    server falsely reports success. Regression guard for #143 — the runtime
+    chain captured mc-005 / mc-020 / mc-017 silently no-opping while the same
+    code path under a fresher MCP-server process at mc-028 / mc-103 / mc-301 /
+    mc-302 committed correctly."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_typed(sample, mime_type)
+
+    cmd = mock.call_args[0][0]
+    script = cmd[-1]
+    assert "SetDataObject($data, $true, 10, 100)" in script, (
+        f"PowerShell script for {mime_type} uses the silent-no-op two-arg "
+        f"SetDataObject form. Use the four-arg retry overload "
+        f"(data, copy, retryTimes, retryDelay). Script: {script!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_write_multi_uses_setdataobject_with_retry():
+    """_windows_write_multi must also use the four-arg SetDataObject overload."""
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_multi({"text/html": "<p>hi</p>", "text/plain": "hi"})
+
+    cmd = mock.call_args[0][0]
+    script = cmd[-1]
+    assert "SetDataObject($data, $true, 10, 100)" in script, (
+        f"_windows_write_multi uses the silent-no-op two-arg SetDataObject "
+        f"form. Use the four-arg retry overload. Script: {script!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 27. _windows_html_clipboard_wrap unit tests
 # ---------------------------------------------------------------------------
