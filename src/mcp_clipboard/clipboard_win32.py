@@ -178,9 +178,10 @@ def _open_clipboard_with_retry(win32clipboard: Any, retries: int = 10, delay_ms:
     from clipboard inspectors / antivirus, not the multi-hundred-ms OLE
     propagation that the SetDataObject retry was originally introduced for.
 
-    Always passes a real HWND (the desktop window) to OpenClipboard so the
-    clipboard owner is non-NULL and SetClipboardData succeeds for registered
-    custom formats. See _get_clipboard_hwnd for the detailed MSDN background.
+    Always passes a real HWND (a process-owned message-only window from
+    _get_clipboard_hwnd) to OpenClipboard so our process is the clipboard
+    owner; SetClipboardData then succeeds for registered custom formats.
+    See _get_clipboard_hwnd for the detailed MSDN background.
     """
     hwnd = _get_clipboard_hwnd()
 
