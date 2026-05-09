@@ -3183,15 +3183,15 @@ async def test_windows_write_typed_svg_sets_utf8_input_encoding():
 
 
 @pytest.mark.parametrize(
-    "mime_type,sample,encode_arg",
+    "mime_type,sample",
     [
-        ("text/html", "<p>hi</p>", None),
-        ("text/rtf", r"{\rtf1 hello}", None),
-        ("image/svg+xml", _SAMPLE_SVG, None),
+        ("text/html", "<p>hi</p>"),
+        ("text/rtf", r"{\rtf1 hello}"),
+        ("image/svg+xml", _SAMPLE_SVG),
     ],
 )
 @pytest.mark.asyncio
-async def test_windows_write_typed_uses_setdataobject_with_retry(mime_type, sample, encode_arg):
+async def test_windows_write_typed_uses_setdataobject_with_retry(mime_type, sample):
     """Every _windows_write_typed branch that uses Clipboard.SetDataObject must
     use the four-arg overload (data, copy, retryTimes, retryDelay) rather than
     the silent-no-op two-arg form. Without retries, SetDataObject can silently
@@ -3223,6 +3223,38 @@ async def test_windows_write_multi_uses_setdataobject_with_retry():
     assert "SetDataObject($data, $true, 10, 100)" in script, (
         f"_windows_write_multi uses the silent-no-op two-arg SetDataObject "
         f"form. Use the four-arg retry overload. Script: {script!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_write_image_uses_setdataobject_with_retry():
+    """_windows_write_image must use the four-arg SetDataObject overload, not
+    the bare Clipboard.SetImage convenience wrapper. SetImage internally calls
+    SetDataObject(image, true) -- the same silent-no-op two-arg form -- and
+    has no retry overload, so it suffers the same clipboard-chain race the
+    other write paths fixed in #143. Regression guard."""
+    # Minimal valid PNG header for the FromStream call to succeed shape-wise;
+    # the test stops at script inspection before the subprocess actually runs.
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\rIDATx\x9cc\xfc\xff\xff?\x03\x00\x05\xfe\x02\xfe"
+        b"\xa3\xc3\x9c\x82\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
+        await _windows_write_image(png_bytes, "image/png")
+
+    cmd = mock.call_args[0][0]
+    script = cmd[-1]
+    assert "SetDataObject($img, $true, 10, 100)" in script, (
+        f"_windows_write_image uses the silent-no-op SetImage convenience "
+        f"wrapper (which calls SetDataObject(image, true) internally). Use "
+        f"the four-arg SetDataObject retry overload directly. Script: {script!r}"
+    )
+    assert "SetImage(" not in script, (
+        f"_windows_write_image still uses Clipboard.SetImage; replace with "
+        f"SetDataObject($img, $true, 10, 100) for retry semantics. "
+        f"Script: {script!r}"
     )
 
 
@@ -3474,14 +3506,17 @@ async def test_macos_write_image_command_line_bounded_for_large_payloads():
 
 
 @pytest.mark.asyncio
-async def test_windows_write_image_invokes_setimage():
-    """_windows_write_image invokes PowerShell SetImage with a base64 payload."""
+async def test_windows_write_image_invokes_setdataobject():
+    """_windows_write_image invokes PowerShell SetDataObject with a base64
+    payload. Replaces the prior SetImage-based assertion (#143): SetImage is
+    a convenience wrapper for the silent-no-op SetDataObject(image, true)
+    two-arg form, which is why we no longer use it."""
     with patch("mcp_clipboard.clipboard._run_with_stdin", new_callable=AsyncMock) as mock:
         await _windows_write_image(_TINY_PNG, "image/png")
 
     script = mock.call_args[0][0][-1]
     assert "System.Windows.Forms.Clipboard" in script
-    assert "SetImage" in script
+    assert "SetDataObject" in script
     assert "FromBase64String" in script
     # The base64 payload flows over stdin, NOT in the script body.
     assert "[Console]::In.ReadToEnd()" in script

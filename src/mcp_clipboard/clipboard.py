@@ -1057,8 +1057,14 @@ async def _windows_write_image(data: bytes, mime_type: str) -> None:
     # CreateProcess caps lpCommandLine at 32,767 chars, so interpolating the
     # base64 directly would fail at the OS layer for any image larger than
     # ~24 KB raw. Mirrors the stdin pattern in _windows_write_typed.
-    # SetImage takes a System.Drawing.Image; FromStream auto-detects PNG vs
-    # JPEG from the magic header, so no per-MIME branching is needed.
+    # FromStream auto-detects PNG vs JPEG from the magic header, so no
+    # per-MIME branching is needed.
+    # SetImage(Image) is a convenience wrapper around SetDataObject(image,
+    # true) -- the silent-no-op two-arg form -- and has no retry overload.
+    # Use SetDataObject($img, $true, 10, 100) directly so this path benefits
+    # from the same retry semantics as the other typed writes (see #143).
+    # System.Drawing.Image flows through SetDataObject's generic data path
+    # with the same internal Bitmap auto-format handling SetImage uses.
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "Add-Type -AssemblyName System.Drawing; "
@@ -1066,7 +1072,7 @@ async def _windows_write_image(data: bytes, mime_type: str) -> None:
         "$bytes = [Convert]::FromBase64String($b64); "
         "$ms = New-Object System.IO.MemoryStream(,$bytes); "
         "$img = [System.Drawing.Image]::FromStream($ms); "
-        "[System.Windows.Forms.Clipboard]::SetImage($img)"
+        "[System.Windows.Forms.Clipboard]::SetDataObject($img, $true, 10, 100)"
     )
     b64 = base64.b64encode(data).decode("ascii")
     await _run_with_stdin(

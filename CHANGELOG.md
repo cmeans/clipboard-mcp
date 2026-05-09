@@ -14,16 +14,18 @@ All notable changes to this project will be documented here.
 
 ### Fixed
 - Windows: `clipboard_copy` for typed MIMEs (`text/html`, `text/rtf`,
-  `image/svg+xml`) and `clipboard_copy_markdown` no longer silently
-  no-op when the system clipboard chain is briefly held by another
-  process. The PowerShell scripts now call
+  `image/svg+xml`), `clipboard_copy_markdown`, and `clipboard_copy_image`
+  no longer silently no-op when the system clipboard chain is briefly
+  held by another process. The PowerShell scripts now call
   `Clipboard.SetDataObject(data, copy, retryTimes, retryDelay)` (the
   four-arg retry overload Microsoft documents as the reliable form)
-  instead of the two-arg `SetDataObject(data, copy)` form. With
-  `retryTimes=10` and `retryDelay=100` (1-second ceiling), the call
-  retries through transient `OpenClipboard` contention from clipboard
-  inspectors, antivirus hooks, and prior PowerShell instances whose
-  clipboard ownership has not fully released. If the retry budget
+  instead of the two-arg `SetDataObject(data, copy)` form (and instead
+  of `Clipboard.SetImage`, which is a convenience wrapper around the
+  same silent-no-op two-arg call with no retry overload of its own).
+  With `retryTimes=10` and `retryDelay=100` (1-second ceiling), the
+  call retries through transient `OpenClipboard` contention from
+  clipboard inspectors, antivirus hooks, and prior PowerShell instances
+  whose clipboard ownership has not fully released. If the retry budget
   exhausts, `ExternalException` propagates as a non-zero PowerShell
   exit and the server raises `ClipboardError` instead of falsely
   reporting success. The Windows e2e suite captured this as the
