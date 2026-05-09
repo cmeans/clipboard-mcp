@@ -619,6 +619,21 @@ async def clipboard_copy_markdown(text: str) -> str:
     )
 
 
+@mcp.tool(
+    name="clipboard_version",
+    description=_load_instruction("clipboard_version"),
+    annotations={  # type: ignore[arg-type]
+        "title": "Clipboard Server Version",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def clipboard_version() -> dict[str, str]:
+    return {"name": "mcp-clipboard", "version": __version__}
+
+
 _HELP_TEXT = """\
 mcp-clipboard: MCP server for reading and writing the system clipboard.
 
