@@ -210,8 +210,15 @@ def read_text(mime_type: str) -> str:
         return data
     if isinstance(data, (bytes, bytearray)):
         return bytes(data).decode("utf-8", errors="replace")
-    # Defensive: pywin32 has historically returned bytes-with-null-terminator
-    # for some custom formats. Strip a single trailing NUL if present.
+    # Defensive last-resort: pywin32 has historically returned other shapes
+    # (memoryview, int) for unusual custom formats on some Windows versions.
+    # Coerce to str so the caller never sees a non-str return; log so a
+    # future debugging session can spot the unexpected pywin32 shape rather
+    # than the str() rendering masking it.
+    logger.debug(
+        "GetClipboardData returned unexpected type %s for format -- coercing via str()",
+        type(data).__name__,
+    )
     return str(data)
 
 
@@ -342,8 +349,11 @@ def _format_name(win32clipboard: Any, fmt: int) -> str:
         name = str(win32clipboard.GetClipboardFormatName(fmt))
         if name:
             return name
-    except Exception:
-        # GetClipboardFormatName raises for built-in formats it does not know;
-        # fall through to the numeric stringification.
-        pass
+    except Exception as exc:
+        # GetClipboardFormatName raises for built-in formats it does not
+        # know about (CF_LOCALE, CF_OEMTEXT in some pywin32 versions, etc.).
+        # Fall through to the numeric stringification but log so a future
+        # debugging session can find why a particular format ID didn't
+        # resolve to a name.
+        logger.debug("GetClipboardFormatName(%d) failed: %s", fmt, exc)
     return f"Format{fmt}"

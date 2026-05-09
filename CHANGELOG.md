@@ -11,8 +11,6 @@ All notable changes to this project will be documented here.
   (notably Claude Desktop on Windows). Test harnesses can now
   record `mcp_clipboard_version` from inside an MCP session
   without depending on a shell or filesystem access.
-
-### Added
 - **Cross-platform CI matrix.** `.github/workflows/ci.yml` now runs the
   unit-test suite on `ubuntu-latest`, `windows-latest`, and `macos-latest`
   across Python 3.11 / 3.12 / 3.13 with `fail-fast: false`. The Linux
