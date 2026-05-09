@@ -752,6 +752,42 @@ def test_find_wayland_display_ignores_lock_files(tmp_path):
     assert result is None
 
 
+def test_find_wayland_display_returns_none_on_iterdir_oserror(tmp_path):
+    """If iterdir() raises OSError (e.g. permission denied on the runtime
+    directory) _find_wayland_display swallows the error and returns None
+    rather than propagating an exception out to the dispatch layer.
+    Covers the bare-except OSError handler that runs when the directory
+    is technically a directory but is unreadable."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    if _sys.platform != "linux":
+        pytest.skip("Wayland runtime-dir tests are Linux-only")
+
+    with patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(tmp_path)}, clear=False):
+        with patch.object(_Path, "iterdir", side_effect=OSError("Permission denied")):
+            result = _find_wayland_display()
+    assert result is None
+
+
+def test_wayland_env_returns_none_when_runtime_dir_is_missing():
+    """_wayland_env's `if not Path(xdg_runtime).is_dir(): return None` --
+    the path computed from $XDG_RUNTIME_DIR (or /run/user/<uid> fallback)
+    does not exist on disk, so wl-paste cannot connect and we return None
+    rather than handing back a broken env dict."""
+    with patch.dict(
+        "os.environ",
+        {"XDG_RUNTIME_DIR": "/nonexistent-xdg-runtime-dir"},
+        clear=False,
+    ):
+        # WAYLAND_DISPLAY explicitly absent so we don't take the early
+        # both-set return at the top of _wayland_env.
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("WAYLAND_DISPLAY", None)
+            result = _wayland_env()
+    assert result is None
+
+
 def test_wayland_env_returns_none_when_both_set():
     """_wayland_env returns None when both WAYLAND_DISPLAY and XDG_RUNTIME_DIR are set."""
     with patch.dict(

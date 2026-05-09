@@ -257,6 +257,26 @@ def test_read_text_closes_clipboard_on_exception(clipboard_win32, fake_win32clip
     fake_win32clipboard.CloseClipboard.assert_called_once()
 
 
+def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake_win32clipboard):
+    """Defensive: pywin32 historically returned non-str / non-bytes values
+    for some custom formats (memoryview, ints). read_text str()-coerces
+    so the caller always gets a string back. Covers the final fallback
+    branch in read_text after the str / bytes type checks."""
+    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC700
+    # Return a memoryview -- not str, not bytes, not bytearray -- so the
+    # str / bytes type checks both miss and the fallback runs.
+    fake_win32clipboard.GetClipboardData.return_value = memoryview(b"raw")
+
+    result = clipboard_win32.read_text("image/svg+xml")
+
+    # str(memoryview(b"raw")) renders as "<memory at 0x...>", which is
+    # what the fallback produces -- the test's intent is to prove the
+    # fallback executes, not to assert on the rendered representation.
+    assert isinstance(result, str)
+    assert "memory" in result
+
+
 # --- write_text ------------------------------------------------------------
 
 
