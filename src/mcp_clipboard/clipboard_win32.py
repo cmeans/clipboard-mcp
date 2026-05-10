@@ -21,15 +21,32 @@ of this server. The subprocess approach had two structural problems:
 
 This module keeps clipboard ownership inside the long-lived MCP-server
 Python process. All clipboard operations happen synchronously in our own
-address space via the Win32 clipboard API. No subprocess spawn, no codepage
-transcoding, no cross-process race.
+address space. No subprocess spawn, no codepage transcoding, no
+cross-process race.
 
-Threading: the standard Win32 clipboard functions (OpenClipboard,
-SetClipboardData, GetClipboardData, etc.) are MTA-safe -- they do NOT
-require an STA-marked thread. STA is only required for the OLE-flavored
-helpers (OleSetClipboard / OleGetClipboard) which we do not use. Our
-asyncio caller wraps each function in `asyncio.to_thread` for non-blocking
-dispatch.
+**Write path: OleSetClipboard + OleFlushClipboard.** MSDN is explicit that
+"sharing non-standard clipboard data formats between processes requires
+using the OleSetClipboard API, as SetClipboardData alone is not enough."
+Raw SetClipboardData with registered custom formats (image/svg+xml, HTML
+Format, Rich Text Format) was observed to silently no-op when the prior
+clipboard owner was a foreign process -- the call returned success but
+list_formats afterward showed the prior state surviving. OleSetClipboard
+hands the clipboard to an OLE-managed internal window handle (the same
+path .NET's Clipboard.SetDataObject and PowerShell's Set-Clipboard take),
+which handles ownership transitions correctly. OleFlushClipboard is
+called immediately after to render the data into HGLOBAL handles and
+release our IDataObject pointer; the data then persists without our
+process needing to pump messages.
+
+**Read path: OpenClipboard + GetClipboardData.** Reads still use the
+direct Win32 API; OLE is only required for the cross-process write race.
+The message-only window from _get_clipboard_hwnd is retained for reads.
+
+Threading: OLE clipboard ops require an STA-initialized thread.
+asyncio.to_thread uses a worker pool; each worker calls _ensure_com_init
+on first use which sets up COINIT_APARTMENTTHREADED via CoInitializeEx.
+The apartment lives for the worker's lifetime; we don't CoUninitialize
+because Python's interpreter shutdown handles thread teardown.
 
 Module imports are deferred to function bodies so this file can be parsed
 on non-Windows platforms (CI runs on Linux). Calling any function on a
@@ -42,7 +59,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +72,13 @@ logger = logging.getLogger(__name__)
 #       whether absence is an error.
 #
 #   write_text(content: str, mime_type: str) -> None
-#       Replaces the clipboard with the given (mime, text) pair. Atomic.
+#       Replaces the clipboard with the given (mime, text) pair via
+#       OleSetClipboard + OleFlushClipboard.
 #
 #   write_multi(formats: dict[str, str]) -> None
 #       Replaces the clipboard with all (mime, text) pairs in one
-#       OpenClipboard transaction. Used for clipboard_copy_markdown's
-#       text/html + text/plain combo.
+#       OleSetClipboard transaction (atomic by construction). Used for
+#       clipboard_copy_markdown's text/html + text/plain combo.
 #
 #   list_formats() -> list[str]
 #       Returns native format names. Caller maps to MIME via _WIN_TO_MIME
@@ -68,6 +86,36 @@ logger = logging.getLogger(__name__)
 #
 # Image read/write stays on the PowerShell backend in Phase 1; will move
 # here in a follow-up PR with DIB <-> PNG conversion.
+
+
+# --- COM apartment management ----------------------------------------------
+#
+# pythoncom requires the calling thread to be CoInitialize'd before any OLE
+# operation. Python's main thread auto-inits on import (via
+# sys.coinit_flags or COINIT_APARTMENTTHREADED), but asyncio.to_thread
+# workers do not. We init lazily on first use per thread and cache in
+# threading.local; CoInitializeEx is idempotent on the same thread (returns
+# S_FALSE on re-entry) but the cache avoids the extra call. No
+# CoUninitialize: worker apartments live for the thread's lifetime, and
+# Python's interpreter shutdown tears the threads down.
+
+_com_state = threading.local()
+
+
+def _ensure_com_init() -> None:
+    """Initialize an STA on the current thread if not already done.
+
+    OleSetClipboard / OleFlushClipboard / OleGetClipboard require the
+    calling thread to be CoInitialize'd. asyncio.to_thread worker threads
+    don't get COM init from Python's pythoncom auto-init (that's
+    main-thread only), so each worker that touches OLE must opt in.
+    """
+    if getattr(_com_state, "initialized", False):
+        return
+    import pythoncom  # type: ignore[import-not-found,import-untyped]
+
+    pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+    _com_state.initialized = True
 
 
 # --- Format registration cache ---------------------------------------------
@@ -330,70 +378,271 @@ def read_text(mime_type: str) -> str:
     return str(data)
 
 
-def write_text(content: str, mime_type: str) -> None:
-    """Replace the clipboard with a single (format, content) pair.
+def _encode_for_format(fmt_id: int, content: str, win32clipboard: Any) -> bytes:
+    """Encode a Python str into the byte representation Windows expects for
+    the given clipboard format ID.
 
-    Atomic via OpenClipboard / EmptyClipboard / SetClipboardData /
-    CloseClipboard. The previous clipboard owner is fully replaced before
-    the function returns -- no cross-process propagation window like the
-    PowerShell backend had.
+    CF_UNICODETEXT requires null-terminated UTF-16 LE; the trailing wchar
+    NUL is part of the format contract per MSDN. Custom registered formats
+    (HTML Format, Rich Text Format, image/svg+xml) take raw UTF-8 bytes;
+    their internal end-of-data conventions are format-specific (CF_HTML
+    has Version + offset headers; SVG/RTF terminate at the closing tag).
+    """
+    if fmt_id == win32clipboard.CF_UNICODETEXT:
+        return content.encode("utf-16-le") + b"\x00\x00"
+    return content.encode("utf-8")
+
+
+# --- IDataObject implementation -------------------------------------------
+#
+# OleSetClipboard takes an IDataObject pointer. The MSDN-canonical pattern
+# (mirrored by the pywin32 test suite in com/win32com/test/testClipboard.py)
+# is to implement a small Python class declaring _com_interfaces_ /
+# _public_methods_ and wrap it with win32com.server.util.wrap before passing
+# to OleSetClipboard. OleFlushClipboard then walks the supported FORMATETC
+# list, calls GetData for each, and renders the resulting HGLOBAL bytes
+# onto the clipboard via SetClipboardData internally -- but going through
+# OLE's internal window handle so cross-process ownership transitions work.
+
+
+# IDataObject's full method set per MIDL. We implement the three methods
+# OleFlushClipboard exercises (GetData, QueryGetData, EnumFormatEtc) and
+# stub the rest as E_NOTIMPL -- read-side methods only matter if someone
+# calls OleGetClipboard against us, which only happens during the brief
+# OleSetClipboard..OleFlushClipboard window (and even then only for the
+# format-enumeration path that goes through our EnumFormatEtc).
+_IDATA_OBJECT_METHODS = (
+    "GetData",
+    "GetDataHere",
+    "QueryGetData",
+    "GetCanonicalFormatEtc",
+    "SetData",
+    "EnumFormatEtc",
+    "DAdvise",
+    "DUnadvise",
+    "EnumDAdvise",
+)
+
+
+class _ClipboardDataObject:
+    """Minimal IDataObject offering one or more (format_id, bytes) pairs.
+
+    pywin32 introspects the class via _com_interfaces_ (the COM IID we
+    implement) and _public_methods_ (the method names exposed through the
+    COM vtable). Only GetData / QueryGetData / EnumFormatEtc carry real
+    behavior; the other six raise E_NOTIMPL.
+    """
+
+    _com_interfaces_: ClassVar[list[Any]] = []  # filled in by _make_data_object()
+    _public_methods_: ClassVar[tuple[str, ...]] = _IDATA_OBJECT_METHODS
+
+    def __init__(self, payloads: dict[int, bytes]) -> None:
+        import pythoncom  # type: ignore[import-not-found,import-untyped]
+
+        self.payloads = payloads
+        # FORMATETC tuple shape: (cfFormat, ptd, dwAspect, lindex, tymed).
+        # We offer DVASPECT_CONTENT (the data itself, not an icon or
+        # thumbnail) on TYMED_HGLOBAL (heap-allocated global memory --
+        # what SetClipboardData uses under the hood). lindex=-1 means
+        # "single-page" (no multi-page docs); ptd=None means no target
+        # device.
+        self.supported_fe = [
+            (fmt_id, None, pythoncom.DVASPECT_CONTENT, -1, pythoncom.TYMED_HGLOBAL)
+            for fmt_id in payloads
+        ]
+
+    def GetData(self, fe: tuple[int, Any, int, int, int]) -> Any:
+        import pythoncom  # type: ignore[import-not-found,import-untyped]
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        cf, _ptd, aspect, _lindex, tymed = fe
+        if not (aspect & pythoncom.DVASPECT_CONTENT) or tymed != pythoncom.TYMED_HGLOBAL:
+            raise COMException(hresult=winerror.DV_E_TYMED)
+        if cf not in self.payloads:
+            raise COMException(hresult=winerror.DV_E_FORMATETC)
+        stg = pythoncom.STGMEDIUM()
+        stg.set(pythoncom.TYMED_HGLOBAL, self.payloads[cf])
+        return stg
+
+    def QueryGetData(self, fe: tuple[int, Any, int, int, int]) -> None:
+        import pythoncom  # type: ignore[import-not-found,import-untyped]
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        cf, _ptd, aspect, _lindex, tymed = fe
+        if not (aspect & pythoncom.DVASPECT_CONTENT):
+            raise COMException(hresult=winerror.DV_E_DVASPECT)
+        if tymed != pythoncom.TYMED_HGLOBAL:
+            raise COMException(hresult=winerror.DV_E_TYMED)
+        if cf not in self.payloads:
+            raise COMException(hresult=winerror.DV_E_FORMATETC)
+
+    def EnumFormatEtc(self, direction: int) -> Any:
+        import pythoncom  # type: ignore[import-not-found,import-untyped]
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+        from win32com.server.util import (  # type: ignore[import-not-found,import-untyped]
+            NewEnum,
+        )
+
+        if direction != pythoncom.DATADIR_GET:
+            raise COMException(hresult=winerror.E_NOTIMPL)
+        return NewEnum(self.supported_fe, iid=pythoncom.IID_IEnumFORMATETC)
+
+    def GetDataHere(self, _fe: Any) -> Any:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.E_NOTIMPL)
+
+    def GetCanonicalFormatEtc(self, _fe: Any) -> Any:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.E_NOTIMPL)
+
+    def SetData(self, _fe: Any, _stg: Any, _release: int) -> None:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.E_NOTIMPL)
+
+    def DAdvise(self, _fe: Any, _flags: int, _sink: Any) -> int:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
+
+    def DUnadvise(self, _connection: int) -> None:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
+
+    def EnumDAdvise(self) -> Any:
+        import winerror  # type: ignore[import-not-found,import-untyped]
+        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
+            COMException,
+        )
+
+        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
+
+
+def _make_data_object(payloads: dict[int, bytes]) -> Any:
+    """Wrap a _ClipboardDataObject in a COM dispatcher and return the
+    wrapped object ready for OleSetClipboard."""
+    import pythoncom  # type: ignore[import-not-found,import-untyped]
+    from win32com.server.util import wrap  # type: ignore[import-not-found,import-untyped]
+
+    # Late-bind the interface IID on the class itself so the type-stub-free
+    # pythoncom constants don't need to be available at import time.
+    if not _ClipboardDataObject._com_interfaces_:
+        _ClipboardDataObject._com_interfaces_ = [pythoncom.IID_IDataObject]
+    return wrap(_ClipboardDataObject(payloads), iid=pythoncom.IID_IDataObject)
+
+
+def _ole_set_clipboard_with_retry(
+    pythoncom: Any, data_object: Any, retries: int = 10, delay_ms: int = 50
+) -> None:
+    """OleSetClipboard fails with CLIPBRD_E_CANT_OPEN under the same
+    contention conditions raw OpenClipboard does (a clipboard inspector
+    or antivirus briefly held the clipboard). Same retry budget as
+    _open_clipboard_with_retry: 10 attempts x 50ms = 500ms ceiling.
+    """
+    last_err: Exception | None = None
+    for _ in range(retries):
+        try:
+            pythoncom.OleSetClipboard(data_object)
+            return
+        except Exception as exc:  # pywintypes.com_error on real Windows
+            last_err = exc
+            time.sleep(delay_ms / 1000.0)
+    raise RuntimeError(
+        f"OleSetClipboard failed after {retries} retries (delay={delay_ms}ms each); "
+        f"another process is holding the clipboard. Last error: {last_err!r}"
+    )
+
+
+def _write_via_ole(payloads: dict[int, bytes]) -> None:
+    """Place all (format_id, bytes) pairs on the clipboard via OleSetClipboard
+    + OleFlushClipboard.
+
+    Atomic by construction: OleSetClipboard publishes the IDataObject
+    pointer (single Win32 SetClipboardData under OLE's internal window),
+    OleFlushClipboard then walks each FORMATETC, calls our GetData, and
+    renders the HGLOBAL bytes onto the clipboard. The IDataObject pointer
+    is released at flush time so the data persists without our process
+    needing to pump messages.
+    """
+    if not payloads:
+        return
+    _ensure_com_init()
+    import pythoncom  # type: ignore[import-not-found,import-untyped]
+
+    data_object = _make_data_object(payloads)
+    _ole_set_clipboard_with_retry(pythoncom, data_object)
+    pythoncom.OleFlushClipboard()
+
+
+def write_text(content: str, mime_type: str) -> None:
+    """Replace the clipboard with a single (format, content) pair via
+    OleSetClipboard + OleFlushClipboard.
+
+    Atomic by construction. The OLE clipboard chain handles cross-process
+    ownership transitions correctly -- a precondition for registered
+    custom formats (image/svg+xml, HTML Format, Rich Text Format) per
+    MSDN, where raw SetClipboardData was observed to silently no-op when
+    the prior owner was a foreign process.
     """
     win32clipboard = _import_win32clipboard()
     fmt_id = _format_id_for_mime(win32clipboard, mime_type)
-
-    if mime_type == "text/plain":
-        # CF_UNICODETEXT: pywin32's SetClipboardData accepts a Python str
-        # directly and handles UTF-16 LE encoding + NUL termination.
-        encoded: str | bytes = content
-    else:
-        # Custom registered formats expect raw bytes. UTF-8 across the
-        # board (matches the previous PowerShell backend's UTF-8 piping).
-        encoded = content.encode("utf-8")
-
-    _open_clipboard_with_retry(win32clipboard)
-    try:
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(fmt_id, encoded)
-    finally:
-        win32clipboard.CloseClipboard()
+    encoded = _encode_for_format(fmt_id, content, win32clipboard)
+    _write_via_ole({fmt_id: encoded})
 
 
 def write_multi(formats: dict[str, str]) -> None:
     """Replace the clipboard with multiple (mime, content) pairs in ONE
-    OpenClipboard transaction.
+    OleSetClipboard transaction.
 
     Used by `clipboard_copy_markdown` to put `text/html` and `text/plain`
     on the clipboard simultaneously, so paste targets that prefer one
     format over the other (Slack/Gmail vs vim/terminal) each get the
     representation they expect.
 
-    Atomic at the Win32 clipboard chain level: a single Empty -> Set per
-    format -> Close transaction. No window during which the clipboard
-    holds half the formats.
+    Atomic by construction: the IDataObject we publish offers all formats
+    at once, and OleFlushClipboard renders them in a single Win32
+    transaction. No window during which the clipboard holds half the
+    formats.
     """
     if not formats:
         return
     win32clipboard = _import_win32clipboard()
 
-    # Resolve all format IDs and encode all payloads BEFORE opening the
-    # clipboard, so we hold the clipboard for the minimum time and any
-    # encoding errors raise outside the OpenClipboard / CloseClipboard
-    # bracket where they could leave the clipboard in a half-open state.
-    resolved: list[tuple[int, str | bytes]] = []
+    # Resolve all format IDs and encode all payloads BEFORE handing off to
+    # OLE, so encoding errors surface here rather than mid-transaction.
+    payloads: dict[int, bytes] = {}
     for mime_type, content in formats.items():
         fmt_id = _format_id_for_mime(win32clipboard, mime_type)
-        if mime_type == "text/plain":
-            resolved.append((fmt_id, content))
-        else:
-            resolved.append((fmt_id, content.encode("utf-8")))
+        payloads[fmt_id] = _encode_for_format(fmt_id, content, win32clipboard)
 
-    _open_clipboard_with_retry(win32clipboard)
-    try:
-        win32clipboard.EmptyClipboard()
-        for fmt_id, payload in resolved:
-            win32clipboard.SetClipboardData(fmt_id, payload)
-    finally:
-        win32clipboard.CloseClipboard()
+    _write_via_ole(payloads)
 
 
 def list_formats() -> list[str]:

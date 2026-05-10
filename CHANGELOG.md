@@ -42,10 +42,7 @@ All notable changes to this project will be documented here.
   `pywin32`. No subprocess spawn, no codepage transcoding, no cross-
   process race, no per-op PowerShell cold-start. text/plain uses
   `CF_UNICODETEXT` (UTF-16 native); text/html / text/rtf / image/svg+xml
-  use registered custom formats with UTF-8 byte payloads. Multi-format
-  writes (`clipboard_copy_markdown`) commit all formats inside a single
-  `OpenClipboard` transaction, so paste targets see all formats
-  simultaneously without the prior write-multi PowerShell hang. The
+  use registered custom formats with UTF-8 byte payloads. The
   encoding fixes from #131 (input) and #142 / #132 (output) become
   structurally unnecessary — there is no console code page in the
   read or write path. `pywin32` is added as a Windows-only dependency
@@ -53,6 +50,27 @@ All notable changes to this project will be documented here.
   (text/plain, text/html, text/rtf, image/svg+xml). Phase 2 (a
   follow-up PR) will port `_windows_read_image` and `_windows_write_image`
   to `pywin32` with DIB ↔ PNG conversion. Closes #143.
+- **Windows writes go through `OleSetClipboard` + `OleFlushClipboard`
+  instead of raw `SetClipboardData`.** MSDN is explicit that "sharing
+  non-standard clipboard data formats between processes requires using
+  the OleSetClipboard API, as SetClipboardData alone is not enough."
+  CD-Windows live QA on PR #146 confirmed: raw `SetClipboardData` for
+  registered custom formats (image/svg+xml, HTML Format) silently
+  no-ops when the prior clipboard owner is a foreign process — the
+  call returns success but `list_formats` afterward shows the prior
+  state surviving (the same `mc-005 / mc-017 / mc-020 / mc-028 / mc-201`
+  signature from the Windows e2e suite that the message-only-window
+  fix did not deterministically close). The write path now publishes
+  a Python-implemented `IDataObject` via `pythoncom.OleSetClipboard`
+  (the same path .NET's `Clipboard.SetDataObject` and PowerShell's
+  `Set-Clipboard` take), then immediately calls
+  `pythoncom.OleFlushClipboard` to render the formats into HGLOBAL
+  handles and release the data-object pointer — clipboard contents
+  persist without our process needing to pump messages. Multi-format
+  writes (`clipboard_copy_markdown`) publish a single IDataObject
+  offering all formats; the flush is one atomic Win32 transaction.
+  `asyncio.to_thread` worker threads are CoInitializeEx'd lazily into
+  STA apartments on first use.
 
 ### Fixed
 - Windows: non-ASCII characters survive `clipboard_paste` and
