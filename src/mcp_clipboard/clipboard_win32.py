@@ -91,31 +91,44 @@ logger = logging.getLogger(__name__)
 # --- COM apartment management ----------------------------------------------
 #
 # pythoncom requires the calling thread to be CoInitialize'd before any OLE
-# operation. Python's main thread auto-inits on import (via
-# sys.coinit_flags or COINIT_APARTMENTTHREADED), but asyncio.to_thread
-# workers do not. We init lazily on first use per thread and cache in
-# threading.local; CoInitializeEx is idempotent on the same thread (returns
-# S_FALSE on re-entry) but the cache avoids the extra call. No
-# CoUninitialize: worker apartments live for the thread's lifetime, and
-# Python's interpreter shutdown tears the threads down.
-
-_com_state = threading.local()
+# operation. The docs claim pythoncom auto-inits the main Python thread on
+# import, but the integration-windows CI run on 2026-05-10 showed
+# OleSetClipboard raising CO_E_NOTINITIALIZED ("CoInitialize has not been
+# called") on every call -- the auto-init path is fragile in environments
+# where pywin32's post-install step did not run (e.g. uv-installed venvs).
+#
+# We call pythoncom.CoInitializeEx every time the OLE clipboard path runs,
+# rather than caching a "did we init" flag. CoInitializeEx is idempotent on
+# the same thread: re-init with the same apartment model returns S_FALSE
+# (no-op, no exception); re-init with a different model raises
+# RPC_E_CHANGED_MODE which we catch and proceed (the existing apartment
+# may still support OLE clipboard depending on its threading model). No
+# matching CoUninitialize: long-running server processes keep COM init'd
+# for their lifetime; Python's interpreter shutdown cleans up on exit.
 
 
 def _ensure_com_init() -> None:
-    """Initialize an STA on the current thread if not already done.
+    """Initialize an STA on the current thread.
 
     OleSetClipboard / OleFlushClipboard / OleGetClipboard require the
-    calling thread to be CoInitialize'd. asyncio.to_thread worker threads
-    don't get COM init from Python's pythoncom auto-init (that's
-    main-thread only), so each worker that touches OLE must opt in.
+    calling thread to be CoInitialize'd. Called unconditionally before
+    every OLE op -- pywin32's main-thread auto-init has been observed to
+    silently no-op in uv-installed venvs (no post-install step) and we
+    cannot rely on it. CoInitializeEx is idempotent on same-mode re-init
+    (returns S_FALSE without raising) so the proactive call costs only
+    one cheap COM check on the steady-state path.
     """
-    if getattr(_com_state, "initialized", False):
-        return
     import pythoncom  # type: ignore[import-not-found,import-untyped]
 
-    pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
-    _com_state.initialized = True
+    try:
+        pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+    except Exception as exc:
+        # RPC_E_CHANGED_MODE (-2147417850): the thread was previously
+        # init'd to a different apartment model (MTA). We can't change
+        # it, so just proceed -- OleSetClipboard may still work under
+        # the existing apartment. Any other error is surfaced.
+        if getattr(exc, "hresult", None) != -2147417850:
+            raise
 
 
 # --- Format registration cache ---------------------------------------------

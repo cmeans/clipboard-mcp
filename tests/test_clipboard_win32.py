@@ -138,16 +138,14 @@ def fake_win32clipboard() -> MagicMock:
     sys.modules["win32com.server.util"] = fake_win32com_server_util
     sys.modules["win32com.server.exception"] = fake_win32com_server_exception
 
-    # The real module caches the HWND and per-thread COM init for the
-    # lifetime of the process. Reset between tests so each test starts
-    # from "no window created yet" / "COM not initialized yet" and call
-    # counts are deterministic.
+    # The real module caches the HWND for the lifetime of the process.
+    # Reset between tests so each test starts from "no window created
+    # yet" and CreateWindowEx call counts are deterministic. COM init is
+    # no longer cached (CoInitializeEx is called unconditionally every
+    # _write_via_ole), so there's no _com_state to reset.
     from mcp_clipboard import clipboard_win32 as _mod
 
     _mod._owner_hwnd = None
-    # Drop any prior CoInitializeEx cache from earlier tests.
-    if hasattr(_mod._com_state, "initialized"):
-        del _mod._com_state.initialized
     # The class-level _com_interfaces_ is populated lazily on first
     # _make_data_object call; clear so tests see a fresh init.
     _mod._ClipboardDataObject._com_interfaces_ = []
@@ -192,8 +190,6 @@ def fake_win32clipboard() -> MagicMock:
         else:
             sys.modules["win32com.server.exception"] = prior_win32com_server_exception
         _mod._owner_hwnd = None
-        if hasattr(_mod._com_state, "initialized"):
-            del _mod._com_state.initialized
         _mod._ClipboardDataObject._com_interfaces_ = []
 
 
@@ -521,10 +517,13 @@ def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake
 # --- _ensure_com_init ------------------------------------------------------
 
 
-def test_ensure_com_init_calls_coinitializeex_once_per_thread(clipboard_win32):
-    """First call CoInitializeEx's the thread; subsequent calls are no-ops
-    courtesy of the threading.local cache. pythoncom rejects re-init on the
-    same thread, so caching matters."""
+def test_ensure_com_init_calls_coinitializeex_every_call(clipboard_win32):
+    """No caching: CoInitializeEx fires every time _ensure_com_init runs.
+    The cached-flag pattern was removed after CI showed pywin32 auto-init
+    silently no-op'ing in uv-installed venvs while our cache flag still
+    set True, leaving OleSetClipboard raising CO_E_NOTINITIALIZED.
+    CoInitializeEx is idempotent on same-mode re-init (S_FALSE without
+    exception) so always calling is cheap and reliable."""
     import sys as _sys
 
     fake_pythoncom = _sys.modules["pythoncom"]
@@ -533,29 +532,52 @@ def test_ensure_com_init_calls_coinitializeex_once_per_thread(clipboard_win32):
     clipboard_win32._ensure_com_init()
     clipboard_win32._ensure_com_init()
 
-    fake_pythoncom.CoInitializeEx.assert_called_once_with(fake_pythoncom.COINIT_APARTMENTTHREADED)
+    assert fake_pythoncom.CoInitializeEx.call_count == 3
+    for call in fake_pythoncom.CoInitializeEx.call_args_list:
+        assert call.args == (fake_pythoncom.COINIT_APARTMENTTHREADED,)
 
 
-def test_ensure_com_init_is_per_thread(clipboard_win32):
-    """threading.local means each thread inits independently -- one
-    CoInitializeEx per thread, not one per process. asyncio.to_thread
-    workers each need their own apartment."""
+def test_ensure_com_init_swallows_rpc_e_changed_mode(clipboard_win32):
+    """RPC_E_CHANGED_MODE (-2147417850) means the thread is already
+    inited to a different apartment model (MTA). We can't change it but
+    the existing apartment may still support OLE clipboard; proceed
+    silently and let OleSetClipboard surface a real error if the model
+    is incompatible."""
     import sys as _sys
-    import threading as _threading
 
     fake_pythoncom = _sys.modules["pythoncom"]
 
-    def init_in_thread():
+    class _FakeComError(Exception):
+        def __init__(self, hresult: int) -> None:
+            super().__init__(f"com_error(hresult={hresult})")
+            self.hresult = hresult
+
+    fake_pythoncom.CoInitializeEx.side_effect = _FakeComError(-2147417850)
+
+    # Should NOT raise.
+    clipboard_win32._ensure_com_init()
+
+
+def test_ensure_com_init_propagates_other_errors(clipboard_win32):
+    """Any HRESULT other than RPC_E_CHANGED_MODE is surfaced -- we don't
+    want to mask a genuine COM init failure (e.g. CO_E_INITONLYONCE for
+    a deeply confused process state)."""
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+
+    class _FakeComError(Exception):
+        def __init__(self, hresult: int) -> None:
+            super().__init__(f"com_error(hresult={hresult})")
+            self.hresult = hresult
+
+    # CO_E_INITONLYONCE = -2147221015 (arbitrary non-RPC_E_CHANGED_MODE
+    # value; the test asserts on "any error that isn't the swallow case
+    # propagates", not on the specific HRESULT).
+    fake_pythoncom.CoInitializeEx.side_effect = _FakeComError(-2147221015)
+
+    with pytest.raises(_FakeComError):
         clipboard_win32._ensure_com_init()
-
-    t1 = _threading.Thread(target=init_in_thread)
-    t2 = _threading.Thread(target=init_in_thread)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-
-    assert fake_pythoncom.CoInitializeEx.call_count == 2
 
 
 # --- _encode_for_format ----------------------------------------------------
