@@ -146,7 +146,7 @@ def fake_win32clipboard() -> MagicMock:
     import ctypes as _ctypes
 
     fake_ole32 = MagicMock(name="ole32")
-    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
+    fake_ole32.OleInitialize.return_value = 0  # S_OK
     fake_windll = MagicMock(name="windll")
     fake_windll.ole32 = fake_ole32
     prior_windll = getattr(_ctypes, "windll", None)
@@ -589,27 +589,29 @@ def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake
     assert "memory" in result
 
 
-# --- _ole32_co_initialize_ex -----------------------------------------------
+# --- _ole32_initialize -----------------------------------------------
 
 
-def test_ole32_co_initialize_ex_calls_ctypes_ole32_with_apartment_threaded_flag(
-    clipboard_win32,
-):
-    """The helper goes straight to ole32.CoInitializeEx via ctypes,
-    bypassing pywin32.CoInitializeEx which was observed to silently
-    no-op in uv-installed venvs (the integration-windows CI failure on
-    d3d7372 / 3904fef / 0a0f933 surfaced this)."""
+def test_ole32_initialize_calls_ctypes_ole32_oleinitialize(clipboard_win32):
+    """ole32.OleInitialize -- not bare CoInitializeEx -- is what
+    OleSetClipboard requires per MSDN: 'Before calling this function,
+    you must initialize the OLE library by calling OleInitialize.'
+    Bare CoInitializeEx sets up the COM apartment but does NOT enable
+    OLE clipboard support, which is why integration-windows CI on
+    commits d3d7372 / 3904fef / 0a0f933 / 0966ef7 all failed with
+    OleSetClipboard raising CO_E_NOTINITIALIZED."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
+    fake_ole32.OleInitialize.return_value = 0  # S_OK
 
-    clipboard_win32._ole32_co_initialize_ex()
+    clipboard_win32._ole32_initialize()
 
-    fake_ole32.CoInitializeEx.assert_called_once_with(None, 0x2)
+    # OleInitialize takes a single LPVOID reserved param (always NULL).
+    fake_ole32.OleInitialize.assert_called_once_with(None)
 
 
-def test_ole32_co_initialize_ex_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
+def test_ole32_initialize_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
     """S_FALSE (1, same-mode re-init) and RPC_E_CHANGED_MODE
     (-2147417850, different model already active) are both accepted
     without raising."""
@@ -618,24 +620,24 @@ def test_ole32_co_initialize_ex_accepts_s_false_and_rpc_e_changed_mode(clipboard
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
 
     # S_FALSE (1): same-mode re-init, no-op success.
-    fake_ole32.CoInitializeEx.return_value = 1
-    clipboard_win32._ole32_co_initialize_ex()
+    fake_ole32.OleInitialize.return_value = 1
+    clipboard_win32._ole32_initialize()
 
     # RPC_E_CHANGED_MODE: previously inited to different model, accept.
-    fake_ole32.CoInitializeEx.return_value = -2147417850
-    clipboard_win32._ole32_co_initialize_ex()
+    fake_ole32.OleInitialize.return_value = -2147417850
+    clipboard_win32._ole32_initialize()
 
 
-def test_ole32_co_initialize_ex_raises_on_other_failed_hresults(clipboard_win32):
+def test_ole32_initialize_raises_on_other_failed_hresults(clipboard_win32):
     """Any negative HRESULT other than RPC_E_CHANGED_MODE raises OSError
     so genuine init failures aren't masked."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = -2147221015  # CO_E_INITONLYONCE
+    fake_ole32.OleInitialize.return_value = -2147221015  # CO_E_INITONLYONCE
 
-    with pytest.raises(OSError, match="CoInitializeEx"):
-        clipboard_win32._ole32_co_initialize_ex()
+    with pytest.raises(OSError, match="OleInitialize"):
+        clipboard_win32._ole32_initialize()
 
 
 # --- _ClipboardWorker ------------------------------------------------------
@@ -647,17 +649,18 @@ def test_clipboard_worker_inits_com_then_runs_submitted_callable(clipboard_win32
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
+    fake_ole32.OleInitialize.return_value = 0  # S_OK
 
     worker = clipboard_win32._ClipboardWorker()
     worker.start()
     try:
         future = worker.submit(lambda x: x * 2, 21)
         assert future.result(timeout=2.0) == 42
-        # ole32.CoInitializeEx fired once on the worker's start, with the
-        # apartment-threaded flag. Subsequent submits don't re-init.
-        assert fake_ole32.CoInitializeEx.call_count == 1
-        assert fake_ole32.CoInitializeEx.call_args.args == (None, 0x2)
+        # ole32.OleInitialize fired once on the worker's start (the full
+        # OLE setup, not just bare CoInitializeEx). Subsequent submits
+        # don't re-init.
+        assert fake_ole32.OleInitialize.call_count == 1
+        assert fake_ole32.OleInitialize.call_args.args == (None,)
     finally:
         worker._queue.put(None)  # sentinel shutdown
         worker.join(timeout=2.0)
@@ -669,7 +672,7 @@ def test_clipboard_worker_propagates_exceptions_from_submitted_callable(clipboar
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = 0
+    fake_ole32.OleInitialize.return_value = 0
 
     worker = clipboard_win32._ClipboardWorker()
     worker.start()
@@ -687,19 +690,19 @@ def test_clipboard_worker_propagates_exceptions_from_submitted_callable(clipboar
 
 
 def test_clipboard_worker_init_failure_surfaces_on_submit(clipboard_win32):
-    """If CoInitializeEx fails at worker start, submit() returns a
+    """If OleInitialize fails at worker start, submit() returns a
     pre-resolved Future carrying the init error -- callers see the real
     failure rather than hanging on a dead worker."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = -2147221015  # CO_E_INITONLYONCE
+    fake_ole32.OleInitialize.return_value = -2147221015  # CO_E_INITONLYONCE
 
     worker = clipboard_win32._ClipboardWorker()
     worker.start()
     try:
         future = worker.submit(lambda: None)
-        with pytest.raises(OSError, match="CoInitializeEx"):
+        with pytest.raises(OSError, match="OleInitialize"):
             future.result(timeout=2.0)
     finally:
         worker.join(timeout=2.0)  # thread already exited from init failure
@@ -716,7 +719,7 @@ def test_get_clipboard_worker_starts_once_and_caches(clipboard_win32):
     import threading as _threading
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.CoInitializeEx.return_value = 0
+    fake_ole32.OleInitialize.return_value = 0
 
     # Clear the cached worker the fixture installed; we want to exercise
     # the real lazy-start path.

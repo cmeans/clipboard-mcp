@@ -93,49 +93,58 @@ logger = logging.getLogger(__name__)
 
 # --- COM apartment management ----------------------------------------------
 #
-# OleSetClipboard requires the calling thread to be CoInitialize'd, and the
-# integration-windows CI on commits d3d7372, 3904fef, and 0a0f933 all
-# failed with OleSetClipboard raising CO_E_NOTINITIALIZED on every call --
-# whether we cached CoInitializeEx, called it unconditionally via
-# pythoncom, or called it directly via ctypes.windll.ole32. The apartment
-# state on the pytest main thread is somehow being lost between our init
-# call and the OleSetClipboard call (likely a pywin32-internal state
-# tracking issue under uv-installed venvs, where pywin32_postinstall has
-# not run).
+# OleSetClipboard requires the calling thread to have the FULL OLE
+# library initialized -- per MSDN: "Before calling this function, you
+# must initialize the OLE library by calling OleInitialize." CoInitializeEx
+# alone is NOT sufficient: it sets up the COM apartment but does not
+# enable the OLE-specific subsystems (clipboard, drag-and-drop,
+# marshaling tables) that OleSetClipboard / OleFlushClipboard need. This
+# is why the integration-windows CI on commits d3d7372 (cached
+# pythoncom.CoInitializeEx), 3904fef (uncached pythoncom.CoInitializeEx),
+# 0a0f933 (ctypes-direct ole32.CoInitializeEx), and 0966ef7 (dedicated
+# worker thread + ctypes ole32.CoInitializeEx) all failed identically
+# with OleSetClipboard raising CO_E_NOTINITIALIZED -- OLE was reporting
+# its OLE-specific state as uninitialized even though the COM apartment
+# was fine.
 #
-# Resolution: a dedicated OLE worker thread. The thread inits its own
-# apartment exactly once at start (via ctypes -> ole32.CoInitializeEx),
-# then services a queue of clipboard write requests for the lifetime of
-# the process. asyncio.to_thread workers don't need their own apartment;
-# they call _write_via_ole which dispatches to the worker via a future.
-# Single thread, single apartment, no churn.
+# Resolution: call ole32.OleInitialize (which internally calls
+# CoInitializeEx with COINIT_APARTMENTTHREADED plus the OLE library
+# setup) on the dedicated worker thread at start. The worker owns one
+# OLE-initialized STA apartment for the process's lifetime; asyncio
+# dispatchers submit work via a queue.
 #
 # Reads stay on the existing OpenClipboard + GetClipboardData path; OLE
 # is only required for the cross-process write race, not for reads.
 
 # Magic numbers from Win32 headers, kept here so non-Windows imports don't
 # need to touch ctypes / ole32 at module load.
-_COINIT_APARTMENTTHREADED = 0x2  # objbase.h COINIT.COINIT_APARTMENTTHREADED
 _RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as signed 32-bit
 
 
-def _ole32_co_initialize_ex() -> None:
-    """Call ole32.CoInitializeEx(NULL, COINIT_APARTMENTTHREADED) via ctypes.
+def _ole32_initialize() -> None:
+    """Call ole32.OleInitialize(NULL) via ctypes.
 
-    Goes straight to ole32.dll regardless of pywin32 state. Accepts S_OK
-    (0, newly inited), S_FALSE (1, same-mode re-init), and
-    RPC_E_CHANGED_MODE (different model already active). Any other
-    negative HRESULT raises OSError.
+    OleInitialize is the canonical setup call for any thread that will
+    use OleSetClipboard / OleGetClipboard / OleFlushClipboard / drag-and-
+    drop. Internally it does CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)
+    plus the additional OLE subsystem setup that the bare CoInitializeEx
+    doesn't perform -- which is why earlier attempts that initialized
+    only the COM apartment failed at OleSetClipboard with
+    CO_E_NOTINITIALIZED despite the apartment being live.
+
+    Accepts S_OK (0, newly inited), S_FALSE (1, same-thread re-init),
+    and RPC_E_CHANGED_MODE (different threading model already active).
+    Any other negative HRESULT raises OSError.
     """
     import ctypes
 
     ole32 = ctypes.windll.ole32  # type: ignore[attr-defined]  # Windows-only
-    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-    ole32.CoInitializeEx.restype = ctypes.c_long  # HRESULT (signed 32-bit)
-    hr = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    ole32.OleInitialize.argtypes = [ctypes.c_void_p]
+    ole32.OleInitialize.restype = ctypes.c_long  # HRESULT (signed 32-bit)
+    hr = ole32.OleInitialize(None)
     if hr < 0 and hr != _RPC_E_CHANGED_MODE:
         raise OSError(
-            f"CoInitializeEx (via ctypes / ole32.dll) failed with HRESULT 0x{hr & 0xFFFFFFFF:08X}"
+            f"OleInitialize (via ctypes / ole32.dll) failed with HRESULT 0x{hr & 0xFFFFFFFF:08X}"
         )
 
 
@@ -166,7 +175,7 @@ class _ClipboardWorker(threading.Thread):
 
     def run(self) -> None:
         try:
-            _ole32_co_initialize_ex()
+            _ole32_initialize()
             # Import pythoncom on this thread so any pywin32-internal
             # per-thread setup runs here rather than on a caller's thread.
             import pythoncom  # type: ignore[import-not-found,import-untyped]  # noqa: F401
