@@ -1210,9 +1210,7 @@ def test_quiescent_wait_returns_immediately_when_sequence_stable(
     assert result is True
 
 
-def test_quiescent_wait_returns_false_when_budget_exhausts(
-    clipboard_win32, fake_win32clipboard
-):
+def test_quiescent_wait_returns_false_when_budget_exhausts(clipboard_win32, fake_win32clipboard):
     """If GetClipboardSequenceNumber keeps advancing on every sample,
     the clipboard chain has not settled within the budget. The wait
     function returns False so the caller can still retry (the OLE
@@ -1230,9 +1228,7 @@ def test_quiescent_wait_returns_false_when_budget_exhausts(
     assert result is False
 
 
-def test_write_via_ole_retry_path_consults_sequence_number(
-    clipboard_win32, fake_win32clipboard
-):
+def test_write_via_ole_retry_path_consults_sequence_number(clipboard_win32, fake_win32clipboard):
     """After a failed IsClipboardFormatAvailable verify, the retry
     path waits for the clipboard chain to quiesce by sampling
     GetClipboardSequenceNumber. This test asserts the sequence

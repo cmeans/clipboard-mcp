@@ -836,9 +836,7 @@ def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
         # no-op -- retry without delay) and waits up to the budget
         # cap if a listener is still actively writing.
         if attempt < len(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS):
-            _wait_for_clipboard_quiescent(
-                max_wait_ms=_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt]
-            )
+            _wait_for_clipboard_quiescent(max_wait_ms=_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt])
     raise RuntimeError(
         f"OLE write verify failed after {_OLE_WRITE_VERIFY_RETRIES} attempts; "
         f"formats not on clipboard after OleFlushClipboard: {last_missing!r}. "
