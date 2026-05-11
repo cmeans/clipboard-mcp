@@ -477,7 +477,14 @@ def read_text(mime_type: str) -> str:
     if isinstance(data, str):
         return data
     if isinstance(data, (bytes, bytearray)):
-        return bytes(data).decode("utf-8", errors="replace")
+        raw = bytes(data)
+        # OLE's HGLOBAL allocation null-terminates registered custom-format
+        # payloads (GlobalAlloc(len+1) + memcpy + trailing NUL inside
+        # pywin32's STGMEDIUM.set on the write path). Strip the trailing
+        # NUL byte if present so callers see the exact source bytes.
+        if raw.endswith(b"\x00"):
+            raw = raw[:-1]
+        return raw.decode("utf-8", errors="replace")
     # Defensive last-resort: pywin32 has historically returned other shapes
     # (memoryview, int) for unusual custom formats on some Windows versions.
     # Coerce to str so the caller never sees a non-str return; log so a

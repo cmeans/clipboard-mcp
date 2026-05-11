@@ -557,6 +557,30 @@ def test_read_text_decodes_utf8_bytes_for_registered_formats(clipboard_win32, fa
     assert result == "<svg>—</svg>"
 
 
+def test_read_text_strips_trailing_nul_byte_from_registered_format(
+    clipboard_win32, fake_win32clipboard
+):
+    """The OLE write path runs through pywin32's STGMEDIUM.set which
+    GlobalAlloc(len + 1)s the HGLOBAL and appends a trailing NUL byte to
+    the payload. read_text must strip it so round-trips through
+    OleSetClipboard return exactly the source bytes -- otherwise SVG /
+    RTF assertions on exact equality fail with the integration-windows
+    CI signature we hit on 4ff184a."""
+    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC301
+    # Payload as it would come back from the clipboard after the OLE path
+    # null-terminated the HGLOBAL: original bytes + b"\x00".
+    fake_win32clipboard.GetClipboardData.return_value = b"<svg>x</svg>\x00"
+
+    result = clipboard_win32.read_text("image/svg+xml")
+
+    assert result == "<svg>x</svg>"
+    # And verify reads without a trailing NUL (legacy SetClipboardData
+    # path, or another writer's payload) are passed through untouched.
+    fake_win32clipboard.GetClipboardData.return_value = b"<svg>y</svg>"
+    assert clipboard_win32.read_text("image/svg+xml") == "<svg>y</svg>"
+
+
 def test_read_text_closes_clipboard_on_exception(clipboard_win32, fake_win32clipboard):
     """If GetClipboardData raises, the clipboard is still released so the
     next caller is not blocked by a stuck OpenClipboard."""
