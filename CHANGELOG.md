@@ -84,18 +84,29 @@ All notable changes to this project will be documented here.
   instability entirely.
 
 ### Fixed
-- Windows: closed the residual OLE write race on the
-  `refactor/windows-pywin32-backend` branch by retrying the OleSet +
-  OleFlush sequence around `GetClipboardSequenceNumber` quiescence
-  instead of a fixed exponential sleep. The previous 5-attempt
-  schedule (50/100/200/400ms) closed the mc-020 race-bucket on a
-  clean prior state but missed the mc-017 worst case where a chain
-  listener stayed active across the entire fixed budget. The new
-  signal polls the kernel-maintained clipboard sequence number after
-  a failed `IsClipboardFormatAvailable` verify and waits until two
-  consecutive samples match before retrying, so the retry fires when
-  the chain has actually settled. Retry budget cap is unchanged on
-  the bad path; the happy path stays microseconds.
+- Windows: replaced the entire `OleSetClipboard` + `OleFlushClipboard`
+  write path with the canonical raw-`SetClipboardData` pattern used by
+  Chromium (`ui/base/clipboard/clipboard_win.cc`), pyperclip, and pyclip.
+  The OLE path created a hidden `CLIPBRDWNDCLASS` window on a worker
+  thread that had no message pump; consumers (clipboard managers,
+  OneDrive shell extensions, antivirus) that walked our registered
+  custom formats hit the documented 30-second `WM_RENDERFORMAT` timeout
+  and synthesized their own clipboard copy in self-defense, presenting
+  to us as "our write was silently overwritten" (the PR #146 e2e flake
+  on commits 8535045 / 3078f35 / ec6d6a5 / 6837c36). The new write path
+  is `OpenClipboard(owner_hwnd)` -> `EmptyClipboard()` -> per format:
+  `GlobalAlloc(GMEM_MOVEABLE, len)` + `GlobalLock` + `memcpy` +
+  `GlobalUnlock` + `SetClipboardData(fmt, handle)` -> `CloseClipboard()`.
+  No OLE, no `IDataObject`, no hidden window, no delayed rendering, no
+  message pump dependency, no post-write verify, no retry on
+  `SetClipboardData` itself. The `GMEM_MOVEABLE` flag is explicit (per
+  MSDN, `SetClipboardData` silently rejects `GMEM_FIXED` handles -- the
+  documented cause of the silent-no-op symptom class on the pre-OLE
+  attempt). Removes roughly 400 lines of OLE machinery
+  (`_ClipboardDataObject` IDataObject stub, `_ClipboardWorker` STA
+  worker thread, `_ole32_initialize`, `_ole_set_clipboard_with_retry`,
+  `_ole_write_on_worker`, `_get_clipboard_sequence_number`,
+  `_wait_for_clipboard_quiescent`, the 5-attempt verify-retry loop).
 - Windows: non-ASCII characters survive `clipboard_paste` and
   `clipboard_read_raw` round-trips. Em dash (U+2014), curly quotes
   (U+2018-U+201D), ellipsis (U+2026), and non-Latin scripts (CJK,

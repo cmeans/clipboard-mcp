@@ -1,28 +1,32 @@
 """Unit tests for the Win32 clipboard wrapper.
 
 Exercises clipboard_win32.read_text / write_text / write_multi / list_formats
-with `win32clipboard`, `pythoncom`, `win32com.server.util`,
-`win32com.server.exception`, and `winerror` injected as MagicMocks via
+with `win32clipboard`, `win32gui`, `win32con` injected as MagicMocks via
 sys.modules so the tests run on Linux CI (where pywin32 is not installed).
-Real Windows-clipboard round-trips are covered by
-tests/test_clipboard_win32_integration.py on the windows-latest runner.
+The raw-SetClipboardData write path drives `kernel32.GlobalAlloc` /
+`GlobalLock` / `GlobalUnlock` / `GlobalFree` and `user32.SetClipboardData`
+via ctypes; the fixture mocks `ctypes.windll` accordingly. Real Windows-
+clipboard round-trips are covered by tests/test_clipboard_win32_integration.py
+on the windows-latest runner.
 
 The wrapper is small enough that the unit tests cover every branch:
 - _import_win32clipboard cache hit / miss
 - _register_format cache hit / miss
-- _open_clipboard_with_retry retry budget exhaustion (read path)
+- _open_clipboard_with_retry retry budget exhaustion
 - _format_id_for_mime for all four supported MIMEs + the unsupported case
 - read_text for absent format vs str return vs bytes return
 - _encode_for_format for CF_UNICODETEXT (UTF-16 LE + NUL) vs custom (UTF-8)
-- write_text and write_multi via OleSetClipboard + OleFlushClipboard
-- _ClipboardDataObject GetData / QueryGetData / EnumFormatEtc plus E_NOTIMPL stubs
+- _allocate_hglobal GMEM_MOVEABLE allocation, lock/copy/unlock contract,
+  failure cleanup
+- _write_payloads single + multi format transaction shape, ownership
+  transfer to SetClipboardData, GlobalFree cleanup on failure
+- write_text and write_multi end-to-end
 - list_formats including standard-format-name lookup and custom fallback
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,17 +34,13 @@ import pytest
 
 @pytest.fixture
 def fake_win32clipboard() -> MagicMock:
-    """Install MagicMocks for all the pywin32-shaped modules our wrapper
-    imports lazily: win32clipboard, win32gui, win32con, pythoncom, winerror,
-    win32com.server.util, win32com.server.exception. Each is injected via
-    sys.modules so the wrapper's deferred imports resolve to the fake; the
-    fakes are removed (or the prior value restored) on test teardown.
-
-    Why so many fakes: writes go through OleSetClipboard + OleFlushClipboard
-    via win32com.server.util.wrap on an IDataObject (_ClipboardDataObject)
-    that raises COMException with winerror HRESULTs for unsupported
-    FORMATETC shapes. None of those modules ship on Linux, where CI runs.
-    Reads still use win32clipboard + win32gui + win32con directly."""
+    """Install MagicMocks for the pywin32 modules our wrapper imports
+    lazily (win32clipboard, win32gui, win32con) plus a ctypes.windll
+    shape (kernel32 + user32) for the raw HGLOBAL allocation + SetClipboardData
+    path. Each is injected via sys.modules so the wrapper's deferred imports
+    resolve to the fake; the fakes are removed (or the prior value restored)
+    on test teardown.
+    """
     fake = MagicMock(name="win32clipboard")
     # Standard format constants so _format_id_for_mime("text/plain") and
     # _format_name's standard-formats dict work without real pywin32.
@@ -81,116 +81,53 @@ def fake_win32clipboard() -> MagicMock:
     prior_win32con = sys.modules.get("win32con")
     sys.modules["win32con"] = fake_win32con
 
-    # pythoncom: OLE clipboard ops + COM init + IDataObject IID + FORMATETC
-    # / STGMEDIUM / DVASPECT_CONTENT / TYMED_HGLOBAL constants.
-    fake_pythoncom = MagicMock(name="pythoncom")
-    fake_pythoncom.COINIT_APARTMENTTHREADED = 0x2
-    fake_pythoncom.IID_IDataObject = "IID_IDataObject"
-    fake_pythoncom.IID_IEnumFORMATETC = "IID_IEnumFORMATETC"
-    fake_pythoncom.DVASPECT_CONTENT = 1
-    fake_pythoncom.TYMED_HGLOBAL = 1
-    fake_pythoncom.DATADIR_GET = 1
-    fake_pythoncom.DATADIR_SET = 2
-    # STGMEDIUM is constructed empty then .set(tymed, payload). Tests
-    # inspect the captured (tymed, payload) pair via the .set call on
-    # the returned mock.
-    fake_pythoncom.STGMEDIUM = MagicMock(name="STGMEDIUM")
-    prior_pythoncom = sys.modules.get("pythoncom")
-    sys.modules["pythoncom"] = fake_pythoncom
-
-    # winerror: HRESULT constants the IDataObject methods raise for
-    # unsupported FORMATETC shapes / unimplemented methods.
-    fake_winerror = MagicMock(name="winerror")
-    fake_winerror.DV_E_FORMATETC = -2147221404  # 0x80040064
-    fake_winerror.DV_E_TYMED = -2147221399  # 0x80040069
-    fake_winerror.DV_E_DVASPECT = -2147221397  # 0x8004006B
-    fake_winerror.E_NOTIMPL = -2147467263  # 0x80004001
-    fake_winerror.OLE_E_ADVISENOTSUPPORTED = -2147221501  # 0x80040003
-    prior_winerror = sys.modules.get("winerror")
-    sys.modules["winerror"] = fake_winerror
-
-    # win32com.server.util.wrap and NewEnum: wrap is what bridges a Python
-    # object implementing _com_interfaces_ / _public_methods_ into a COM
-    # IDispatch. NewEnum builds an IEnumFORMATETC over a Python iterable.
-    fake_win32com = MagicMock(name="win32com")
-    fake_win32com_server = MagicMock(name="win32com.server")
-    fake_win32com_server_util = MagicMock(name="win32com.server.util")
-    fake_win32com_server_util.wrap = MagicMock(name="wrap")
-    fake_win32com_server_util.NewEnum = MagicMock(name="NewEnum")
-    fake_win32com_server_exception = MagicMock(name="win32com.server.exception")
-
-    # COMException stored on the fake module so the wrapper's `from ...
-    # import COMException` resolves and so tests can assert raises against
-    # the same class. A concrete subclass of Exception is what the wrapper
-    # actually catches via try/except, so we use a real class here.
-    class _FakeCOMException(Exception):
-        def __init__(self, hresult: int | None = None, *args: object, **kwargs: object) -> None:
-            super().__init__(f"COMException(hresult={hresult})")
-            self.hresult = hresult
-
-    fake_win32com_server_exception.COMException = _FakeCOMException
-
-    prior_win32com = sys.modules.get("win32com")
-    prior_win32com_server = sys.modules.get("win32com.server")
-    prior_win32com_server_util = sys.modules.get("win32com.server.util")
-    prior_win32com_server_exception = sys.modules.get("win32com.server.exception")
-    sys.modules["win32com"] = fake_win32com
-    sys.modules["win32com.server"] = fake_win32com_server
-    sys.modules["win32com.server.util"] = fake_win32com_server_util
-    sys.modules["win32com.server.exception"] = fake_win32com_server_exception
-
-    # ctypes.windll only exists on Windows; the wrapper's _ensure_com_init
-    # accesses ole32.CoInitializeEx via ctypes.windll.ole32 to bypass
-    # pywin32's silently-no-op'ing wrapper. Inject a MagicMock for the
-    # tests; teardown restores the prior value.
+    # ctypes.windll only exists on Windows; the wrapper's _kernel32 and
+    # _user32 helpers access ctypes.windll.kernel32 and ctypes.windll.user32
+    # to drive the raw GlobalAlloc + SetClipboardData write path. Inject
+    # MagicMocks so the tests can assert on the exact API surface:
+    #
+    #   kernel32.GlobalAlloc(flags, size) -> integer handle (must be truthy
+    #       to indicate success; NULL/0 means allocation failed)
+    #   kernel32.GlobalLock(handle) -> integer pointer (the buffer)
+    #   kernel32.GlobalUnlock(handle) -> int (we ignore the return)
+    #   kernel32.GlobalFree(handle) -> NULL on success, handle on failure
+    #   user32.SetClipboardData(format, handle) -> handle on success, NULL on fail
+    #
+    # Returning a plain int counter so the test can assert distinct handles
+    # per allocation; the test increments via side_effect when it needs
+    # to validate the allocation-per-format pattern.
     import ctypes as _ctypes
 
-    fake_ole32 = MagicMock(name="ole32")
-    fake_ole32.OleInitialize.return_value = 0  # S_OK
-    # GetClipboardSequenceNumber lives on user32 and is consulted by the
-    # OLE write verify loop's quiescence wait. A plain int return_value is
-    # required so the wrapper's `current_seq == last_seq` comparison
-    # works against a stable value (MagicMock attribute auto-creation
-    # would return distinct sentinel objects per call).
+    fake_kernel32 = MagicMock(name="kernel32")
+    fake_kernel32.GlobalAlloc.return_value = 0xA1000000  # a non-NULL handle
+    fake_kernel32.GlobalLock.return_value = 0xB1000000  # a non-NULL pointer
+    fake_kernel32.GlobalUnlock.return_value = 0
+    fake_kernel32.GlobalFree.return_value = 0  # NULL = success
+
     fake_user32 = MagicMock(name="user32")
-    fake_user32.GetClipboardSequenceNumber.return_value = 0
+    # SetClipboardData returns the handle on success; the wrapper only
+    # checks truthiness, so any non-zero value works.
+    fake_user32.SetClipboardData.return_value = 1
+
     fake_windll = MagicMock(name="windll")
-    fake_windll.ole32 = fake_ole32
+    fake_windll.kernel32 = fake_kernel32
     fake_windll.user32 = fake_user32
     prior_windll = getattr(_ctypes, "windll", None)
     _ctypes.windll = fake_windll  # type: ignore[attr-defined]
 
-    # The real module caches the HWND and the OLE worker thread for the
-    # lifetime of the process. Reset between tests so each test starts
-    # fresh and CreateWindowEx / worker-start call counts are deterministic.
+    # The wrapper calls ctypes.memmove(locked_ptr, payload, n) inside
+    # _allocate_hglobal. With our fakes, locked_ptr is a plain integer
+    # like 0xB1, which is NOT a valid memory address; the real memmove
+    # would segfault writing to it. Swap memmove for a recording mock so
+    # tests can assert call shape without performing unsafe writes.
+    prior_memmove = _ctypes.memmove
+    _ctypes.memmove = MagicMock(name="memmove")  # type: ignore[assignment]
+
+    # The real module caches the HWND across calls. Reset between tests so
+    # each test starts fresh and CreateWindowEx call counts are deterministic.
     from mcp_clipboard import clipboard_win32 as _mod
 
     _mod._owner_hwnd = None
-    prior_worker = _mod._clipboard_worker
-    # Inject a synchronous fake worker so write_text / write_multi tests
-    # exercise the OLE write body on the calling thread (no real thread
-    # spawn, no actual COM init -- everything is mocked through the
-    # fake pythoncom). Tests that exercise the real _ClipboardWorker do
-    # so explicitly by clearing _mod._clipboard_worker first.
-    from concurrent.futures import Future as _Future
-
-    class _SynchronousWorker:
-        def __init__(self) -> None:
-            self.submitted: list[tuple[Any, tuple[Any, ...]]] = []
-
-        def submit(self, fn: Any, *args: Any) -> _Future:
-            self.submitted.append((fn, args))
-            f: _Future = _Future()
-            try:
-                f.set_result(fn(*args))
-            except BaseException as exc:
-                f.set_exception(exc)
-            return f
-
-    _mod._clipboard_worker = _SynchronousWorker()  # type: ignore[assignment]
-    # The class-level _com_interfaces_ is populated lazily on first
-    # _make_data_object call; clear so tests see a fresh init.
-    _mod._ClipboardDataObject._com_interfaces_ = []
 
     try:
         yield fake
@@ -207,33 +144,7 @@ def fake_win32clipboard() -> MagicMock:
             sys.modules.pop("win32con", None)
         else:
             sys.modules["win32con"] = prior_win32con
-        if prior_pythoncom is None:
-            sys.modules.pop("pythoncom", None)
-        else:
-            sys.modules["pythoncom"] = prior_pythoncom
-        if prior_winerror is None:
-            sys.modules.pop("winerror", None)
-        else:
-            sys.modules["winerror"] = prior_winerror
-        if prior_win32com is None:
-            sys.modules.pop("win32com", None)
-        else:
-            sys.modules["win32com"] = prior_win32com
-        if prior_win32com_server is None:
-            sys.modules.pop("win32com.server", None)
-        else:
-            sys.modules["win32com.server"] = prior_win32com_server
-        if prior_win32com_server_util is None:
-            sys.modules.pop("win32com.server.util", None)
-        else:
-            sys.modules["win32com.server.util"] = prior_win32com_server_util
-        if prior_win32com_server_exception is None:
-            sys.modules.pop("win32com.server.exception", None)
-        else:
-            sys.modules["win32com.server.exception"] = prior_win32com_server_exception
         _mod._owner_hwnd = None
-        _mod._clipboard_worker = prior_worker
-        _mod._ClipboardDataObject._com_interfaces_ = []
         if prior_windll is None:
             # ctypes.windll didn't exist before -- delete the attr we
             # added rather than leaving a MagicMock dangling.
@@ -243,6 +154,7 @@ def fake_win32clipboard() -> MagicMock:
                 del _ctypes.windll  # type: ignore[attr-defined]
         else:
             _ctypes.windll = prior_windll  # type: ignore[attr-defined]
+        _ctypes.memmove = prior_memmove  # type: ignore[assignment]
 
 
 @pytest.fixture
@@ -268,8 +180,6 @@ def test_import_win32clipboard_returns_module_when_available(clipboard_win32, fa
 def test_import_win32clipboard_raises_clear_error_on_non_windows():
     """When pywin32 is not installed (Linux / macOS) the import raises
     ImportError with a message naming the platform constraint."""
-    # Temporarily remove the fake from sys.modules and patch the import to
-    # simulate the real pywin32-not-installed condition.
     with patch.dict(sys.modules, {"win32clipboard": None}):
         from mcp_clipboard import clipboard_win32 as mod
 
@@ -326,12 +236,11 @@ def test_open_clipboard_passes_process_owned_hwnd(clipboard_win32, fake_win32cli
     SetClipboardData requires the calling process to be the clipboard owner.
     EmptyClipboard sets ownership to whatever window was passed to OpenClipboard.
     NULL or system-owned windows leave us not-the-owner and SetClipboardData
-    silently fails for registered custom formats -- the exact bug class that
-    produced the SVG silent-no-op symptoms in mc-005 / mc-009 / mc-020 of the
-    PR #146 verification runs before this fix.
+    silently fails for registered custom formats -- the bug class that produced
+    the SVG silent-no-op symptoms in mc-005 / mc-009 / mc-020 of the early
+    PR #146 verification runs.
 
-    The fixture stubs CreateWindowEx to return 0x10001 (representing a
-    message-only "STATIC" window owned by our process); OpenClipboard MUST
+    The fixture stubs CreateWindowEx to return 0x10001; OpenClipboard MUST
     receive that exact value."""
     fake_win32clipboard.OpenClipboard.return_value = None
 
@@ -344,21 +253,15 @@ def test_open_clipboard_creates_message_only_window(clipboard_win32, fake_win32c
     """The HWND we pass to OpenClipboard comes from CreateWindowEx with
     class='STATIC' (built-in USER32 class, no registration needed) and
     parent=HWND_MESSAGE (top-level message-only window, never visible).
-    This is the same pattern pyperclip uses, and matches what .NET's
-    Clipboard.SetDataObject and PowerShell's Set-Clipboard do internally
-    via the OLE API."""
-    import sys as _sys
-
+    Same pattern pyperclip and Chromium's base::win::MessageWindow use."""
     fake_win32clipboard.OpenClipboard.return_value = None
 
     clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
 
-    fake_win32gui = _sys.modules["win32gui"]
-    fake_win32con = _sys.modules["win32con"]
+    fake_win32gui = sys.modules["win32gui"]
+    fake_win32con = sys.modules["win32con"]
     fake_win32gui.CreateWindowEx.assert_called_once()
     args = fake_win32gui.CreateWindowEx.call_args[0]
-    # Positional args: (extStyle, className, windowName, style, x, y, w, h,
-    #                   parent, menu, hInstance, lpParam)
     assert args[1] == "STATIC", f"window class must be 'STATIC', got {args[1]!r}"
     assert args[8] == fake_win32con.HWND_MESSAGE, (
         f"parent must be HWND_MESSAGE for a message-only window, got {args[8]!r}"
@@ -368,21 +271,15 @@ def test_open_clipboard_creates_message_only_window(clipboard_win32, fake_win32c
 def test_open_clipboard_caches_owner_window_across_calls(clipboard_win32, fake_win32clipboard):
     """The owner window is created lazily on first call and cached for the
     process lifetime. Subsequent OpenClipboard calls reuse the same HWND
-    rather than spawning a new window each time -- otherwise high-frequency
-    clipboard ops would leak windows."""
-    import sys as _sys
-
+    rather than spawning a new window each time."""
     fake_win32clipboard.OpenClipboard.return_value = None
-    fake_win32gui = _sys.modules["win32gui"]
+    fake_win32gui = sys.modules["win32gui"]
 
     clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
     clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
     clipboard_win32._open_clipboard_with_retry(fake_win32clipboard, retries=3, delay_ms=0)
 
-    # CreateWindowEx fires once even though _open_clipboard_with_retry was
-    # called three times.
     assert fake_win32gui.CreateWindowEx.call_count == 1
-    # OpenClipboard fires three times with the same cached HWND.
     assert fake_win32clipboard.OpenClipboard.call_count == 3
     for call in fake_win32clipboard.OpenClipboard.call_args_list:
         assert call.args == (0x10001,)
@@ -390,21 +287,13 @@ def test_open_clipboard_caches_owner_window_across_calls(clipboard_win32, fake_w
 
 def test_get_clipboard_hwnd_inner_lock_returns_cached_hwnd(clipboard_win32, fake_win32clipboard):
     """Double-checked locking has TWO None-checks: one before the lock
-    (lock-free fast path) and one inside the lock (handles the race where
-    a second caller acquired the lock just as the first finished creating
-    the window). Swap the module-level lock for a fake whose __enter__
+    and one inside. Swap the module-level lock for a fake whose __enter__
     pre-populates _owner_hwnd, simulating the race: the inner None-check
     then returns the cached HWND without falling into CreateWindowEx."""
-    import sys as _sys
-
-    fake_win32gui = _sys.modules["win32gui"]
+    fake_win32gui = sys.modules["win32gui"]
     sentinel_hwnd = 0xDEADBEEF
 
     class _RacingLock:
-        """Stand-in for threading.Lock whose __enter__ populates
-        _owner_hwnd before yielding -- simulates a parallel thread having
-        won the create race while this caller waited on the lock."""
-
         def __enter__(self) -> _RacingLock:
             clipboard_win32._owner_hwnd = sentinel_hwnd
             return self
@@ -420,16 +309,10 @@ def test_get_clipboard_hwnd_inner_lock_returns_cached_hwnd(clipboard_win32, fake
 
 
 def test_get_clipboard_hwnd_is_thread_safe(clipboard_win32, fake_win32clipboard):
-    """Concurrent first-callers must not leak HWNDs. clipboard.py dispatches
-    the synchronous Win32 path through asyncio.to_thread, so a burst of
-    concurrent first-calls into _get_clipboard_hwnd is reachable. Without
-    the double-checked lock both callers would race past the None-check and
-    each invoke CreateWindowEx, stranding one window per burst.
-    """
-    import sys as _sys
+    """Concurrent first-callers must not leak HWNDs."""
     import threading as _threading
 
-    fake_win32gui = _sys.modules["win32gui"]
+    fake_win32gui = sys.modules["win32gui"]
 
     n_threads = 32
     barrier = _threading.Barrier(n_threads)
@@ -448,19 +331,15 @@ def test_get_clipboard_hwnd_is_thread_safe(clipboard_win32, fake_win32clipboard)
     for t in threads:
         t.join()
 
-    assert fake_win32gui.CreateWindowEx.call_count == 1, (
-        f"CreateWindowEx must be called exactly once across {n_threads} concurrent "
-        f"first-callers; got {fake_win32gui.CreateWindowEx.call_count}"
-    )
+    assert fake_win32gui.CreateWindowEx.call_count == 1
     assert len(hwnds) == n_threads
-    assert set(hwnds) == {0x10001}, f"all callers must see the same cached HWND; got {set(hwnds)}"
+    assert set(hwnds) == {0x10001}
 
 
 def test_open_clipboard_with_retry_succeeds_after_transient_failure(
     clipboard_win32, fake_win32clipboard
 ):
-    """Two failures, then success -- the retry budget covers transient
-    contention from clipboard inspectors / antivirus."""
+    """Two failures, then success."""
     attempts = iter([RuntimeError("locked"), RuntimeError("locked"), None])
 
     def open_side_effect(_hwnd):
@@ -479,8 +358,7 @@ def test_open_clipboard_with_retry_succeeds_after_transient_failure(
 def test_open_clipboard_with_retry_raises_after_budget_exhausted(
     clipboard_win32, fake_win32clipboard
 ):
-    """If every retry fails, RuntimeError surfaces with the last underlying
-    error included so the caller knows what went wrong."""
+    """If every retry fails, RuntimeError surfaces with the last error."""
     fake_win32clipboard.OpenClipboard.side_effect = RuntimeError("locked")
 
     with pytest.raises(RuntimeError, match="OpenClipboard failed after 3 retries"):
@@ -493,8 +371,6 @@ def test_open_clipboard_with_retry_raises_after_budget_exhausted(
 
 
 def test_format_id_for_mime_text_plain_uses_cf_unicodetext(clipboard_win32, fake_win32clipboard):
-    """text/plain maps to CF_UNICODETEXT directly -- no RegisterClipboardFormat
-    call, so non-ASCII codepoints round-trip natively in UTF-16."""
     fmt_id = clipboard_win32._format_id_for_mime(fake_win32clipboard, "text/plain")
     assert fmt_id == fake_win32clipboard.CF_UNICODETEXT
     fake_win32clipboard.RegisterClipboardFormat.assert_not_called()
@@ -511,12 +387,8 @@ def test_format_id_for_mime_text_plain_uses_cf_unicodetext(clipboard_win32, fake
 def test_format_id_for_mime_registered_formats(
     clipboard_win32, fake_win32clipboard, mime_type, expected_name
 ):
-    """Each registered MIME asks RegisterClipboardFormat for its conventional
-    Win32 string name (HTML Format, Rich Text Format, image/svg+xml)."""
     fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC200
-
     clipboard_win32._format_id_for_mime(fake_win32clipboard, mime_type)
-
     fake_win32clipboard.RegisterClipboardFormat.assert_called_once_with(expected_name)
 
 
@@ -529,22 +401,17 @@ def test_format_id_for_mime_unsupported_raises(clipboard_win32, fake_win32clipbo
 
 
 def test_read_text_returns_empty_string_when_format_absent(clipboard_win32, fake_win32clipboard):
-    """If IsClipboardFormatAvailable returns falsy, read_text returns "" --
-    the absence-of-format path read_clipboard_raw relies on."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = False
 
     result = clipboard_win32.read_text("text/plain")
 
     assert result == ""
-    # Clipboard still opens / closes even on absent-format reads.
     fake_win32clipboard.OpenClipboard.assert_called_once()
     fake_win32clipboard.CloseClipboard.assert_called_once()
     fake_win32clipboard.GetClipboardData.assert_not_called()
 
 
 def test_read_text_returns_str_for_unicodetext(clipboard_win32, fake_win32clipboard):
-    """CF_UNICODETEXT comes back as a Python str directly via pywin32's
-    Unicode-aware GetClipboardData wrapper."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
     fake_win32clipboard.GetClipboardData.return_value = "hello — world"
 
@@ -554,8 +421,6 @@ def test_read_text_returns_str_for_unicodetext(clipboard_win32, fake_win32clipbo
 
 
 def test_read_text_decodes_utf8_bytes_for_registered_formats(clipboard_win32, fake_win32clipboard):
-    """Registered custom formats (HTML Format, image/svg+xml, etc.) come
-    back as bytes; read_text decodes UTF-8 with errors='replace'."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
     fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC300
     fake_win32clipboard.GetClipboardData.return_value = b"<svg>\xe2\x80\x94</svg>"
@@ -568,30 +433,25 @@ def test_read_text_decodes_utf8_bytes_for_registered_formats(clipboard_win32, fa
 def test_read_text_strips_trailing_nul_byte_from_registered_format(
     clipboard_win32, fake_win32clipboard
 ):
-    """The OLE write path runs through pywin32's STGMEDIUM.set which
-    GlobalAlloc(len + 1)s the HGLOBAL and appends a trailing NUL byte to
-    the payload. read_text must strip it so round-trips through
-    OleSetClipboard return exactly the source bytes -- otherwise SVG /
-    RTF assertions on exact equality fail with the integration-windows
-    CI signature we hit on 4ff184a."""
+    """When the writer was a .NET / OLE-backed app, the registered-format
+    bytes come back NUL-terminated (the OLE STGMEDIUM.set path
+    GlobalAlloc(len + 1)s and writes a trailing NUL). read_text strips
+    that NUL so callers always see the exact source bytes regardless of
+    who wrote the clipboard. Our own write path no longer adds the NUL
+    (raw SetClipboardData with GlobalAlloc(len)), but inter-op with
+    other writers is still in scope."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
     fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC301
-    # Payload as it would come back from the clipboard after the OLE path
-    # null-terminated the HGLOBAL: original bytes + b"\x00".
     fake_win32clipboard.GetClipboardData.return_value = b"<svg>x</svg>\x00"
 
     result = clipboard_win32.read_text("image/svg+xml")
 
     assert result == "<svg>x</svg>"
-    # And verify reads without a trailing NUL (legacy SetClipboardData
-    # path, or another writer's payload) are passed through untouched.
     fake_win32clipboard.GetClipboardData.return_value = b"<svg>y</svg>"
     assert clipboard_win32.read_text("image/svg+xml") == "<svg>y</svg>"
 
 
 def test_read_text_closes_clipboard_on_exception(clipboard_win32, fake_win32clipboard):
-    """If GetClipboardData raises, the clipboard is still released so the
-    next caller is not blocked by a stuck OpenClipboard."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
     fake_win32clipboard.GetClipboardData.side_effect = RuntimeError("boom")
 
@@ -602,186 +462,18 @@ def test_read_text_closes_clipboard_on_exception(clipboard_win32, fake_win32clip
 
 
 def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake_win32clipboard):
-    """Defensive: pywin32 historically returned non-str / non-bytes values
-    for some custom formats (memoryview, ints). read_text str()-coerces
-    so the caller always gets a string back. Covers the final fallback
-    branch in read_text after the str / bytes type checks."""
     fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
     fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC700
-    # Return a memoryview -- not str, not bytes, not bytearray -- so the
-    # str / bytes type checks both miss and the fallback runs.
-    fake_win32clipboard.GetClipboardData.return_value = memoryview(b"raw")
+
+    class _UnexpectedShape:
+        def __str__(self) -> str:
+            return "fallback-str"
+
+    fake_win32clipboard.GetClipboardData.return_value = _UnexpectedShape()
 
     result = clipboard_win32.read_text("image/svg+xml")
 
-    # str(memoryview(b"raw")) renders as "<memory at 0x...>", which is
-    # what the fallback produces -- the test's intent is to prove the
-    # fallback executes, not to assert on the rendered representation.
-    assert isinstance(result, str)
-    assert "memory" in result
-
-
-# --- _ole32_initialize -----------------------------------------------
-
-
-def test_ole32_initialize_calls_ctypes_ole32_oleinitialize(clipboard_win32):
-    """ole32.OleInitialize -- not bare CoInitializeEx -- is what
-    OleSetClipboard requires per MSDN: 'Before calling this function,
-    you must initialize the OLE library by calling OleInitialize.'
-    Bare CoInitializeEx sets up the COM apartment but does NOT enable
-    OLE clipboard support, which is why integration-windows CI on
-    commits d3d7372 / 3904fef / 0a0f933 / 0966ef7 all failed with
-    OleSetClipboard raising CO_E_NOTINITIALIZED."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = 0  # S_OK
-
-    clipboard_win32._ole32_initialize()
-
-    # OleInitialize takes a single LPVOID reserved param (always NULL).
-    fake_ole32.OleInitialize.assert_called_once_with(None)
-
-
-def test_ole32_initialize_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
-    """S_FALSE (1, same-mode re-init) and RPC_E_CHANGED_MODE
-    (-2147417850, different model already active) are both accepted
-    without raising."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-
-    # S_FALSE (1): same-mode re-init, no-op success.
-    fake_ole32.OleInitialize.return_value = 1
-    clipboard_win32._ole32_initialize()
-
-    # RPC_E_CHANGED_MODE: previously inited to different model, accept.
-    fake_ole32.OleInitialize.return_value = -2147417850
-    clipboard_win32._ole32_initialize()
-
-
-def test_ole32_initialize_raises_on_other_failed_hresults(clipboard_win32):
-    """Any negative HRESULT other than RPC_E_CHANGED_MODE raises OSError
-    so genuine init failures aren't masked."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = -2147221015  # CO_E_INITONLYONCE
-
-    with pytest.raises(OSError, match="OleInitialize"):
-        clipboard_win32._ole32_initialize()
-
-
-# --- _ClipboardWorker ------------------------------------------------------
-
-
-def test_clipboard_worker_inits_com_then_runs_submitted_callable(clipboard_win32):
-    """The worker thread inits ole32 once on start, then services
-    queued callables. Tests run a real thread but mock ole32 + pythoncom."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = 0  # S_OK
-
-    worker = clipboard_win32._ClipboardWorker()
-    worker.start()
-    try:
-        future = worker.submit(lambda x: x * 2, 21)
-        assert future.result(timeout=2.0) == 42
-        # ole32.OleInitialize fired once on the worker's start (the full
-        # OLE setup, not just bare CoInitializeEx). Subsequent submits
-        # don't re-init.
-        assert fake_ole32.OleInitialize.call_count == 1
-        assert fake_ole32.OleInitialize.call_args.args == (None,)
-    finally:
-        worker._queue.put(None)  # sentinel shutdown
-        worker.join(timeout=2.0)
-
-
-def test_clipboard_worker_propagates_exceptions_from_submitted_callable(clipboard_win32):
-    """An exception inside a worker-thread callable surfaces through the
-    Future to the caller."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = 0
-
-    worker = clipboard_win32._ClipboardWorker()
-    worker.start()
-    try:
-
-        def boom():
-            raise RuntimeError("boom")
-
-        future = worker.submit(boom)
-        with pytest.raises(RuntimeError, match="boom"):
-            future.result(timeout=2.0)
-    finally:
-        worker._queue.put(None)
-        worker.join(timeout=2.0)
-
-
-def test_clipboard_worker_init_failure_surfaces_on_submit(clipboard_win32):
-    """If OleInitialize fails at worker start, submit() returns a
-    pre-resolved Future carrying the init error -- callers see the real
-    failure rather than hanging on a dead worker."""
-    import ctypes as _ctypes
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = -2147221015  # CO_E_INITONLYONCE
-
-    worker = clipboard_win32._ClipboardWorker()
-    worker.start()
-    try:
-        future = worker.submit(lambda: None)
-        with pytest.raises(OSError, match="OleInitialize"):
-            future.result(timeout=2.0)
-    finally:
-        worker.join(timeout=2.0)  # thread already exited from init failure
-
-
-# --- _get_clipboard_worker -------------------------------------------------
-
-
-def test_get_clipboard_worker_starts_once_and_caches(clipboard_win32):
-    """The worker is lazy-started on first call and cached. Double-checked
-    locking guards against concurrent first-callers via asyncio.to_thread
-    spawning multiple workers."""
-    import ctypes as _ctypes
-    import threading as _threading
-
-    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    fake_ole32.OleInitialize.return_value = 0
-
-    # Clear the cached worker the fixture installed; we want to exercise
-    # the real lazy-start path.
-    clipboard_win32._clipboard_worker = None
-
-    n_threads = 16
-    barrier = _threading.Barrier(n_threads)
-    workers: list[Any] = []
-    workers_lock = _threading.Lock()
-
-    def race():
-        barrier.wait()
-        w = clipboard_win32._get_clipboard_worker()
-        with workers_lock:
-            workers.append(w)
-
-    threads = [_threading.Thread(target=race) for _ in range(n_threads)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    try:
-        # All threads see the same worker instance.
-        assert all(w is workers[0] for w in workers)
-        assert workers[0] is clipboard_win32._clipboard_worker
-    finally:
-        clipboard_win32._clipboard_worker._queue.put(None)
-        clipboard_win32._clipboard_worker.join(timeout=2.0)
-        clipboard_win32._clipboard_worker = None
+    assert result == "fallback-str"
 
 
 # --- _encode_for_format ----------------------------------------------------
@@ -790,10 +482,9 @@ def test_get_clipboard_worker_starts_once_and_caches(clipboard_win32):
 def test_encode_for_format_cf_unicodetext_is_utf16le_null_terminated(
     clipboard_win32, fake_win32clipboard
 ):
-    """CF_UNICODETEXT requires null-terminated UTF-16 LE per MSDN. Under
-    raw SetClipboardData pywin32's str overload added the NUL for us;
-    under OleSetClipboard we go through STGMEDIUM HGLOBAL which copies
-    bytes verbatim, so we must encode + terminate ourselves."""
+    """CF_UNICODETEXT requires null-terminated UTF-16 LE per MSDN.
+    Encoding it ourselves rather than going through pywin32's str
+    overload makes the byte layout explicit at the test level."""
     encoded = clipboard_win32._encode_for_format(
         fake_win32clipboard.CF_UNICODETEXT, "hi —", fake_win32clipboard
     )
@@ -803,590 +494,398 @@ def test_encode_for_format_cf_unicodetext_is_utf16le_null_terminated(
 
 def test_encode_for_format_custom_format_is_utf8(clipboard_win32, fake_win32clipboard):
     """Registered custom formats (HTML Format, Rich Text Format,
-    image/svg+xml) take raw UTF-8 bytes. No null terminator: their
-    end-of-data conventions are format-internal."""
+    image/svg+xml) take raw UTF-8 bytes. No null terminator."""
     encoded = clipboard_win32._encode_for_format(0xC100, "<svg>—</svg>", fake_win32clipboard)
 
     assert encoded == "<svg>—</svg>".encode()
 
 
-# --- _ClipboardDataObject --------------------------------------------------
+# --- _allocate_hglobal -----------------------------------------------------
 
 
-def _make_fe(cf: int, aspect: int = 1, tymed: int = 1):
-    """Build a FORMATETC tuple in the shape (cf, ptd, aspect, lindex, tymed)
-    that OleFlushClipboard / OleGetClipboard pass to our IDataObject."""
-    return (cf, None, aspect, -1, tymed)
+def test_allocate_hglobal_uses_gmem_moveable(clipboard_win32, fake_win32clipboard):
+    """GlobalAlloc MUST be called with GMEM_MOVEABLE (0x0002). Per MSDN
+    SetClipboardData, GMEM_FIXED handles are silently rejected -- the
+    documented cause of the silent-no-op symptom class. This is the
+    canary that fails if someone "simplifies" the code by accidentally
+    dropping the flag."""
+    import ctypes as _ctypes
 
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xA1
+    kernel32.GlobalLock.return_value = 0xB1
 
-def test_clipboard_data_object_getdata_returns_stgmedium_for_known_format(
-    clipboard_win32, fake_win32clipboard
-):
-    """GetData for a (cf, DVASPECT_CONTENT, TYMED_HGLOBAL) shape we
-    advertise returns an STGMEDIUM with our payload bytes."""
-    import sys as _sys
+    clipboard_win32._allocate_hglobal(b"abc")
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    stg_instance = MagicMock(name="STGMEDIUM_instance")
-    fake_pythoncom.STGMEDIUM.return_value = stg_instance
+    kernel32.GlobalAlloc.assert_called_once()
+    flags = kernel32.GlobalAlloc.call_args.args[0]
+    assert flags == 0x0002, f"GlobalAlloc flag must be GMEM_MOVEABLE (0x0002); got {flags:#x}"
 
-    do = clipboard_win32._ClipboardDataObject({0xC700: b"<svg/>"})
-    result = do.GetData(_make_fe(0xC700))
 
-    assert result is stg_instance
-    stg_instance.set.assert_called_once_with(fake_pythoncom.TYMED_HGLOBAL, b"<svg/>")
+def test_allocate_hglobal_locks_copies_unlocks_in_order(clipboard_win32, fake_win32clipboard):
+    """The canonical lock/copy/unlock dance: GlobalLock the handle to get
+    a writable pointer, memcpy the payload, GlobalUnlock to release the
+    lock count. SetClipboardData then walks the locked region of the
+    handle. If we forget to Unlock, the handle stays pinned and the OS
+    cannot move it -- not a correctness bug but a documented antipattern."""
+    import ctypes as _ctypes
 
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
 
-def test_clipboard_data_object_getdata_unknown_format_raises_dv_e_formatetc(
-    clipboard_win32, fake_win32clipboard
-):
-    """A FORMATETC we don't advertise -> DV_E_FORMATETC, the documented
-    HRESULT for "this object cannot provide that format."""
-    import sys as _sys
+    call_order: list[str] = []
+    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: call_order.append("alloc") or 0xCAFE
+    kernel32.GlobalLock.side_effect = lambda *_a, **_kw: call_order.append("lock") or 0xBEEF
+    kernel32.GlobalUnlock.side_effect = lambda *_a, **_kw: call_order.append("unlock") or 0
 
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
+    handle = clipboard_win32._allocate_hglobal(b"payload")
 
-    do = clipboard_win32._ClipboardDataObject({0xC700: b"<svg/>"})
-    with pytest.raises(COMException) as excinfo:
-        do.GetData(_make_fe(0xC701))
-    assert excinfo.value.hresult == fake_winerror.DV_E_FORMATETC
-
-
-def test_clipboard_data_object_getdata_wrong_tymed_raises_dv_e_tymed(
-    clipboard_win32, fake_win32clipboard
-):
-    """We only offer TYMED_HGLOBAL; any other tymed -> DV_E_TYMED."""
-    import sys as _sys
+    assert call_order == ["alloc", "lock", "unlock"]
+    assert handle == 0xCAFE
+    kernel32.GlobalLock.assert_called_once_with(0xCAFE)
+    kernel32.GlobalUnlock.assert_called_once_with(0xCAFE)
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
 
-    do = clipboard_win32._ClipboardDataObject({0xC700: b"<svg/>"})
-    with pytest.raises(COMException) as excinfo:
-        # Wrong tymed (e.g. TYMED_ISTREAM=4) -> DV_E_TYMED.
-        do.GetData(_make_fe(0xC700, aspect=fake_pythoncom.DVASPECT_CONTENT, tymed=4))
-    assert excinfo.value.hresult == fake_winerror.DV_E_TYMED
-
+def test_allocate_hglobal_passes_exact_payload_size(clipboard_win32, fake_win32clipboard):
+    """GlobalAlloc receives the payload length exactly -- no NUL terminator,
+    no padding, no rounding. Our reads strip trailing NULs from interop
+    payloads so we must not add one on our writes."""
+    import ctypes as _ctypes
 
-def test_clipboard_data_object_querygetdata_known_format_returns_none(
-    clipboard_win32, fake_win32clipboard
-):
-    """QueryGetData returns None for a supported FORMATETC -- the COM
-    convention for "yes, we can render this" without producing the data."""
-    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
-
-    # Should not raise.
-    do.QueryGetData(_make_fe(0xC800))
-
-
-def test_clipboard_data_object_querygetdata_unknown_format_raises(
-    clipboard_win32, fake_win32clipboard
-):
-    import sys as _sys
-
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
-
-    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
-    with pytest.raises(COMException) as excinfo:
-        do.QueryGetData(_make_fe(0xC801))
-    assert excinfo.value.hresult == fake_winerror.DV_E_FORMATETC
-
-
-def test_clipboard_data_object_querygetdata_wrong_aspect_raises_dv_e_dvaspect(
-    clipboard_win32, fake_win32clipboard
-):
-    """QueryGetData with aspect=0 (no DVASPECT_CONTENT bit) -> DV_E_DVASPECT,
-    the documented HRESULT for 'wrong aspect for this data source'."""
-    import sys as _sys
-
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
-
-    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
-    with pytest.raises(COMException) as excinfo:
-        # aspect=0 -> aspect & DVASPECT_CONTENT == 0 -> DV_E_DVASPECT branch.
-        do.QueryGetData(_make_fe(0xC800, aspect=0))
-    assert excinfo.value.hresult == fake_winerror.DV_E_DVASPECT
-
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xA1
+    kernel32.GlobalLock.return_value = 0xB1
 
-def test_clipboard_data_object_querygetdata_wrong_tymed_raises_dv_e_tymed(
-    clipboard_win32, fake_win32clipboard
-):
-    """QueryGetData with tymed != TYMED_HGLOBAL -> DV_E_TYMED. Distinct
-    from GetData's DV_E_TYMED check because QueryGetData also checks
-    aspect first; assert the tymed-specific branch when aspect is OK."""
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
-
-    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
-    with pytest.raises(COMException) as excinfo:
-        # aspect=DVASPECT_CONTENT (passes), tymed=4 (TYMED_ISTREAM, wrong).
-        do.QueryGetData(_make_fe(0xC800, aspect=fake_pythoncom.DVASPECT_CONTENT, tymed=4))
-    assert excinfo.value.hresult == fake_winerror.DV_E_TYMED
-
-
-def test_clipboard_data_object_enumformatetc_get_direction_returns_enum(
-    clipboard_win32, fake_win32clipboard
-):
-    """EnumFormatEtc with DATADIR_GET delegates to NewEnum and returns the
-    enumerator over our supported FORMATETC list."""
-    import sys as _sys
+    clipboard_win32._allocate_hglobal(b"<svg/>")
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    new_enum_result = MagicMock(name="enum")
-    fake_new_enum = _sys.modules["win32com.server.util"].NewEnum
-    fake_new_enum.return_value = new_enum_result
+    size = kernel32.GlobalAlloc.call_args.args[1]
+    assert size == len(b"<svg/>")
 
-    do = clipboard_win32._ClipboardDataObject({0xC900: b"a", 0xC901: b"b"})
-    result = do.EnumFormatEtc(fake_pythoncom.DATADIR_GET)
 
-    assert result is new_enum_result
-    fake_new_enum.assert_called_once()
-    call_args = fake_new_enum.call_args
-    # First positional arg: the list of FORMATETC tuples; iid kwarg: enum IID.
-    assert call_args.args[0] == do.supported_fe
-    assert call_args.kwargs["iid"] == fake_pythoncom.IID_IEnumFORMATETC
+def test_allocate_hglobal_empty_payload_uses_size_one(clipboard_win32, fake_win32clipboard):
+    """GlobalAlloc(0) is technically defined but yields a handle that
+    SetClipboardData cannot meaningfully consume. Round up to 1 so the
+    OS always has a real byte to point at; consumers that read an empty
+    payload won't ever inspect the byte."""
+    import ctypes as _ctypes
 
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xA1
+    kernel32.GlobalLock.return_value = 0xB1
 
-def test_clipboard_data_object_enumformatetc_set_direction_raises_not_impl(
-    clipboard_win32, fake_win32clipboard
-):
-    """We're a read-only data source; DATADIR_SET is not supported."""
-    import sys as _sys
+    clipboard_win32._allocate_hglobal(b"")
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_winerror = _sys.modules["winerror"]
-    from win32com.server.exception import COMException
+    assert kernel32.GlobalAlloc.call_args.args[1] == 1
 
-    do = clipboard_win32._ClipboardDataObject({0xC900: b"a"})
-    with pytest.raises(COMException) as excinfo:
-        do.EnumFormatEtc(fake_pythoncom.DATADIR_SET)
-    assert excinfo.value.hresult == fake_winerror.E_NOTIMPL
 
+def test_allocate_hglobal_raises_memoryerror_on_alloc_failure(clipboard_win32, fake_win32clipboard):
+    """GlobalAlloc returns NULL on out-of-global-memory. We must raise so
+    the upstream MCP layer surfaces the failure rather than handing a
+    NULL handle to SetClipboardData."""
+    import ctypes as _ctypes
 
-@pytest.mark.parametrize(
-    "method_name,args",
-    [
-        ("GetDataHere", (None,)),
-        ("GetCanonicalFormatEtc", (None,)),
-        ("SetData", (None, None, 0)),
-        ("DAdvise", (None, 0, None)),
-        ("DUnadvise", (0,)),
-        ("EnumDAdvise", ()),
-    ],
-)
-def test_clipboard_data_object_unimplemented_methods_raise(
-    clipboard_win32, fake_win32clipboard, method_name, args
-):
-    """All read-side / advise-side methods we don't implement raise
-    COMException with E_NOTIMPL or OLE_E_ADVISENOTSUPPORTED, so OLE
-    receives a proper HRESULT instead of a TypeError surfacing from Python."""
-    from win32com.server.exception import COMException
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0  # NULL = failure
 
-    do = clipboard_win32._ClipboardDataObject({0xCA00: b"x"})
-    method = getattr(do, method_name)
+    with pytest.raises(MemoryError, match="GlobalAlloc"):
+        clipboard_win32._allocate_hglobal(b"x")
 
-    with pytest.raises(COMException):
-        method(*args)
 
+def test_allocate_hglobal_frees_handle_on_lock_failure(clipboard_win32, fake_win32clipboard):
+    """If GlobalLock fails (defensive; should not happen for a fresh
+    GMEM_MOVEABLE handle), we still own the GlobalAlloc'd handle and
+    must GlobalFree it before raising. Otherwise we leak global memory
+    per failed allocation."""
+    import ctypes as _ctypes
 
-# --- _make_data_object -----------------------------------------------------
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xA1
+    kernel32.GlobalLock.return_value = 0  # NULL = failure
 
+    with pytest.raises(OSError, match="GlobalLock"):
+        clipboard_win32._allocate_hglobal(b"x")
 
-def test_make_data_object_wraps_and_returns_wrapped(clipboard_win32, fake_win32clipboard):
-    """_make_data_object calls win32com.server.util.wrap with our
-    _ClipboardDataObject + IID_IDataObject and returns the wrapper."""
-    import sys as _sys
+    kernel32.GlobalFree.assert_called_once_with(0xA1)
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_wrap = _sys.modules["win32com.server.util"].wrap
-    wrapped = MagicMock(name="wrapped_data_object")
-    fake_wrap.return_value = wrapped
 
-    result = clipboard_win32._make_data_object({0xCB00: b"hello"})
+# --- _write_payloads (raw SetClipboardData transaction) -------------------
 
-    assert result is wrapped
-    fake_wrap.assert_called_once()
-    args = fake_wrap.call_args
-    # First positional is the _ClipboardDataObject instance.
-    assert isinstance(args.args[0], clipboard_win32._ClipboardDataObject)
-    assert args.args[0].payloads == {0xCB00: b"hello"}
-    assert args.kwargs["iid"] == fake_pythoncom.IID_IDataObject
 
+def test_write_payloads_single_format_full_transaction(clipboard_win32, fake_win32clipboard):
+    """Happy path for one format: OpenClipboard, EmptyClipboard,
+    GlobalAlloc + lock/copy/unlock, SetClipboardData, CloseClipboard.
+    No retry, no verify, no pump -- the canonical Win32 sequence."""
+    import ctypes as _ctypes
 
-def test_make_data_object_sets_com_interfaces_lazily(clipboard_win32, fake_win32clipboard):
-    """_ClipboardDataObject._com_interfaces_ is empty at module load (it
-    references pythoncom.IID_IDataObject which is unavailable on Linux);
-    _make_data_object populates it on first call so wrap() sees the
-    correct IID list."""
-    import sys as _sys
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 0xCAFE  # success
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    assert clipboard_win32._ClipboardDataObject._com_interfaces_ == []
+    fake_win32clipboard.OpenClipboard.assert_called_once()
+    fake_win32clipboard.EmptyClipboard.assert_called_once()
+    user32.SetClipboardData.assert_called_once()
+    fmt_arg, handle_arg = user32.SetClipboardData.call_args.args
+    assert fmt_arg.value == 0xC100
+    assert handle_arg.value == 0xCAFE
+    fake_win32clipboard.CloseClipboard.assert_called_once()
 
-    clipboard_win32._make_data_object({0xCC00: b"a"})
 
-    assert clipboard_win32._ClipboardDataObject._com_interfaces_ == [fake_pythoncom.IID_IDataObject]
+def test_write_payloads_multi_format_uses_one_transaction(clipboard_win32, fake_win32clipboard):
+    """A multi-format write is ONE OpenClipboard / EmptyClipboard /
+    multiple-SetClipboardData / CloseClipboard transaction. EmptyClipboard
+    runs exactly once -- not once per format -- so the formats appear on
+    the clipboard atomically. Used by clipboard_copy_markdown's
+    text/html + text/plain pair."""
+    import ctypes as _ctypes
 
+    handles = iter([0xCAFE0001, 0xCAFE0002])
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 1  # success
 
-# --- _ole_set_clipboard_with_retry -----------------------------------------
+    clipboard_win32._write_payloads({13: b"x\x00", 0xC100: b"<p>x</p>"})
 
+    fake_win32clipboard.OpenClipboard.assert_called_once()
+    fake_win32clipboard.EmptyClipboard.assert_called_once()
+    assert user32.SetClipboardData.call_count == 2
+    fake_win32clipboard.CloseClipboard.assert_called_once()
 
-def test_ole_set_clipboard_succeeds_on_first_attempt(clipboard_win32, fake_win32clipboard):
-    import sys as _sys
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_pythoncom.OleSetClipboard.return_value = None
-
-    clipboard_win32._ole_set_clipboard_with_retry(
-        fake_pythoncom, MagicMock(name="do"), retries=3, delay_ms=0
-    )
-
-    fake_pythoncom.OleSetClipboard.assert_called_once()
-
-
-def test_ole_set_clipboard_retries_on_transient_failure(clipboard_win32, fake_win32clipboard):
-    """CLIPBRD_E_CANT_OPEN (clipboard inspector briefly holds the lock)
-    surfaces as an exception from OleSetClipboard; the retry budget covers
-    transient contention, same shape as _open_clipboard_with_retry."""
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
-    attempts = iter([RuntimeError("cant open"), RuntimeError("cant open"), None])
-
-    def side_effect(_do):
-        result = next(attempts)
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    fake_pythoncom.OleSetClipboard.side_effect = side_effect
-
-    clipboard_win32._ole_set_clipboard_with_retry(
-        fake_pythoncom, MagicMock(name="do"), retries=5, delay_ms=0
-    )
-
-    assert fake_pythoncom.OleSetClipboard.call_count == 3
-
-
-def test_ole_set_clipboard_raises_after_budget_exhausted(clipboard_win32, fake_win32clipboard):
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_pythoncom.OleSetClipboard.side_effect = RuntimeError("cant open")
-
-    with pytest.raises(RuntimeError, match="OleSetClipboard failed after 3 retries"):
-        clipboard_win32._ole_set_clipboard_with_retry(
-            fake_pythoncom, MagicMock(name="do"), retries=3, delay_ms=0
-        )
-
-    assert fake_pythoncom.OleSetClipboard.call_count == 3
-
-
-# --- _write_via_ole --------------------------------------------------------
-
-
-def test_write_via_ole_verify_passes_on_first_attempt(clipboard_win32, fake_win32clipboard):
-    """Happy path: OleSetClipboard + OleFlushClipboard runs once, the
-    IsClipboardFormatAvailable verify returns True for every published
-    format, no retry. No sleep on the success path."""
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABC
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
-
-    clipboard_win32.write_text("<svg/>", "image/svg+xml")
-
-    assert fake_pythoncom.OleSetClipboard.call_count == 1
-    assert fake_pythoncom.OleFlushClipboard.call_count == 1
-    # Verify called once for the single format we wrote.
-    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 1
-    fake_win32clipboard.IsClipboardFormatAvailable.assert_called_with(0xCABC)
-
-
-def test_write_via_ole_retries_when_format_missing_then_succeeds(
-    clipboard_win32, fake_win32clipboard
-):
-    """A clipboard chain listener has hijacked ownership and our first
-    OleFlushClipboard's data is gone by the time we verify. Second
-    attempt lands cleanly. RuntimeError is NOT raised because the retry
-    recovers within the budget. This is the canonical PR #146 e2e flake
-    pattern (mc-017 / mc-020 / mc-103 / mc-301 on commit 8535045)."""
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABD
-    # First verify: format absent (listener stole it). Second verify:
-    # format present (we won the race this time).
-    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = [False, True]
-
-    clipboard_win32.write_text("<svg/>", "image/svg+xml")
-
-    assert fake_pythoncom.OleSetClipboard.call_count == 2
-    assert fake_pythoncom.OleFlushClipboard.call_count == 2
-    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 2
-
-
-def test_write_via_ole_raises_after_verify_budget_exhausted(clipboard_win32, fake_win32clipboard):
-    """If every attempt sees the format missing after OleFlushClipboard,
-    the retry budget exhausts and write_text raises RuntimeError naming
-    the missing format IDs. The user-visible error makes the failure
-    diagnosable rather than a silent no-op."""
-    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABE
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = False
-
-    with pytest.raises(RuntimeError, match="OLE write verify failed after"):
-        clipboard_win32.write_text("<svg/>", "image/svg+xml")
-
-    # All retries exhausted.
-    assert (
-        fake_win32clipboard.IsClipboardFormatAvailable.call_count
-        == clipboard_win32._OLE_WRITE_VERIFY_RETRIES
-    )
-
-
-def test_write_via_ole_verify_checks_every_published_format(clipboard_win32, fake_win32clipboard):
-    """Multi-format write: the verify step calls
-    IsClipboardFormatAvailable for EACH format ID published. If any one
-    is missing, the whole write retries (we can't selectively re-publish
-    -- OleFlushClipboard is one transaction)."""
-    ids = iter([0xCAC0, 0xCAC1])
-    fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _: next(ids)
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
-
-    clipboard_win32.write_multi({"text/plain": "x", "text/html": "<p>x</p>"})
-
-    # Both text/plain (CF_UNICODETEXT=13) and the registered text/html
-    # format ID are verified.
-    verified = {
-        call.args[0] for call in fake_win32clipboard.IsClipboardFormatAvailable.call_args_list
-    }
-    assert 13 in verified  # CF_UNICODETEXT
-    assert 0xCAC0 in verified
-
-
-def test_write_via_ole_empty_payloads_is_noop(clipboard_win32, fake_win32clipboard):
+def test_write_payloads_empty_input_is_noop(clipboard_win32, fake_win32clipboard):
     """Direct call: an empty payloads dict short-circuits before any
-    worker dispatch -- avoids constructing an empty IDataObject and
-    publishing it. (write_multi({}) has its own early return upstream
-    that doesn't reach _write_via_ole, so this test covers the
-    _write_via_ole-internal guard directly.)"""
-    import sys as _sys
+    clipboard / allocation work. (write_multi({}) has its own early
+    return upstream that doesn't reach _write_payloads.)"""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
 
-    clipboard_win32._write_via_ole({})
+    clipboard_win32._write_payloads({})
 
-    fake_pythoncom.OleSetClipboard.assert_not_called()
-    fake_pythoncom.OleFlushClipboard.assert_not_called()
-
-
-# --- _wait_for_clipboard_quiescent / GetClipboardSequenceNumber ------------
+    fake_win32clipboard.OpenClipboard.assert_not_called()
+    fake_win32clipboard.EmptyClipboard.assert_not_called()
+    kernel32.GlobalAlloc.assert_not_called()
+    user32.SetClipboardData.assert_not_called()
 
 
-def test_quiescent_wait_returns_immediately_when_sequence_stable(
+def test_write_payloads_closes_clipboard_on_setclipboarddata_failure(
     clipboard_win32, fake_win32clipboard
 ):
-    """If GetClipboardSequenceNumber returns the same value across two
-    consecutive samples, the clipboard chain has settled and the wait
-    function returns True. Used after a failed verify so a retry with
-    no listener interference does not pay the previous fixed-sleep cost.
-    """
+    """If SetClipboardData returns NULL (failure) mid-transaction, the
+    OSError surfaces AFTER CloseClipboard has run so the clipboard does
+    not stay locked. The leftover handles must also be GlobalFree'd."""
     import ctypes as _ctypes
 
+    handles = iter([0xCAFE0001, 0xCAFE0002])
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
     user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    user32.GetClipboardSequenceNumber.return_value = 42
+    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
+    kernel32.GlobalLock.return_value = 0xBEEF
+    # First SetClipboardData succeeds, second fails (returns NULL).
+    user32.SetClipboardData.side_effect = [1, 0]
 
-    result = clipboard_win32._wait_for_clipboard_quiescent(max_wait_ms=200, sample_ms=1)
+    with pytest.raises(OSError, match="SetClipboardData"):
+        clipboard_win32._write_payloads({13: b"x\x00", 0xC100: b"<p>x</p>"})
 
-    assert result is True
+    fake_win32clipboard.CloseClipboard.assert_called_once()
+    # The second handle (which SetClipboardData rejected) must be freed.
+    # The first handle was transferred to the system and is NOT freed.
+    freed = [c.args[0].value for c in kernel32.GlobalFree.call_args_list]
+    assert 0xCAFE0002 in freed
+    assert 0xCAFE0001 not in freed
 
 
-def test_quiescent_wait_returns_false_when_budget_exhausts(clipboard_win32, fake_win32clipboard):
-    """If GetClipboardSequenceNumber keeps advancing on every sample,
-    the clipboard chain has not settled within the budget. The wait
-    function returns False so the caller can still retry (the OLE
-    write verify loop retries up to the budget regardless of
-    quiescence outcome -- quiescence is a hint, not a precondition)."""
+def test_write_payloads_frees_handles_when_open_clipboard_exhausts(
+    clipboard_win32, fake_win32clipboard
+):
+    """If OpenClipboard exhausts its retry budget AFTER we have already
+    allocated HGLOBALs for the payloads, those handles must be
+    GlobalFree'd. Otherwise we leak global memory per write-failure
+    burst."""
     import ctypes as _ctypes
-    import itertools as _itertools
 
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    # Every call returns a new value -- the chain never settles.
-    user32.GetClipboardSequenceNumber.side_effect = _itertools.count(start=1)
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    fake_win32clipboard.OpenClipboard.side_effect = RuntimeError("contended")
 
-    result = clipboard_win32._wait_for_clipboard_quiescent(max_wait_ms=10, sample_ms=1)
+    # _open_clipboard_with_retry sleeps between attempts; cap the retry
+    # budget to 1 to keep the test fast.
+    with patch.object(clipboard_win32, "_open_clipboard_with_retry") as mocked_open:
+        mocked_open.side_effect = RuntimeError("OpenClipboard failed")
+        with pytest.raises(RuntimeError, match="OpenClipboard failed"):
+            clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    assert result is False
+    kernel32.GlobalFree.assert_called_once()
 
 
-def test_write_via_ole_retry_path_consults_sequence_number(clipboard_win32, fake_win32clipboard):
-    """After a failed IsClipboardFormatAvailable verify, the retry
-    path waits for the clipboard chain to quiesce by sampling
-    GetClipboardSequenceNumber. This test asserts the sequence
-    number is queried on the retry path (proving the new signal is
-    wired in) and the second attempt succeeds when the verify
-    eventually passes. The first verify failure must trigger at
-    least one GetClipboardSequenceNumber call beyond any baseline
-    captured before the first attempt."""
+def test_write_payloads_no_retry_on_setclipboarddata(clipboard_win32, fake_win32clipboard):
+    """Critical architectural invariant: there is NO retry around
+    SetClipboardData. The canonical Win32 pattern (Chromium, pyperclip,
+    pyclip) treats SetClipboardData as atomic and synchronous. Earlier
+    revisions of this module retried via OleSetClipboard up to 5 times
+    with quiescence detection; that path produced a hidden OLE window on
+    a pumpless thread which clipboard managers replaced with their own
+    copy after the WM_RENDERFORMAT 30s timeout. Raw SetClipboardData has
+    no such hidden window. If a future change reintroduces a verify-retry
+    loop, this test fails the architectural smell."""
     import ctypes as _ctypes
-    import sys as _sys
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABF
-    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = [False, True]
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
     user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    user32.GetClipboardSequenceNumber.return_value = 7  # stable -> quick quiesce
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 0xCAFE
 
-    clipboard_win32.write_text("<svg/>", "image/svg+xml")
+    clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    # OLE published twice, verified twice, and the sequence number was
-    # consulted at least twice during the post-failure quiescence wait
-    # (one baseline sample + one comparison sample). A pre-ec6d6a5
-    # build with no sequence-number wiring would call this zero times.
-    assert fake_pythoncom.OleSetClipboard.call_count == 2
-    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 2
-    assert user32.GetClipboardSequenceNumber.call_count >= 2
+    assert user32.SetClipboardData.call_count == 1, (
+        "SetClipboardData must be called exactly once per format -- no retry"
+    )
 
 
 # --- write_text ------------------------------------------------------------
 
 
-def test_write_text_plain_uses_ole_with_utf16_le_null_terminated(
-    clipboard_win32, fake_win32clipboard
-):
+def test_write_text_plain_encodes_utf16_le_null_terminated(clipboard_win32, fake_win32clipboard):
     """text/plain encodes to UTF-16 LE + NUL (CF_UNICODETEXT format
-    contract) and gets handed to OleSetClipboard via an IDataObject whose
-    payload dict maps CF_UNICODETEXT to those bytes."""
-    import sys as _sys
+    contract) and gets handed to _write_payloads keyed on
+    CF_UNICODETEXT."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    fake_wrap = _sys.modules["win32com.server.util"].wrap
-    fake_wrap.side_effect = lambda obj, iid: obj  # passthrough so we can inspect
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xA1
+    kernel32.GlobalLock.return_value = 0xB1
+    user32.SetClipboardData.return_value = 0xA1
+
+    captured: dict[int, bytes] = {}
+
+    def capture_payload(_flags: int, size: int) -> int:
+        # Stash the payload during the lock/copy/unlock dance by patching
+        # ctypes.memmove. Simpler: capture the size and read it back from
+        # the call args of GlobalAlloc.
+        captured["size"] = size
+        return 0xA1
+
+    kernel32.GlobalAlloc.side_effect = capture_payload
 
     clipboard_win32.write_text("hello", "text/plain")
 
-    fake_pythoncom.OleSetClipboard.assert_called_once()
-    fake_pythoncom.OleFlushClipboard.assert_called_once()
-    do_arg = fake_pythoncom.OleSetClipboard.call_args.args[0]
-    assert do_arg.payloads == {
-        fake_win32clipboard.CF_UNICODETEXT: "hello".encode("utf-16-le") + b"\x00\x00"
-    }
+    # UTF-16 LE: 5 wchars + NUL = 12 bytes.
+    assert captured["size"] == len("hello".encode("utf-16-le") + b"\x00\x00")
+    fmt_arg, _ = user32.SetClipboardData.call_args.args
+    assert fmt_arg.value == fake_win32clipboard.CF_UNICODETEXT
 
 
-def test_write_text_registered_format_uses_ole_with_utf8(clipboard_win32, fake_win32clipboard):
-    """text/html / text/rtf / image/svg+xml encode to UTF-8 and land as
-    bytes under the registered format ID inside the IDataObject."""
-    import sys as _sys
+def test_write_text_registered_format_encodes_utf8(clipboard_win32, fake_win32clipboard):
+    """text/html / text/rtf / image/svg+xml encode to UTF-8 and land
+    under their registered format ID."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
     fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC400
-    fake_wrap = _sys.modules["win32com.server.util"].wrap
-    fake_wrap.side_effect = lambda obj, iid: obj
+    kernel32.GlobalAlloc.return_value = 0xA2
+    kernel32.GlobalLock.return_value = 0xB2
+    user32.SetClipboardData.return_value = 0xA2
 
     clipboard_win32.write_text("<svg>—</svg>", "image/svg+xml")
 
-    do_arg = fake_pythoncom.OleSetClipboard.call_args.args[0]
-    assert do_arg.payloads == {0xC400: "<svg>—</svg>".encode()}
-    fake_pythoncom.OleFlushClipboard.assert_called_once()
+    # UTF-8: 7 ASCII + 3 (em dash) + 6 ASCII = 16 bytes; no NUL terminator.
+    expected_size = len("<svg>—</svg>".encode())
+    size_arg = kernel32.GlobalAlloc.call_args.args[1]
+    assert size_arg == expected_size
+    fmt_arg, _ = user32.SetClipboardData.call_args.args
+    assert fmt_arg.value == 0xC400
 
 
-def test_write_text_calls_ole_flush_after_ole_set(clipboard_win32, fake_win32clipboard):
-    """OleFlushClipboard must run AFTER OleSetClipboard so the IDataObject
-    pointer is released into HGLOBAL handles. If OleFlushClipboard runs
-    before (or doesn't run), paste targets reach back into our IDataObject
-    and our process must pump messages to satisfy them -- which we don't.
-    """
-    import sys as _sys
+def test_write_text_uses_open_empty_set_close_sequence(clipboard_win32, fake_win32clipboard):
+    """Operation order: OpenClipboard -> EmptyClipboard -> SetClipboardData
+    -> CloseClipboard. EmptyClipboard MUST come AFTER OpenClipboard
+    (the open assigns ownership; empty propagates it) and BEFORE
+    SetClipboardData (we have to own the clipboard before writing
+    registered formats)."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+
     call_order: list[str] = []
-    fake_pythoncom.OleSetClipboard.side_effect = lambda _do: call_order.append("set")
-    fake_pythoncom.OleFlushClipboard.side_effect = lambda: call_order.append("flush")
+    fake_win32clipboard.OpenClipboard.side_effect = lambda _h: call_order.append("open")
+    fake_win32clipboard.EmptyClipboard.side_effect = lambda: call_order.append("empty")
+    user32.SetClipboardData.side_effect = lambda *_a: (call_order.append("set"), 1)[1]
+    fake_win32clipboard.CloseClipboard.side_effect = lambda: call_order.append("close")
 
     clipboard_win32.write_text("hi", "text/plain")
 
-    assert call_order == ["set", "flush"]
+    assert call_order == ["open", "empty", "set", "close"]
 
 
 # --- write_multi -----------------------------------------------------------
 
 
 def test_write_multi_empty_input_is_noop(clipboard_win32, fake_win32clipboard):
-    """If the input dict is empty, OleSetClipboard is never called --
-    avoids constructing an empty IDataObject and emptying the clipboard
-    for nothing."""
-    import sys as _sys
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
 
     clipboard_win32.write_multi({})
 
-    fake_pythoncom.OleSetClipboard.assert_not_called()
-    fake_pythoncom.OleFlushClipboard.assert_not_called()
+    fake_win32clipboard.OpenClipboard.assert_not_called()
+    user32.SetClipboardData.assert_not_called()
 
 
-def test_write_multi_publishes_all_formats_in_one_idataobject(clipboard_win32, fake_win32clipboard):
-    """Multi-format atomic publish: a single IDataObject offering all
-    payloads, ONE OleSetClipboard call, ONE OleFlushClipboard call. The
-    flush renders every format inside one Win32 transaction."""
-    import sys as _sys
+def test_write_multi_publishes_all_formats_in_one_transaction(clipboard_win32, fake_win32clipboard):
+    """Multi-format write: one Open/Empty/Set..Set/Close transaction.
+    All formats land atomically; no intermediate state where the
+    clipboard holds only some of them."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-    ids = iter([0xC500, 0xC501])
-    fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _: next(ids)
-    fake_wrap = _sys.modules["win32com.server.util"].wrap
-    fake_wrap.side_effect = lambda obj, iid: obj
+    handles = iter([0xC0FFEE01, 0xC0FFEE02])
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xC500
+    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
+    kernel32.GlobalLock.return_value = 0xB1
+    user32.SetClipboardData.return_value = 1
 
-    clipboard_win32.write_multi(
-        {
-            "text/plain": "Heading",
-            "text/html": "<h1>Heading</h1>",
-        }
-    )
+    clipboard_win32.write_multi({"text/plain": "hi", "text/html": "<p>hi</p>"})
 
-    fake_pythoncom.OleSetClipboard.assert_called_once()
-    fake_pythoncom.OleFlushClipboard.assert_called_once()
-    do_arg = fake_pythoncom.OleSetClipboard.call_args.args[0]
-    assert do_arg.payloads == {
-        fake_win32clipboard.CF_UNICODETEXT: "Heading".encode("utf-16-le") + b"\x00\x00",
-        0xC500: b"<h1>Heading</h1>",
-    }
+    fake_win32clipboard.OpenClipboard.assert_called_once()
+    fake_win32clipboard.EmptyClipboard.assert_called_once()
+    assert user32.SetClipboardData.call_count == 2
+    fake_win32clipboard.CloseClipboard.assert_called_once()
 
 
-def test_write_multi_resolves_formats_before_ole_set(clipboard_win32, fake_win32clipboard):
-    """Format resolution (RegisterClipboardFormat) and encoding happen
-    BEFORE OleSetClipboard so any error surfaces outside the
-    transaction. Structural assertion via call order."""
-    import sys as _sys
-
-    fake_pythoncom = _sys.modules["pythoncom"]
+def test_write_multi_resolves_formats_before_clipboard_open(clipboard_win32, fake_win32clipboard):
+    """Format resolution (RegisterClipboardFormat) and payload encoding
+    must happen BEFORE OpenClipboard so encoding errors raise outside
+    the transaction bracket -- otherwise the clipboard could be left
+    in an Open state with no Close (since RegisterClipboardFormat
+    raising would skip the try/finally below it)."""
     call_order: list[str] = []
-    fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _: (
-        call_order.append("register") or 0xC600
-    )
-    fake_pythoncom.OleSetClipboard.side_effect = lambda _do: call_order.append("ole_set")
+    fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _name: (
+        call_order.append("register"),
+        0xC500,
+    )[1]
+    fake_win32clipboard.OpenClipboard.side_effect = lambda _h: call_order.append("open")
 
-    clipboard_win32.write_multi({"text/html": "<p>hi</p>"})
+    clipboard_win32.write_multi({"text/html": "<p>x</p>"})
 
-    assert call_order.index("register") < call_order.index("ole_set")
+    assert call_order.index("register") < call_order.index("open")
 
 
 # --- list_formats ----------------------------------------------------------
 
 
 def test_list_formats_iterates_via_enumclipboardformats(clipboard_win32, fake_win32clipboard):
-    """list_formats walks EnumClipboardFormats -- pywin32 returns 0 when
-    the chain ends -- and resolves each ID to a human-readable name."""
-    # Sequence: standard CF_UNICODETEXT (13) -> registered 0xC700 -> end (0).
     enum_returns = iter([13, 0xC700, 0])
     fake_win32clipboard.EnumClipboardFormats.side_effect = lambda _prev: next(enum_returns)
     fake_win32clipboard.GetClipboardFormatName.return_value = "image/svg+xml"
@@ -1401,8 +900,6 @@ def test_list_formats_iterates_via_enumclipboardformats(clipboard_win32, fake_wi
 def test_list_formats_falls_back_to_numeric_for_unknown_constant(
     clipboard_win32, fake_win32clipboard
 ):
-    """If GetClipboardFormatName fails for an unknown built-in constant,
-    list_formats falls back to 'Format<n>' so the UI still shows something."""
     enum_returns = iter([0x9999, 0])
     fake_win32clipboard.EnumClipboardFormats.side_effect = lambda _prev: next(enum_returns)
     fake_win32clipboard.GetClipboardFormatName.side_effect = RuntimeError("no name")
@@ -1413,7 +910,6 @@ def test_list_formats_falls_back_to_numeric_for_unknown_constant(
 
 
 def test_list_formats_closes_clipboard_on_exception(clipboard_win32, fake_win32clipboard):
-    """If EnumClipboardFormats raises mid-walk, the clipboard still closes."""
     fake_win32clipboard.EnumClipboardFormats.side_effect = RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):

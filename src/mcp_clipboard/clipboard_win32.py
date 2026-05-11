@@ -24,29 +24,51 @@ Python process. All clipboard operations happen synchronously in our own
 address space. No subprocess spawn, no codepage transcoding, no
 cross-process race.
 
-**Write path: OleSetClipboard + OleFlushClipboard.** MSDN is explicit that
-"sharing non-standard clipboard data formats between processes requires
-using the OleSetClipboard API, as SetClipboardData alone is not enough."
-Raw SetClipboardData with registered custom formats (image/svg+xml, HTML
-Format, Rich Text Format) was observed to silently no-op when the prior
-clipboard owner was a foreign process -- the call returned success but
-list_formats afterward showed the prior state surviving. OleSetClipboard
-hands the clipboard to an OLE-managed internal window handle (the same
-path .NET's Clipboard.SetDataObject and PowerShell's Set-Clipboard take),
-which handles ownership transitions correctly. OleFlushClipboard is
-called immediately after to render the data into HGLOBAL handles and
-release our IDataObject pointer; the data then persists without our
-process needing to pump messages.
+**Write path: raw SetClipboardData with GlobalAlloc(GMEM_MOVEABLE) HGLOBALs.**
+This is the canonical Win32 clipboard write pattern used by Chromium
+(`ui/base/clipboard/clipboard_win.cc`), pyperclip, pyclip, and every
+mature non-WPF Windows clipboard writer. The flow is:
 
-**Read path: OpenClipboard + GetClipboardData.** Reads still use the
-direct Win32 API; OLE is only required for the cross-process write race.
-The message-only window from _get_clipboard_hwnd is retained for reads.
+  OpenClipboard(owner_hwnd) -> EmptyClipboard() ->
+    for each (format_id, payload):
+      h = GlobalAlloc(GMEM_MOVEABLE, len(payload))
+      memcpy(GlobalLock(h), payload, len(payload)); GlobalUnlock(h)
+      SetClipboardData(format_id, h)   # system takes ownership
+  -> CloseClipboard()
 
-Threading: OLE clipboard ops require an STA-initialized thread.
-asyncio.to_thread uses a worker pool; each worker calls _ensure_com_init
-on first use which sets up COINIT_APARTMENTTHREADED via CoInitializeEx.
-The apartment lives for the worker's lifetime; we don't CoUninitialize
-because Python's interpreter shutdown handles thread teardown.
+No OLE, no IDataObject, no hidden OLE-managed window, no delayed
+rendering, no message pump, no post-write verify, no retry on the
+SetClipboardData call itself.
+
+**Why not OleSetClipboard / OleFlushClipboard?** OLE is for delayed
+rendering, cross-process drag-drop, and IDataObject-based marshaling.
+We have all bytes upfront for every format, so we need none of that.
+The OLE path additionally creates a hidden CLIPBRDWNDCLASS window that
+hosts WM_RENDERFORMAT / WM_DESTROYCLIPBOARD message handling, and that
+window lives on the thread that called OleSetClipboard. In a long-
+lived MCP server with no UI message pump, those messages queue forever;
+consumers (clipboard managers, OneDrive shell extensions, antivirus)
+that walk our formats hit a 30-second WM_RENDERFORMAT timeout and
+synthesize their own clipboard copy in self-defense -- presenting to
+us as "our write was silently overwritten" (the PR #146 e2e flake
+across commits 8535045 / 3078f35 / ec6d6a5 / 6837c36). Raw
+SetClipboardData with materialized HGLOBALs has no hidden window and
+no rendering round-trip, eliminating the entire failure mode.
+
+**Why GMEM_MOVEABLE specifically?** Per MSDN SetClipboardData: "If the
+hMem parameter identifies a memory object, the object must have been
+allocated using the function with the GMEM_MOVEABLE flag." A
+GMEM_FIXED handle is silently rejected (SetClipboardData returns
+non-NULL but no consumer can read the format -- the same silent
+no-op symptom). pywin32's high-level `SetClipboardData(fmt, bytes)`
+wrapper does allocate GMEM_MOVEABLE internally, so the silent no-op
+seen on the pre-OLE write path (before this rewrite) was a separate
+bug -- the lazy-init HWND-creation race fixed in commit 6d306c7.
+
+**Read path: OpenClipboard + GetClipboardData.** Unchanged from
+earlier revisions. OLE was never required for reads; only the
+cross-process write race motivated the temporary OleSetClipboard
+detour.
 
 Module imports are deferred to function bodies so this file can be parsed
 on non-Windows platforms (CI runs on Linux). Calling any function on a
@@ -56,13 +78,11 @@ a confusing pywin32 error later.
 
 from __future__ import annotations
 
+import ctypes
 import logging
-import queue
 import threading
 import time
-from collections.abc import Callable
-from concurrent.futures import Future
-from typing import Any, ClassVar
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +96,12 @@ logger = logging.getLogger(__name__)
 #
 #   write_text(content: str, mime_type: str) -> None
 #       Replaces the clipboard with the given (mime, text) pair via
-#       OleSetClipboard + OleFlushClipboard.
+#       OpenClipboard + EmptyClipboard + SetClipboardData + CloseClipboard.
 #
 #   write_multi(formats: dict[str, str]) -> None
 #       Replaces the clipboard with all (mime, text) pairs in one
-#       OleSetClipboard transaction (atomic by construction). Used for
-#       clipboard_copy_markdown's text/html + text/plain combo.
+#       Empty + Set..Set + Close transaction. Atomic by construction.
+#       Used for clipboard_copy_markdown's text/html + text/plain combo.
 #
 #   list_formats() -> list[str]
 #       Returns native format names. Caller maps to MIME via _WIN_TO_MIME
@@ -91,154 +111,129 @@ logger = logging.getLogger(__name__)
 # here in a follow-up PR with DIB <-> PNG conversion.
 
 
-# --- COM apartment management ----------------------------------------------
+# --- HGLOBAL allocation via ctypes ----------------------------------------
 #
-# OleSetClipboard requires the calling thread to have the FULL OLE
-# library initialized -- per MSDN: "Before calling this function, you
-# must initialize the OLE library by calling OleInitialize." CoInitializeEx
-# alone is NOT sufficient: it sets up the COM apartment but does not
-# enable the OLE-specific subsystems (clipboard, drag-and-drop,
-# marshaling tables) that OleSetClipboard / OleFlushClipboard need. This
-# is why the integration-windows CI on commits d3d7372 (cached
-# pythoncom.CoInitializeEx), 3904fef (uncached pythoncom.CoInitializeEx),
-# 0a0f933 (ctypes-direct ole32.CoInitializeEx), and 0966ef7 (dedicated
-# worker thread + ctypes ole32.CoInitializeEx) all failed identically
-# with OleSetClipboard raising CO_E_NOTINITIALIZED -- OLE was reporting
-# its OLE-specific state as uninitialized even though the COM apartment
-# was fine.
-#
-# Resolution: call ole32.OleInitialize (which internally calls
-# CoInitializeEx with COINIT_APARTMENTTHREADED plus the OLE library
-# setup) on the dedicated worker thread at start. The worker owns one
-# OLE-initialized STA apartment for the process's lifetime; asyncio
-# dispatchers submit work via a queue.
-#
-# Reads stay on the existing OpenClipboard + GetClipboardData path; OLE
-# is only required for the cross-process write race, not for reads.
+# SetClipboardData requires its HANDLE argument to be a GMEM_MOVEABLE
+# global memory handle that the SYSTEM takes ownership of on success.
+# Driving the allocation ourselves via ctypes (rather than going through
+# pywin32's SetClipboardData(fmt, bytes) helper) makes the GMEM_MOVEABLE
+# flag explicit and removes any ambiguity about what allocation strategy
+# the wrapper happens to be using. Matches Chromium's
+# `CreateGlobalData()` byte-for-byte except for the language.
 
-# Magic numbers from Win32 headers, kept here so non-Windows imports don't
-# need to touch ctypes / ole32 at module load.
-_RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as signed 32-bit
+_GMEM_MOVEABLE = 0x0002
 
 
-def _ole32_initialize() -> None:
-    """Call ole32.OleInitialize(NULL) via ctypes.
+def _kernel32() -> Any:
+    """Return ctypes.windll.kernel32 with GlobalAlloc / GlobalLock /
+    GlobalUnlock / GlobalFree argtypes set up.
 
-    OleInitialize is the canonical setup call for any thread that will
-    use OleSetClipboard / OleGetClipboard / OleFlushClipboard / drag-and-
-    drop. Internally it does CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)
-    plus the additional OLE subsystem setup that the bare CoInitializeEx
-    doesn't perform -- which is why earlier attempts that initialized
-    only the COM apartment failed at OleSetClipboard with
-    CO_E_NOTINITIALIZED despite the apartment being live.
-
-    Accepts S_OK (0, newly inited), S_FALSE (1, same-thread re-init),
-    and RPC_E_CHANGED_MODE (different threading model already active).
-    Any other negative HRESULT raises OSError.
+    Calling this on every write keeps the wrapper stateless (no module-
+    level cached handle) so the test fixture's per-test ctypes.windll
+    teardown stays clean. The argtypes / restype assignments are
+    idempotent; setting them per call is microseconds.
     """
-    import ctypes
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]  # Windows-only
+    kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = ctypes.c_int
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.restype = ctypes.c_void_p
+    return kernel32
 
-    ole32 = ctypes.windll.ole32  # type: ignore[attr-defined]  # Windows-only
-    ole32.OleInitialize.argtypes = [ctypes.c_void_p]
-    ole32.OleInitialize.restype = ctypes.c_long  # HRESULT (signed 32-bit)
-    hr = ole32.OleInitialize(None)
-    if hr < 0 and hr != _RPC_E_CHANGED_MODE:
+
+def _allocate_hglobal(payload: bytes) -> int:
+    """Allocate a GMEM_MOVEABLE HGLOBAL, copy `payload` into it, and
+    return the integer handle.
+
+    The caller transfers ownership to SetClipboardData on success
+    (system owns the handle and will GlobalFree it when the clipboard
+    is emptied or this process exits). On any failure path BEFORE
+    SetClipboardData succeeds, the caller MUST GlobalFree the handle
+    we return -- the system has not taken ownership yet.
+
+    Raises MemoryError if GlobalAlloc returns NULL (out-of-memory).
+    Raises OSError if GlobalLock returns NULL (handle invalid; should
+    never happen for a fresh GMEM_MOVEABLE allocation, defensive).
+    """
+    kernel32 = _kernel32()
+    # GlobalAlloc(GMEM_MOVEABLE, 0) is well-defined but pointless; round
+    # up to 1 byte so SetClipboardData has a real handle to take. The
+    # one byte is uninitialized for size 0, which is fine -- callers
+    # that publish an empty payload aren't reading it back.
+    size = len(payload) if payload else 1
+    handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, size)
+    if not handle:
+        raise MemoryError(
+            f"GlobalAlloc(GMEM_MOVEABLE, {size}) returned NULL (out of global memory)."
+        )
+    locked = kernel32.GlobalLock(handle)
+    if not locked:
+        kernel32.GlobalFree(handle)
         raise OSError(
-            f"OleInitialize (via ctypes / ole32.dll) failed with HRESULT 0x{hr & 0xFFFFFFFF:08X}"
+            "GlobalLock returned NULL for a freshly-allocated GMEM_MOVEABLE "
+            "handle. This indicates handle corruption; should not happen."
+        )
+    if payload:
+        ctypes.memmove(locked, payload, len(payload))
+    # GlobalUnlock returns 0 when the lock count drops to 0, which is
+    # expected for our one-lock-one-unlock pattern. The "failure" case
+    # we would care about is GetLastError != ERROR_SUCCESS; for our
+    # always-paired Lock/Unlock that doesn't arise, so the return
+    # value is intentionally not inspected.
+    kernel32.GlobalUnlock(handle)
+    return int(handle)
+
+
+def _user32() -> Any:
+    """Return ctypes.windll.user32 with SetClipboardData argtypes ready.
+
+    Like _kernel32, this is called per-write for stateless test-fixture
+    behavior. SetClipboardData via ctypes (rather than pywin32) keeps
+    the GMEM_MOVEABLE handle interpretation explicit -- the second
+    argument is a HANDLE, not a Python-level bytes payload that some
+    wrapper would re-allocate.
+    """
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]  # Windows-only
+    user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    return user32
+
+
+def _set_clipboard_data(fmt_id: int, handle: int) -> None:
+    """Call user32.SetClipboardData(fmt_id, handle).
+
+    On success, the system takes ownership of the handle and we must
+    NOT GlobalFree it. On failure (return value NULL), we still own
+    the handle and the caller will GlobalFree it from the surrounding
+    cleanup. Raises OSError on failure with the GetLastError code.
+    """
+    user32 = _user32()
+    result = user32.SetClipboardData(ctypes.c_uint(fmt_id), ctypes.c_void_p(handle))
+    if not result:
+        # ctypes.get_last_error is Windows-only (since Python 3.3). On
+        # Linux CI it doesn't exist; fall back to a sentinel so the
+        # unit-test path doesn't crash on the diagnostic.
+        err = getattr(ctypes, "get_last_error", lambda: 0)()
+        raise OSError(
+            f"SetClipboardData(fmt={fmt_id}, handle={handle:#x}) returned NULL "
+            f"(GetLastError={err})."
         )
 
 
-class _ClipboardWorker(threading.Thread):
-    """Dedicated daemon thread that owns the OLE clipboard apartment.
-
-    All OLE writes (OleSetClipboard / OleFlushClipboard) run on this
-    thread to keep the apartment state stable across calls. The thread:
-
-      1. CoInitializeEx's itself to STA on start (via ole32 + ctypes).
-      2. Imports pythoncom on the same thread (so any pywin32-internal
-         per-thread state is set up alongside the Win32 TLS init).
-      3. Loops on a queue, executing submitted callables and reporting
-         results / exceptions back through Futures.
-
-    daemon=True so the worker dies on process exit without needing
-    explicit shutdown signaling from the MCP server lifecycle. The
-    apartment is implicitly torn down by interpreter shutdown.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(daemon=True, name="mcp-clipboard-ole")
-        self._queue: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...], Future[Any]] | None] = (
-            queue.Queue()
-        )
-        self._started = threading.Event()
-        self._init_error: BaseException | None = None
-
-    def run(self) -> None:
-        try:
-            _ole32_initialize()
-            # Import pythoncom on this thread so any pywin32-internal
-            # per-thread setup runs here rather than on a caller's thread.
-            import pythoncom  # type: ignore[import-not-found,import-untyped]  # noqa: F401
-        except BaseException as exc:
-            self._init_error = exc
-            self._started.set()
-            return
-        self._started.set()
-
-        while True:
-            item = self._queue.get()
-            if item is None:  # sentinel for shutdown (tests only)
-                return
-            fn, args, future = item
-            try:
-                future.set_result(fn(*args))
-            except BaseException as exc:
-                future.set_exception(exc)
-
-    def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
-        """Queue ``fn(*args)`` for execution on the worker thread and
-        return a Future. Raises immediately if the worker failed to init."""
-        self._started.wait()
-        if self._init_error is not None:
-            f: Future[Any] = Future()
-            f.set_exception(self._init_error)
-            return f
-        future: Future[Any] = Future()
-        self._queue.put((fn, args, future))
-        return future
-
-
-_clipboard_worker: _ClipboardWorker | None = None
-_clipboard_worker_lock = threading.Lock()
-
-
-def _get_clipboard_worker() -> _ClipboardWorker:
-    """Lazy-start the OLE worker thread on first use.
-
-    Double-checked locking: clipboard.py dispatches the synchronous Win32
-    path through asyncio.to_thread, so a burst of concurrent first-callers
-    is possible. The check-outside / check-inside-lock pattern means at
-    most one worker is ever created and the steady-state read is lock-free.
-    """
-    global _clipboard_worker
-    if _clipboard_worker is not None:
-        return _clipboard_worker
-    with _clipboard_worker_lock:
-        if _clipboard_worker is None:
-            _clipboard_worker = _ClipboardWorker()
-            _clipboard_worker.start()
-        return _clipboard_worker
-
-
-# --- Format registration cache ---------------------------------------------
+# --- Owner-window management ----------------------------------------------
 #
-# RegisterClipboardFormat returns the same integer ID for the same string
-# for the lifetime of the user session, but the call is not free, so we
-# cache. Standard format constants (CF_TEXT, CF_UNICODETEXT, CF_DIB, etc.)
-# do not need registration; they have fixed IDs in the Win32 API.
-
-_format_id_cache: dict[str, int] = {}
-
+# SetClipboardData requires the calling process to be the clipboard
+# owner, which is set to the HWND passed to OpenClipboard at the time
+# EmptyClipboard is called. The HWND must be a window owned by our
+# process; NULL, the desktop, or any system-owned window will cause
+# silent SetClipboardData failure for registered custom formats
+# (image/svg+xml, "HTML Format", "Rich Text Format"). Built-in
+# CF_UNICODETEXT survives the bad-owner path only because Windows
+# synthesizes CF_TEXT / CF_OEMTEXT / CF_LOCALE from it regardless.
 
 _owner_hwnd: int | None = None
 _owner_hwnd_lock = threading.Lock()
@@ -270,27 +265,6 @@ def _get_clipboard_hwnd() -> int:
     custom-format path has no synthesis fallback so silent failure is
     fully visible.
 
-    Empirical chain that pinpointed this:
-
-      - PR #146 verification (run-id mcp-clipboard-windows-e2e-pr146-
-        verify-claude-code-2026-05-09T22:09:11Z): mc-005/mc-020
-        (write_text image/svg+xml) silently no-op, mc-008 (write_multi
-        with text/plain bootstrap) succeeds, mc-103 (direct PowerShell
-        GetDataObject read after the same write_text) sees the SVG.
-        PowerShell's Set-Clipboard / .NET Clipboard.SetDataObject use
-        the OLE clipboard API (OleSetClipboard) which creates its own
-        process-owned window internally.
-      - First-pass fix attempt: pass GetDesktopWindow() to OpenClipboard.
-        Verified on 2026-05-09 to NOT resolve the silent-no-op (same
-        FAIL signature on mc-005/mc-009/mc-020). The desktop window is
-        owned by the system, so we still aren't the clipboard owner.
-      - Correct fix: create a message-only window owned by our process,
-        use that HWND for OpenClipboard. Same pattern pyperclip uses for
-        the equivalent reason. The "STATIC" window class is built-in
-        (USER32) so no registration is needed. HWND_MESSAGE makes the
-        window invisible and message-only -- never appears on screen,
-        no message-loop responsibility for us.
-
     The window is created lazily on first call and reused for the lifetime
     of the process (cached in module-level `_owner_hwnd`). DestroyWindow on
     process exit is implicit -- Windows tears down windows owned by the
@@ -298,6 +272,10 @@ def _get_clipboard_hwnd() -> int:
     process exit persists because SetClipboardData(format, handle) takes
     ownership of the global memory handle; the clipboard owner being torn
     down doesn't invalidate the data.
+
+    Pattern matches pyperclip's process-owned message window for the
+    same reason. Chromium uses base::win::MessageWindow for this; ours
+    is the same shape (HWND_MESSAGE parent, STATIC class, message-only).
     """
     global _owner_hwnd
     if _owner_hwnd is not None:
@@ -343,11 +321,12 @@ def _get_clipboard_hwnd() -> int:
 def _open_clipboard_with_retry(win32clipboard: Any, retries: int = 10, delay_ms: int = 50) -> None:
     """OpenClipboard fails with WindowsError when another process holds it.
 
-    Mirrors the pattern Microsoft documents for SetDataObject's four-arg
-    overload (10 retries x 100ms = 1s ceiling). We use 50ms here because
-    the bottleneck this function fights is brief (~milliseconds) contention
-    from clipboard inspectors / antivirus, not the multi-hundred-ms OLE
-    propagation that the SetDataObject retry was originally introduced for.
+    Chromium's ScopedClipboard::Acquire retries 5 attempts x 5 ms (25 ms
+    ceiling). Microsoft's documented SetDataObject pattern is 10 x 100 ms
+    (1 s ceiling). We split the difference at 10 x 50 ms (500 ms ceiling)
+    because the bottleneck this fights is brief contention from clipboard
+    inspectors / antivirus / clipboard managers, typically resolved in
+    tens of milliseconds.
 
     Always passes a real HWND (a process-owned message-only window from
     _get_clipboard_hwnd) to OpenClipboard so our process is the clipboard
@@ -408,6 +387,9 @@ def _register_format(name: str) -> int:
     fmt_id: int = int(win32clipboard.RegisterClipboardFormat(name))
     _format_id_cache[name] = fmt_id
     return fmt_id
+
+
+_format_id_cache: dict[str, int] = {}
 
 
 # --- MIME -> Windows format mapping ----------------------------------------
@@ -478,10 +460,12 @@ def read_text(mime_type: str) -> str:
         return data
     if isinstance(data, (bytes, bytearray)):
         raw = bytes(data)
-        # OLE's HGLOBAL allocation null-terminates registered custom-format
-        # payloads (GlobalAlloc(len+1) + memcpy + trailing NUL inside
-        # pywin32's STGMEDIUM.set on the write path). Strip the trailing
-        # NUL byte if present so callers see the exact source bytes.
+        # Our GMEM_MOVEABLE allocation for registered custom-format
+        # payloads carries the source bytes exactly. Some consumers on
+        # the read side append a trailing NUL when handing the buffer
+        # back through pywin32's GetClipboardData wrapper; strip it so
+        # callers see the exact source bytes regardless of who wrote
+        # the clipboard.
         if raw.endswith(b"\x00"):
             raw = raw[:-1]
         return raw.decode("utf-8", errors="replace")
@@ -512,400 +496,113 @@ def _encode_for_format(fmt_id: int, content: str, win32clipboard: Any) -> bytes:
     return content.encode("utf-8")
 
 
-# --- IDataObject implementation -------------------------------------------
+# --- Write transaction ----------------------------------------------------
 #
-# OleSetClipboard takes an IDataObject pointer. The MSDN-canonical pattern
-# (mirrored by the pywin32 test suite in com/win32com/test/testClipboard.py)
-# is to implement a small Python class declaring _com_interfaces_ /
-# _public_methods_ and wrap it with win32com.server.util.wrap before passing
-# to OleSetClipboard. OleFlushClipboard then walks the supported FORMATETC
-# list, calls GetData for each, and renders the resulting HGLOBAL bytes
-# onto the clipboard via SetClipboardData internally -- but going through
-# OLE's internal window handle so cross-process ownership transitions work.
+# One Open + Empty + N x SetClipboardData + Close per write call. Matches
+# Chromium WritePortableAndPlatformRepresentations() and the canonical
+# Win32 example in Microsoft docs. No retry on the SetClipboardData call
+# itself; no verify after CloseClipboard; no message pump. The atomicity
+# guarantees of the clipboard chain are enforced by the OS between Open
+# and Close.
 
 
-# IDataObject's full method set per MIDL. We implement the three methods
-# OleFlushClipboard exercises (GetData, QueryGetData, EnumFormatEtc) and
-# stub the rest as E_NOTIMPL -- read-side methods only matter if someone
-# calls OleGetClipboard against us, which only happens during the brief
-# OleSetClipboard..OleFlushClipboard window (and even then only for the
-# format-enumeration path that goes through our EnumFormatEtc).
-_IDATA_OBJECT_METHODS = (
-    "GetData",
-    "GetDataHere",
-    "QueryGetData",
-    "GetCanonicalFormatEtc",
-    "SetData",
-    "EnumFormatEtc",
-    "DAdvise",
-    "DUnadvise",
-    "EnumDAdvise",
-)
+def _write_payloads(payloads: dict[int, bytes]) -> None:
+    """Replace the clipboard with the given (format_id -> bytes) mapping
+    via the canonical Win32 raw-SetClipboardData pattern.
 
+    Allocates a GMEM_MOVEABLE HGLOBAL per format and hands ownership to
+    SetClipboardData under a single Open/Empty/Close transaction. On
+    success the system owns every handle. On any failure, allocated
+    handles that did not transfer are GlobalFree'd.
 
-class _ClipboardDataObject:
-    """Minimal IDataObject offering one or more (format_id, bytes) pairs.
-
-    pywin32 introspects the class via _com_interfaces_ (the COM IID we
-    implement) and _public_methods_ (the method names exposed through the
-    COM vtable). Only GetData / QueryGetData / EnumFormatEtc carry real
-    behavior; the other six raise E_NOTIMPL.
-    """
-
-    _com_interfaces_: ClassVar[list[Any]] = []  # filled in by _make_data_object()
-    _public_methods_: ClassVar[tuple[str, ...]] = _IDATA_OBJECT_METHODS
-
-    def __init__(self, payloads: dict[int, bytes]) -> None:
-        import pythoncom  # type: ignore[import-not-found,import-untyped]
-
-        self.payloads = payloads
-        # FORMATETC tuple shape: (cfFormat, ptd, dwAspect, lindex, tymed).
-        # We offer DVASPECT_CONTENT (the data itself, not an icon or
-        # thumbnail) on TYMED_HGLOBAL (heap-allocated global memory --
-        # what SetClipboardData uses under the hood). lindex=-1 means
-        # "single-page" (no multi-page docs); ptd=None means no target
-        # device.
-        self.supported_fe = [
-            (fmt_id, None, pythoncom.DVASPECT_CONTENT, -1, pythoncom.TYMED_HGLOBAL)
-            for fmt_id in payloads
-        ]
-
-    def GetData(self, fe: tuple[int, Any, int, int, int]) -> Any:
-        import pythoncom  # type: ignore[import-not-found,import-untyped]
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        cf, _ptd, aspect, _lindex, tymed = fe
-        if not (aspect & pythoncom.DVASPECT_CONTENT) or tymed != pythoncom.TYMED_HGLOBAL:
-            raise COMException(hresult=winerror.DV_E_TYMED)
-        if cf not in self.payloads:
-            raise COMException(hresult=winerror.DV_E_FORMATETC)
-        stg = pythoncom.STGMEDIUM()
-        stg.set(pythoncom.TYMED_HGLOBAL, self.payloads[cf])
-        return stg
-
-    def QueryGetData(self, fe: tuple[int, Any, int, int, int]) -> None:
-        import pythoncom  # type: ignore[import-not-found,import-untyped]
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        cf, _ptd, aspect, _lindex, tymed = fe
-        if not (aspect & pythoncom.DVASPECT_CONTENT):
-            raise COMException(hresult=winerror.DV_E_DVASPECT)
-        if tymed != pythoncom.TYMED_HGLOBAL:
-            raise COMException(hresult=winerror.DV_E_TYMED)
-        if cf not in self.payloads:
-            raise COMException(hresult=winerror.DV_E_FORMATETC)
-
-    def EnumFormatEtc(self, direction: int) -> Any:
-        import pythoncom  # type: ignore[import-not-found,import-untyped]
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-        from win32com.server.util import (  # type: ignore[import-not-found,import-untyped]
-            NewEnum,
-        )
-
-        if direction != pythoncom.DATADIR_GET:
-            raise COMException(hresult=winerror.E_NOTIMPL)
-        return NewEnum(self.supported_fe, iid=pythoncom.IID_IEnumFORMATETC)
-
-    def GetDataHere(self, _fe: Any) -> Any:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.E_NOTIMPL)
-
-    def GetCanonicalFormatEtc(self, _fe: Any) -> Any:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.E_NOTIMPL)
-
-    def SetData(self, _fe: Any, _stg: Any, _release: int) -> None:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.E_NOTIMPL)
-
-    def DAdvise(self, _fe: Any, _flags: int, _sink: Any) -> int:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
-
-    def DUnadvise(self, _connection: int) -> None:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
-
-    def EnumDAdvise(self) -> Any:
-        import winerror  # type: ignore[import-not-found,import-untyped]
-        from win32com.server.exception import (  # type: ignore[import-not-found,import-untyped]
-            COMException,
-        )
-
-        raise COMException(hresult=winerror.OLE_E_ADVISENOTSUPPORTED)
-
-
-def _make_data_object(payloads: dict[int, bytes]) -> Any:
-    """Wrap a _ClipboardDataObject in a COM dispatcher and return the
-    wrapped object ready for OleSetClipboard."""
-    import pythoncom  # type: ignore[import-not-found,import-untyped]
-    from win32com.server.util import wrap  # type: ignore[import-not-found,import-untyped]
-
-    # Late-bind the interface IID on the class itself so the type-stub-free
-    # pythoncom constants don't need to be available at import time.
-    if not _ClipboardDataObject._com_interfaces_:
-        _ClipboardDataObject._com_interfaces_ = [pythoncom.IID_IDataObject]
-    return wrap(_ClipboardDataObject(payloads), iid=pythoncom.IID_IDataObject)
-
-
-def _ole_set_clipboard_with_retry(
-    pythoncom: Any, data_object: Any, retries: int = 10, delay_ms: int = 50
-) -> None:
-    """OleSetClipboard fails with CLIPBRD_E_CANT_OPEN under the same
-    contention conditions raw OpenClipboard does (a clipboard inspector
-    or antivirus briefly held the clipboard). Same retry budget as
-    _open_clipboard_with_retry: 10 attempts x 50ms = 500ms ceiling.
-    """
-    last_err: Exception | None = None
-    for _ in range(retries):
-        try:
-            pythoncom.OleSetClipboard(data_object)
-            return
-        except Exception as exc:  # pywintypes.com_error on real Windows
-            last_err = exc
-            time.sleep(delay_ms / 1000.0)
-    raise RuntimeError(
-        f"OleSetClipboard failed after {retries} retries (delay={delay_ms}ms each); "
-        f"another process is holding the clipboard. Last error: {last_err!r}"
-    )
-
-
-# OLE write verify-and-retry: PR #146 CC-on-QEMU-Windows e2e runs on
-# commits 8535045 (run-index a796b55f-f727-43d2-be46-338ffdb99fd9),
-# 3078f35 (run-index 874f183d-ea67-4e3c-85f6-11cf70ef32c9), and ec6d6a5
-# (run-index a758e1cf-00c0-423b-a847-101ddc977c5a) saw transient
-# silent-no-ops where OleSetClipboard + OleFlushClipboard reported
-# success but a subsequent IsClipboardFormatAvailable showed the
-# registered custom format absent. integration-windows CI on
-# windows-latest passes cleanly because the runner has no clipboard
-# chain monitors; real Windows 11 desktops have several (clipboard
-# manager, OneDrive shell extension, antivirus) which can briefly
-# re-grab ownership and EmptyClipboard our write before it lands.
-# The race isn't SVG-specific -- mc-009 (text/html) also flaked on
-# 3078f35, so any registered custom format is affected. The race is
-# transient: agent-level retries (several seconds later) recovered
-# every occurrence. The initial 3-attempt x 50ms budget on 8535045
-# caught some occurrences but not all (some chain listeners stay
-# active >150ms). The 5-attempt exponential schedule on ec6d6a5
-# (50/100/200/400ms) closed the read_raw-after-write race for
-# sequential text/plain -> SVG (mc-020 race-bucket 3/3 PASS) but
-# still missed the mc-017 race-bucket (1/3 PASS) where the prior
-# state was DIB residue from a PowerShell image-write and a chain
-# listener stayed active across the entire fixed-budget window.
-#
-# Resolution on this commit: replace the fixed-sleep schedule with
-# a quiescence wait keyed on GetClipboardSequenceNumber. The kernel-
-# maintained clipboard sequence number advances on every clipboard
-# mutation system-wide. After a failed IsClipboardFormatAvailable
-# verify, polling the sequence number until two consecutive samples
-# match tells us the chain has finished churning; retrying then
-# gives our write a clean shot rather than racing the same listener
-# again. The previous exponential schedule is kept as the per-
-# attempt budget cap, so worst-case overhead is unchanged on the
-# bad path; quiescence detection only changes WHEN within the
-# budget we retry, not the total budget.
-#
-# IsClipboardFormatAvailable remains the final win signal --
-# GetClipboardSequenceNumber alone cannot tell us OUR format won,
-# only that SOMETHING changed.
-
-_OLE_WRITE_VERIFY_RETRIES = 5
-# Per-attempt quiescence-wait budget cap BEFORE the next retry, in
-# milliseconds. Attempt N (0-indexed) waits up to
-# _OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[N] ms for the clipboard to settle
-# before attempt N+1. The final attempt has no following wait.
-_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS: tuple[int, ...] = (50, 100, 200, 400)
-# Sample interval for the quiescence wait. Two consecutive samples
-# of GetClipboardSequenceNumber separated by this many ms must
-# return the same value for the clipboard to count as quiescent.
-# 25ms is short enough to detect most listeners finishing within
-# the first budget tier (50ms) and long enough to avoid burning
-# CPU on the polling loop.
-_OLE_WRITE_QUIESCENT_SAMPLE_MS = 25
-
-
-def _get_clipboard_sequence_number() -> int:
-    """Return the system-wide clipboard sequence number from user32.
-
-    GetClipboardSequenceNumber advances on every clipboard mutation
-    (set, empty, ownership change) by any process, system-wide. The
-    function does not require OpenClipboard -- it is a passive read
-    of a kernel-maintained DWORD. Used as the unforged "did the
-    clipboard state move" signal in the OLE write verify loop: when
-    two consecutive samples match, the chain has finished churning
-    and a retry has a clean shot, regardless of which chain listener
-    was active.
-    """
-    import ctypes
-
-    user32 = ctypes.windll.user32  # type: ignore[attr-defined]  # Windows-only
-    user32.GetClipboardSequenceNumber.argtypes = []
-    user32.GetClipboardSequenceNumber.restype = ctypes.c_ulong  # DWORD
-    return int(user32.GetClipboardSequenceNumber())
-
-
-def _wait_for_clipboard_quiescent(
-    max_wait_ms: int, sample_ms: int = _OLE_WRITE_QUIESCENT_SAMPLE_MS
-) -> bool:
-    """Poll GetClipboardSequenceNumber until two consecutive samples
-    `sample_ms` apart return the same value, or `max_wait_ms` elapses.
-
-    Returns True if the clipboard quiesced (chain listeners are done
-    writing), False if the budget expired with the sequence still
-    advancing. More reliable than a fixed sleep because real chain
-    listeners (clipboard managers, OneDrive, antivirus) have
-    unpredictable run times -- a stale fixed delay either over-pays
-    on the common path or under-shoots on the slow tail.
-    """
-    elapsed_ms = 0
-    last_seq = _get_clipboard_sequence_number()
-    while elapsed_ms < max_wait_ms:
-        time.sleep(sample_ms / 1000.0)
-        elapsed_ms += sample_ms
-        current_seq = _get_clipboard_sequence_number()
-        if current_seq == last_seq:
-            return True
-        last_seq = current_seq
-    return False
-
-
-def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
-    """The OLE write body that runs ON the dedicated worker thread.
-
-    Publishes the IDataObject via OleSetClipboard, flushes via
-    OleFlushClipboard, then verifies via IsClipboardFormatAvailable that
-    every advertised format actually landed on the clipboard. If any
-    format is missing, waits for the clipboard chain to quiesce (via
-    GetClipboardSequenceNumber) within the per-attempt budget cap, then
-    re-publishes. Up to _OLE_WRITE_VERIFY_RETRIES attempts.
-
-    Lives here (rather than inline in _write_via_ole) so the worker can
-    call it directly and unit tests can call it on a synthetic worker
-    without invoking the thread-dispatch path.
-    """
-    import pythoncom  # type: ignore[import-not-found,import-untyped]
-
-    win32clipboard = _import_win32clipboard()
-
-    last_missing: list[int] = []
-    for attempt in range(_OLE_WRITE_VERIFY_RETRIES):
-        # Rebuild the IDataObject for each attempt: OleSetClipboard
-        # AddRef's it and OleFlushClipboard releases that reference, so
-        # the same wrapped object should not be reused across multiple
-        # publish cycles.
-        data_object = _make_data_object(payloads)
-        _ole_set_clipboard_with_retry(pythoncom, data_object)
-        pythoncom.OleFlushClipboard()
-        last_missing = [
-            fmt_id for fmt_id in payloads if not win32clipboard.IsClipboardFormatAvailable(fmt_id)
-        ]
-        if not last_missing:
-            return
-        # Wait for the chain to quiesce before the next attempt.
-        # Returns immediately if the sequence number is already
-        # stable (no listener interference, just a silent OleSet
-        # no-op -- retry without delay) and waits up to the budget
-        # cap if a listener is still actively writing.
-        if attempt < len(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS):
-            _wait_for_clipboard_quiescent(max_wait_ms=_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt])
-    raise RuntimeError(
-        f"OLE write verify failed after {_OLE_WRITE_VERIFY_RETRIES} attempts; "
-        f"formats not on clipboard after OleFlushClipboard: {last_missing!r}. "
-        f"A clipboard chain listener may be repeatedly hijacking ownership."
-    )
-
-
-def _write_via_ole(payloads: dict[int, bytes]) -> None:
-    """Place all (format_id, bytes) pairs on the clipboard via the
-    dedicated OLE worker thread.
-
-    The worker owns one STA-initialized COM apartment for the process's
-    lifetime; all OLE writes run there. This sidesteps the
-    main-thread apartment instability observed on integration-windows CI
-    (where pythoncom.CoInitializeEx and ctypes-direct CoInitializeEx
-    both reported success but OleSetClipboard still raised
-    CO_E_NOTINITIALIZED on the next line).
+    Atomicity: between OpenClipboard and CloseClipboard, no other process
+    can EmptyClipboard or write its own data -- the OS serializes
+    clipboard access via the per-clipboard mutex inside the kernel.
+    Once CloseClipboard returns, our formats are visible to the entire
+    system in one observable step.
     """
     if not payloads:
         return
-    worker = _get_clipboard_worker()
-    future = worker.submit(_ole_write_on_worker, payloads)
-    # Block on the worker's result. Exceptions from the worker thread
-    # surface here via future.result().
-    future.result()
+
+    win32clipboard = _import_win32clipboard()
+    kernel32 = _kernel32()
+
+    # Phase 1: allocate every payload's HGLOBAL upfront, OUTSIDE the
+    # OpenClipboard / CloseClipboard bracket. Any GlobalAlloc failure
+    # raises here, before we hold the global clipboard lock, so we
+    # don't strand the clipboard half-written.
+    handles: list[tuple[int, int]] = []  # (format_id, handle)
+    transferred: set[int] = set()  # handles SetClipboardData accepted
+    try:
+        for fmt_id, payload in payloads.items():
+            handles.append((fmt_id, _allocate_hglobal(payload)))
+
+        # Phase 2: open, empty, set every format, close. The
+        # SetClipboardData call transfers ownership of each handle to
+        # the system on success; we track transferred handles by ID so
+        # the cleanup pass (below) knows which we must GlobalFree
+        # ourselves vs which the system now owns.
+        _open_clipboard_with_retry(win32clipboard)
+        try:
+            win32clipboard.EmptyClipboard()
+            for fmt_id, handle in handles:
+                _set_clipboard_data(fmt_id, handle)
+                transferred.add(handle)
+        finally:
+            win32clipboard.CloseClipboard()
+    finally:
+        # Free any handle the system did not accept (failure path),
+        # whether the failure was in Phase 2 (SetClipboardData raised
+        # mid-transaction; CloseClipboard above ran via the inner
+        # finally and the kernel discards the partial state) or in
+        # Phase 1 setup (OpenClipboard exhausted its retry budget
+        # after we allocated). Handles already in `transferred` are
+        # owned by the system and must NOT be freed.
+        for _, handle in handles:
+            if handle not in transferred:
+                kernel32.GlobalFree(ctypes.c_void_p(handle))
 
 
 def write_text(content: str, mime_type: str) -> None:
-    """Replace the clipboard with a single (format, content) pair via
-    OleSetClipboard + OleFlushClipboard.
+    """Replace the clipboard with a single (format, content) pair.
 
-    Atomic by construction. The OLE clipboard chain handles cross-process
-    ownership transitions correctly -- a precondition for registered
-    custom formats (image/svg+xml, HTML Format, Rich Text Format) per
-    MSDN, where raw SetClipboardData was observed to silently no-op when
-    the prior owner was a foreign process.
+    Atomic via OpenClipboard + EmptyClipboard + SetClipboardData +
+    CloseClipboard. The previous clipboard owner is fully replaced
+    before this function returns; no propagation window or chain-
+    settle race.
     """
     win32clipboard = _import_win32clipboard()
     fmt_id = _format_id_for_mime(win32clipboard, mime_type)
     encoded = _encode_for_format(fmt_id, content, win32clipboard)
-    _write_via_ole({fmt_id: encoded})
+    _write_payloads({fmt_id: encoded})
 
 
 def write_multi(formats: dict[str, str]) -> None:
     """Replace the clipboard with multiple (mime, content) pairs in ONE
-    OleSetClipboard transaction.
+    OpenClipboard transaction.
 
     Used by `clipboard_copy_markdown` to put `text/html` and `text/plain`
     on the clipboard simultaneously, so paste targets that prefer one
     format over the other (Slack/Gmail vs vim/terminal) each get the
     representation they expect.
 
-    Atomic by construction: the IDataObject we publish offers all formats
-    at once, and OleFlushClipboard renders them in a single Win32
-    transaction. No window during which the clipboard holds half the
-    formats.
+    Atomic at the Win32 clipboard chain level: a single Empty -> Set per
+    format -> Close transaction. No window during which the clipboard
+    holds half the formats.
     """
     if not formats:
         return
     win32clipboard = _import_win32clipboard()
 
-    # Resolve all format IDs and encode all payloads BEFORE handing off to
-    # OLE, so encoding errors surface here rather than mid-transaction.
+    # Resolve all format IDs and encode all payloads BEFORE the
+    # OpenClipboard bracket so encoding errors surface here rather than
+    # mid-transaction, where they could leave the clipboard half-written.
     payloads: dict[int, bytes] = {}
     for mime_type, content in formats.items():
         fmt_id = _format_id_for_mime(win32clipboard, mime_type)
         payloads[fmt_id] = _encode_for_format(fmt_id, content, win32clipboard)
 
-    _write_via_ole(payloads)
+    _write_payloads(payloads)
 
 
 def list_formats() -> list[str]:
