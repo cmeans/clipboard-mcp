@@ -699,21 +699,30 @@ def _ole_set_clipboard_with_retry(
     )
 
 
-# OLE write verify-and-retry: PR #146 CC-on-QEMU-Windows e2e run
-# (run-index a796b55f-f727-43d2-be46-338ffdb99fd9) on commit 8535045 saw
-# 4-of-30 transient SVG silent-no-ops where OleSetClipboard +
-# OleFlushClipboard reported success but a subsequent
-# IsClipboardFormatAvailable showed the registered custom format absent
-# from the clipboard. integration-windows CI on windows-latest passes
-# cleanly because the runner has no clipboard chain monitors; real
-# Windows 11 desktops have several (clipboard manager, OneDrive shell
-# extension, antivirus) which can briefly re-grab ownership and
-# EmptyClipboard our write before it lands visibly. The race is
-# transient -- the agent's manual retry recovered every occurrence.
-# Doing the retry server-side closes the gap with bounded latency.
+# OLE write verify-and-retry: PR #146 CC-on-QEMU-Windows e2e runs on
+# commits 8535045 (run-index a796b55f-f727-43d2-be46-338ffdb99fd9) and
+# 3078f35 (run-index 874f183d-ea67-4e3c-85f6-11cf70ef32c9) saw transient
+# silent-no-ops where OleSetClipboard + OleFlushClipboard reported
+# success but a subsequent IsClipboardFormatAvailable showed the
+# registered custom format absent. integration-windows CI on
+# windows-latest passes cleanly because the runner has no clipboard
+# chain monitors; real Windows 11 desktops have several (clipboard
+# manager, OneDrive shell extension, antivirus) which can briefly
+# re-grab ownership and EmptyClipboard our write before it lands.
+# The race isn't SVG-specific -- mc-009 (text/html) also flaked on
+# 3078f35, so any registered custom format is affected. The race is
+# transient: agent-level retries (several seconds later) recovered
+# every occurrence. The initial 3-attempt x 50ms budget on 8535045
+# caught some occurrences but not all (some chain listeners stay
+# active >150ms). Bumped to 5 attempts with exponential backoff;
+# worst-case overhead 750ms of sleep plus ~250ms of work = ~1s on the
+# bad path, microseconds on the happy path.
 
-_OLE_WRITE_VERIFY_RETRIES = 3
-_OLE_WRITE_VERIFY_DELAY_MS = 50  # 3 * 50 = 150ms worst-case overhead
+_OLE_WRITE_VERIFY_RETRIES = 5
+# Per-attempt sleep BEFORE the next retry, in milliseconds. Attempt N
+# (0-indexed) sleeps _OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[N] ms before
+# attempt N+1. The final attempt has no following sleep.
+_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS: tuple[int, ...] = (50, 100, 200, 400)
 
 
 def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
@@ -748,11 +757,12 @@ def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
         ]
         if not last_missing:
             return
-        # Brief settle window: clipboard chain listeners (clipboard
-        # manager, shell extensions) typically finish their post-write
-        # work within tens of milliseconds. Wait then retry.
-        if attempt < _OLE_WRITE_VERIFY_RETRIES - 1:
-            time.sleep(_OLE_WRITE_VERIFY_DELAY_MS / 1000.0)
+        # Settle window before retry. Exponential-ish schedule:
+        # 50, 100, 200, 400ms. Most chain listeners finish within
+        # 100ms, the longer tail is for slower antivirus / shell
+        # extension paths that need more time.
+        if attempt < len(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS):
+            time.sleep(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt] / 1000.0)
     raise RuntimeError(
         f"OLE write verify failed after {_OLE_WRITE_VERIFY_RETRIES} attempts; "
         f"formats not on clipboard after OleFlushClipboard: {last_missing!r}. "
