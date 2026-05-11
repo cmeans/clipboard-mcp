@@ -138,6 +138,19 @@ def fake_win32clipboard() -> MagicMock:
     sys.modules["win32com.server.util"] = fake_win32com_server_util
     sys.modules["win32com.server.exception"] = fake_win32com_server_exception
 
+    # ctypes.windll only exists on Windows; the wrapper's _ensure_com_init
+    # accesses ole32.CoInitializeEx via ctypes.windll.ole32 to bypass
+    # pywin32's silently-no-op'ing wrapper. Inject a MagicMock for the
+    # tests; teardown restores the prior value.
+    import ctypes as _ctypes
+
+    fake_ole32 = MagicMock(name="ole32")
+    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
+    fake_windll = MagicMock(name="windll")
+    fake_windll.ole32 = fake_ole32
+    prior_windll = getattr(_ctypes, "windll", None)
+    _ctypes.windll = fake_windll  # type: ignore[attr-defined]
+
     # The real module caches the HWND for the lifetime of the process.
     # Reset between tests so each test starts from "no window created
     # yet" and CreateWindowEx call counts are deterministic. COM init is
@@ -191,6 +204,15 @@ def fake_win32clipboard() -> MagicMock:
             sys.modules["win32com.server.exception"] = prior_win32com_server_exception
         _mod._owner_hwnd = None
         _mod._ClipboardDataObject._com_interfaces_ = []
+        if prior_windll is None:
+            # ctypes.windll didn't exist before -- delete the attr we
+            # added rather than leaving a MagicMock dangling.
+            import contextlib
+
+            with contextlib.suppress(AttributeError):
+                del _ctypes.windll  # type: ignore[attr-defined]
+        else:
+            _ctypes.windll = prior_windll  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -517,66 +539,57 @@ def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake
 # --- _ensure_com_init ------------------------------------------------------
 
 
-def test_ensure_com_init_calls_coinitializeex_every_call(clipboard_win32):
-    """No caching: CoInitializeEx fires every time _ensure_com_init runs.
-    The cached-flag pattern was removed after CI showed pywin32 auto-init
-    silently no-op'ing in uv-installed venvs while our cache flag still
-    set True, leaving OleSetClipboard raising CO_E_NOTINITIALIZED.
-    CoInitializeEx is idempotent on same-mode re-init (S_FALSE without
-    exception) so always calling is cheap and reliable."""
-    import sys as _sys
+def test_ensure_com_init_calls_ole32_coinitializeex_every_call(clipboard_win32):
+    """No caching: ole32.CoInitializeEx fires every time _ensure_com_init
+    runs. We bypass pythoncom.CoInitializeEx via ctypes-direct ole32 calls
+    because pywin32's wrapper silently no-op'd on uv-installed venvs
+    (integration-windows CI on d3d7372 and 3904fef both failed with
+    'CoInitialize has not been called' from OleSetClipboard after
+    pythoncom.CoInitializeEx had supposedly succeeded)."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
 
     clipboard_win32._ensure_com_init()
     clipboard_win32._ensure_com_init()
     clipboard_win32._ensure_com_init()
 
-    assert fake_pythoncom.CoInitializeEx.call_count == 3
-    for call in fake_pythoncom.CoInitializeEx.call_args_list:
-        assert call.args == (fake_pythoncom.COINIT_APARTMENTTHREADED,)
+    assert fake_ole32.CoInitializeEx.call_count == 3
+    # Each call: ole32.CoInitializeEx(NULL, COINIT_APARTMENTTHREADED=0x2).
+    for call in fake_ole32.CoInitializeEx.call_args_list:
+        assert call.args == (None, 0x2)
 
 
-def test_ensure_com_init_swallows_rpc_e_changed_mode(clipboard_win32):
-    """RPC_E_CHANGED_MODE (-2147417850) means the thread is already
-    inited to a different apartment model (MTA). We can't change it but
-    the existing apartment may still support OLE clipboard; proceed
-    silently and let OleSetClipboard surface a real error if the model
-    is incompatible."""
-    import sys as _sys
+def test_ensure_com_init_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
+    """S_FALSE (1, same-mode re-init) and RPC_E_CHANGED_MODE (-2147417850,
+    thread already inited to different model) are both accepted. S_FALSE
+    is a positive HRESULT (success) so the < 0 guard doesn't trip;
+    RPC_E_CHANGED_MODE is negative but explicitly whitelisted."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
 
-    class _FakeComError(Exception):
-        def __init__(self, hresult: int) -> None:
-            super().__init__(f"com_error(hresult={hresult})")
-            self.hresult = hresult
+    # S_FALSE (1): same-mode re-init, no-op success.
+    fake_ole32.CoInitializeEx.return_value = 1
+    clipboard_win32._ensure_com_init()
 
-    fake_pythoncom.CoInitializeEx.side_effect = _FakeComError(-2147417850)
-
-    # Should NOT raise.
+    # RPC_E_CHANGED_MODE: previously inited to different model, accept.
+    fake_ole32.CoInitializeEx.return_value = -2147417850
     clipboard_win32._ensure_com_init()
 
 
-def test_ensure_com_init_propagates_other_errors(clipboard_win32):
-    """Any HRESULT other than RPC_E_CHANGED_MODE is surfaced -- we don't
-    want to mask a genuine COM init failure (e.g. CO_E_INITONLYONCE for
-    a deeply confused process state)."""
-    import sys as _sys
+def test_ensure_com_init_raises_on_other_failed_hresults(clipboard_win32):
+    """Any negative HRESULT other than RPC_E_CHANGED_MODE is surfaced
+    as OSError so a genuine COM init failure is not masked."""
+    import ctypes as _ctypes
 
-    fake_pythoncom = _sys.modules["pythoncom"]
-
-    class _FakeComError(Exception):
-        def __init__(self, hresult: int) -> None:
-            super().__init__(f"com_error(hresult={hresult})")
-            self.hresult = hresult
-
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
     # CO_E_INITONLYONCE = -2147221015 (arbitrary non-RPC_E_CHANGED_MODE
-    # value; the test asserts on "any error that isn't the swallow case
-    # propagates", not on the specific HRESULT).
-    fake_pythoncom.CoInitializeEx.side_effect = _FakeComError(-2147221015)
+    # negative HRESULT; the test asserts on "any negative HRESULT other
+    # than the whitelist propagates", not on the specific value).
+    fake_ole32.CoInitializeEx.return_value = -2147221015
 
-    with pytest.raises(_FakeComError):
+    with pytest.raises(OSError, match="CoInitializeEx"):
         clipboard_win32._ensure_com_init()
 
 

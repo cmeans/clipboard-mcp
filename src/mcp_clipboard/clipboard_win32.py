@@ -90,45 +90,55 @@ logger = logging.getLogger(__name__)
 
 # --- COM apartment management ----------------------------------------------
 #
-# pythoncom requires the calling thread to be CoInitialize'd before any OLE
-# operation. The docs claim pythoncom auto-inits the main Python thread on
-# import, but the integration-windows CI run on 2026-05-10 showed
+# OleSetClipboard requires the calling thread to be CoInitialize'd. The
+# integration-windows CI on commits d3d7372 and 3904fef both showed
 # OleSetClipboard raising CO_E_NOTINITIALIZED ("CoInitialize has not been
-# called") on every call -- the auto-init path is fragile in environments
-# where pywin32's post-install step did not run (e.g. uv-installed venvs).
+# called") on every call, even when pythoncom.CoInitializeEx had just run
+# at the start of the same function. The pywin32 wrapper appears to
+# silently no-op in uv-installed venvs (no pywin32_postinstall step), so
+# we bypass it and call ole32.CoInitializeEx directly via ctypes.
 #
-# We call pythoncom.CoInitializeEx every time the OLE clipboard path runs,
-# rather than caching a "did we init" flag. CoInitializeEx is idempotent on
+# ctypes loads ole32.dll from the system path and calls the underlying
+# Win32 API regardless of pywin32 state. CoInitializeEx is idempotent on
 # the same thread: re-init with the same apartment model returns S_FALSE
-# (no-op, no exception); re-init with a different model raises
-# RPC_E_CHANGED_MODE which we catch and proceed (the existing apartment
-# may still support OLE clipboard depending on its threading model). No
-# matching CoUninitialize: long-running server processes keep COM init'd
-# for their lifetime; Python's interpreter shutdown cleans up on exit.
+# (1, not an error); re-init with a different model returns
+# RPC_E_CHANGED_MODE (-2147417850) which we accept and proceed (the
+# existing apartment may still support OLE clipboard). No matching
+# CoUninitialize: long-running server processes keep COM init'd for their
+# lifetime; Python's interpreter shutdown handles teardown on exit.
+
+# Magic numbers from Win32 headers, kept here so non-Windows imports don't
+# need to touch ctypes / ole32 at module load.
+_COINIT_APARTMENTTHREADED = 0x2  # objbase.h COINIT.COINIT_APARTMENTTHREADED
+_RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as signed 32-bit
 
 
 def _ensure_com_init() -> None:
-    """Initialize an STA on the current thread.
+    """Initialize an STA on the current thread via ctypes-direct
+    ole32.CoInitializeEx, bypassing pywin32's wrapper.
 
-    OleSetClipboard / OleFlushClipboard / OleGetClipboard require the
-    calling thread to be CoInitialize'd. Called unconditionally before
-    every OLE op -- pywin32's main-thread auto-init has been observed to
-    silently no-op in uv-installed venvs (no post-install step) and we
-    cannot rely on it. CoInitializeEx is idempotent on same-mode re-init
-    (returns S_FALSE without raising) so the proactive call costs only
-    one cheap COM check on the steady-state path.
+    Why ctypes and not pythoncom.CoInitializeEx: the pywin32 wrapper has
+    been observed to return success without actually initing the
+    apartment in uv-installed venvs on the integration-windows CI runner.
+    Direct ctypes calls go straight to ole32.dll regardless of pywin32
+    bootstrap state.
+
+    Safe to call repeatedly on the same thread: S_FALSE on same-mode
+    re-init, RPC_E_CHANGED_MODE if a different model is already active
+    (which we accept).
     """
-    import pythoncom  # type: ignore[import-not-found,import-untyped]
+    import ctypes
 
-    try:
-        pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
-    except Exception as exc:
-        # RPC_E_CHANGED_MODE (-2147417850): the thread was previously
-        # init'd to a different apartment model (MTA). We can't change
-        # it, so just proceed -- OleSetClipboard may still work under
-        # the existing apartment. Any other error is surfaced.
-        if getattr(exc, "hresult", None) != -2147417850:
-            raise
+    ole32 = ctypes.windll.ole32  # type: ignore[attr-defined]  # Windows-only
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    ole32.CoInitializeEx.restype = ctypes.c_long  # HRESULT (signed 32-bit)
+    hr = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    # S_OK=0 (newly inited), S_FALSE=1 (already inited same mode) -> both
+    # success. FAILED is hr < 0 in 32-bit-signed terms.
+    if hr < 0 and hr != _RPC_E_CHANGED_MODE:
+        raise OSError(
+            f"CoInitializeEx (via ctypes / ole32.dll) failed with HRESULT 0x{hr & 0xFFFFFFFF:08X}"
+        )
 
 
 # --- Format registration cache ---------------------------------------------
