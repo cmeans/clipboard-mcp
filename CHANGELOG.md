@@ -51,9 +51,10 @@ All notable changes to this project will be documented here.
   follow-up PR) will port `_windows_read_image` and `_windows_write_image`
   to `pywin32` with DIB ↔ PNG conversion. Closes #143.
 - **Windows writes go through `OleSetClipboard` + `OleFlushClipboard`
-  instead of raw `SetClipboardData`.** MSDN is explicit that "sharing
-  non-standard clipboard data formats between processes requires using
-  the OleSetClipboard API, as SetClipboardData alone is not enough."
+  instead of raw `SetClipboardData`, dispatched onto a dedicated COM
+  worker thread.** MSDN is explicit that "sharing non-standard
+  clipboard data formats between processes requires using the
+  OleSetClipboard API, as SetClipboardData alone is not enough."
   CD-Windows live QA on PR #146 confirmed: raw `SetClipboardData` for
   registered custom formats (image/svg+xml, HTML Format) silently
   no-ops when the prior clipboard owner is a foreign process — the
@@ -69,8 +70,18 @@ All notable changes to this project will be documented here.
   persist without our process needing to pump messages. Multi-format
   writes (`clipboard_copy_markdown`) publish a single IDataObject
   offering all formats; the flush is one atomic Win32 transaction.
-  `asyncio.to_thread` worker threads are CoInitializeEx'd lazily into
-  STA apartments on first use.
+  A dedicated daemon worker thread (`_ClipboardWorker`) owns the OLE
+  apartment for the process's lifetime: CoInitializeEx'd to STA via a
+  direct `ole32.CoInitializeEx` call through ctypes on thread start,
+  then services a queue of write requests from asyncio dispatchers via
+  `concurrent.futures.Future`s. Earlier attempts that initialized COM
+  on each calling thread (via `pythoncom.CoInitializeEx` and via
+  ctypes-direct `ole32.CoInitializeEx`) all showed
+  `OleSetClipboard` raising `CO_E_NOTINITIALIZED` despite the just-prior
+  successful init call — the apartment state on the pytest main thread
+  was being lost between init and the OLE call. Moving OLE work to a
+  dedicated thread that never relinquishes its apartment sidesteps the
+  instability entirely.
 
 ### Fixed
 - Windows: non-ASCII characters survive `clipboard_paste` and

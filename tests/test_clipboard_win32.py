@@ -22,6 +22,7 @@ The wrapper is small enough that the unit tests cover every branch:
 from __future__ import annotations
 
 import sys
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -151,14 +152,34 @@ def fake_win32clipboard() -> MagicMock:
     prior_windll = getattr(_ctypes, "windll", None)
     _ctypes.windll = fake_windll  # type: ignore[attr-defined]
 
-    # The real module caches the HWND for the lifetime of the process.
-    # Reset between tests so each test starts from "no window created
-    # yet" and CreateWindowEx call counts are deterministic. COM init is
-    # no longer cached (CoInitializeEx is called unconditionally every
-    # _write_via_ole), so there's no _com_state to reset.
+    # The real module caches the HWND and the OLE worker thread for the
+    # lifetime of the process. Reset between tests so each test starts
+    # fresh and CreateWindowEx / worker-start call counts are deterministic.
     from mcp_clipboard import clipboard_win32 as _mod
 
     _mod._owner_hwnd = None
+    prior_worker = _mod._clipboard_worker
+    # Inject a synchronous fake worker so write_text / write_multi tests
+    # exercise the OLE write body on the calling thread (no real thread
+    # spawn, no actual COM init -- everything is mocked through the
+    # fake pythoncom). Tests that exercise the real _ClipboardWorker do
+    # so explicitly by clearing _mod._clipboard_worker first.
+    from concurrent.futures import Future as _Future
+
+    class _SynchronousWorker:
+        def __init__(self) -> None:
+            self.submitted: list[tuple[Any, tuple[Any, ...]]] = []
+
+        def submit(self, fn: Any, *args: Any) -> _Future:
+            self.submitted.append((fn, args))
+            f: _Future = _Future()
+            try:
+                f.set_result(fn(*args))
+            except BaseException as exc:
+                f.set_exception(exc)
+            return f
+
+    _mod._clipboard_worker = _SynchronousWorker()  # type: ignore[assignment]
     # The class-level _com_interfaces_ is populated lazily on first
     # _make_data_object call; clear so tests see a fresh init.
     _mod._ClipboardDataObject._com_interfaces_ = []
@@ -203,6 +224,7 @@ def fake_win32clipboard() -> MagicMock:
         else:
             sys.modules["win32com.server.exception"] = prior_win32com_server_exception
         _mod._owner_hwnd = None
+        _mod._clipboard_worker = prior_worker
         _mod._ClipboardDataObject._com_interfaces_ = []
         if prior_windll is None:
             # ctypes.windll didn't exist before -- delete the attr we
@@ -356,6 +378,37 @@ def test_open_clipboard_caches_owner_window_across_calls(clipboard_win32, fake_w
     assert fake_win32clipboard.OpenClipboard.call_count == 3
     for call in fake_win32clipboard.OpenClipboard.call_args_list:
         assert call.args == (0x10001,)
+
+
+def test_get_clipboard_hwnd_inner_lock_returns_cached_hwnd(clipboard_win32, fake_win32clipboard):
+    """Double-checked locking has TWO None-checks: one before the lock
+    (lock-free fast path) and one inside the lock (handles the race where
+    a second caller acquired the lock just as the first finished creating
+    the window). Swap the module-level lock for a fake whose __enter__
+    pre-populates _owner_hwnd, simulating the race: the inner None-check
+    then returns the cached HWND without falling into CreateWindowEx."""
+    import sys as _sys
+
+    fake_win32gui = _sys.modules["win32gui"]
+    sentinel_hwnd = 0xDEADBEEF
+
+    class _RacingLock:
+        """Stand-in for threading.Lock whose __enter__ populates
+        _owner_hwnd before yielding -- simulates a parallel thread having
+        won the create race while this caller waited on the lock."""
+
+        def __enter__(self) -> _RacingLock:
+            clipboard_win32._owner_hwnd = sentinel_hwnd
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    with patch.object(clipboard_win32, "_owner_hwnd_lock", _RacingLock()):
+        result = clipboard_win32._get_clipboard_hwnd()
+
+    assert result == sentinel_hwnd
+    fake_win32gui.CreateWindowEx.assert_not_called()
 
 
 def test_get_clipboard_hwnd_is_thread_safe(clipboard_win32, fake_win32clipboard):
@@ -536,61 +589,164 @@ def test_read_text_str_fallback_for_unexpected_return_type(clipboard_win32, fake
     assert "memory" in result
 
 
-# --- _ensure_com_init ------------------------------------------------------
+# --- _ole32_co_initialize_ex -----------------------------------------------
 
 
-def test_ensure_com_init_calls_ole32_coinitializeex_every_call(clipboard_win32):
-    """No caching: ole32.CoInitializeEx fires every time _ensure_com_init
-    runs. We bypass pythoncom.CoInitializeEx via ctypes-direct ole32 calls
-    because pywin32's wrapper silently no-op'd on uv-installed venvs
-    (integration-windows CI on d3d7372 and 3904fef both failed with
-    'CoInitialize has not been called' from OleSetClipboard after
-    pythoncom.CoInitializeEx had supposedly succeeded)."""
+def test_ole32_co_initialize_ex_calls_ctypes_ole32_with_apartment_threaded_flag(
+    clipboard_win32,
+):
+    """The helper goes straight to ole32.CoInitializeEx via ctypes,
+    bypassing pywin32.CoInitializeEx which was observed to silently
+    no-op in uv-installed venvs (the integration-windows CI failure on
+    d3d7372 / 3904fef / 0a0f933 surfaced this)."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
+    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
 
-    clipboard_win32._ensure_com_init()
-    clipboard_win32._ensure_com_init()
-    clipboard_win32._ensure_com_init()
+    clipboard_win32._ole32_co_initialize_ex()
 
-    assert fake_ole32.CoInitializeEx.call_count == 3
-    # Each call: ole32.CoInitializeEx(NULL, COINIT_APARTMENTTHREADED=0x2).
-    for call in fake_ole32.CoInitializeEx.call_args_list:
-        assert call.args == (None, 0x2)
+    fake_ole32.CoInitializeEx.assert_called_once_with(None, 0x2)
 
 
-def test_ensure_com_init_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
-    """S_FALSE (1, same-mode re-init) and RPC_E_CHANGED_MODE (-2147417850,
-    thread already inited to different model) are both accepted. S_FALSE
-    is a positive HRESULT (success) so the < 0 guard doesn't trip;
-    RPC_E_CHANGED_MODE is negative but explicitly whitelisted."""
+def test_ole32_co_initialize_ex_accepts_s_false_and_rpc_e_changed_mode(clipboard_win32):
+    """S_FALSE (1, same-mode re-init) and RPC_E_CHANGED_MODE
+    (-2147417850, different model already active) are both accepted
+    without raising."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
 
     # S_FALSE (1): same-mode re-init, no-op success.
     fake_ole32.CoInitializeEx.return_value = 1
-    clipboard_win32._ensure_com_init()
+    clipboard_win32._ole32_co_initialize_ex()
 
     # RPC_E_CHANGED_MODE: previously inited to different model, accept.
     fake_ole32.CoInitializeEx.return_value = -2147417850
-    clipboard_win32._ensure_com_init()
+    clipboard_win32._ole32_co_initialize_ex()
 
 
-def test_ensure_com_init_raises_on_other_failed_hresults(clipboard_win32):
-    """Any negative HRESULT other than RPC_E_CHANGED_MODE is surfaced
-    as OSError so a genuine COM init failure is not masked."""
+def test_ole32_co_initialize_ex_raises_on_other_failed_hresults(clipboard_win32):
+    """Any negative HRESULT other than RPC_E_CHANGED_MODE raises OSError
+    so genuine init failures aren't masked."""
     import ctypes as _ctypes
 
     fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
-    # CO_E_INITONLYONCE = -2147221015 (arbitrary non-RPC_E_CHANGED_MODE
-    # negative HRESULT; the test asserts on "any negative HRESULT other
-    # than the whitelist propagates", not on the specific value).
-    fake_ole32.CoInitializeEx.return_value = -2147221015
+    fake_ole32.CoInitializeEx.return_value = -2147221015  # CO_E_INITONLYONCE
 
     with pytest.raises(OSError, match="CoInitializeEx"):
-        clipboard_win32._ensure_com_init()
+        clipboard_win32._ole32_co_initialize_ex()
+
+
+# --- _ClipboardWorker ------------------------------------------------------
+
+
+def test_clipboard_worker_inits_com_then_runs_submitted_callable(clipboard_win32):
+    """The worker thread inits ole32 once on start, then services
+    queued callables. Tests run a real thread but mock ole32 + pythoncom."""
+    import ctypes as _ctypes
+
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
+    fake_ole32.CoInitializeEx.return_value = 0  # S_OK
+
+    worker = clipboard_win32._ClipboardWorker()
+    worker.start()
+    try:
+        future = worker.submit(lambda x: x * 2, 21)
+        assert future.result(timeout=2.0) == 42
+        # ole32.CoInitializeEx fired once on the worker's start, with the
+        # apartment-threaded flag. Subsequent submits don't re-init.
+        assert fake_ole32.CoInitializeEx.call_count == 1
+        assert fake_ole32.CoInitializeEx.call_args.args == (None, 0x2)
+    finally:
+        worker._queue.put(None)  # sentinel shutdown
+        worker.join(timeout=2.0)
+
+
+def test_clipboard_worker_propagates_exceptions_from_submitted_callable(clipboard_win32):
+    """An exception inside a worker-thread callable surfaces through the
+    Future to the caller."""
+    import ctypes as _ctypes
+
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
+    fake_ole32.CoInitializeEx.return_value = 0
+
+    worker = clipboard_win32._ClipboardWorker()
+    worker.start()
+    try:
+
+        def boom():
+            raise RuntimeError("boom")
+
+        future = worker.submit(boom)
+        with pytest.raises(RuntimeError, match="boom"):
+            future.result(timeout=2.0)
+    finally:
+        worker._queue.put(None)
+        worker.join(timeout=2.0)
+
+
+def test_clipboard_worker_init_failure_surfaces_on_submit(clipboard_win32):
+    """If CoInitializeEx fails at worker start, submit() returns a
+    pre-resolved Future carrying the init error -- callers see the real
+    failure rather than hanging on a dead worker."""
+    import ctypes as _ctypes
+
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
+    fake_ole32.CoInitializeEx.return_value = -2147221015  # CO_E_INITONLYONCE
+
+    worker = clipboard_win32._ClipboardWorker()
+    worker.start()
+    try:
+        future = worker.submit(lambda: None)
+        with pytest.raises(OSError, match="CoInitializeEx"):
+            future.result(timeout=2.0)
+    finally:
+        worker.join(timeout=2.0)  # thread already exited from init failure
+
+
+# --- _get_clipboard_worker -------------------------------------------------
+
+
+def test_get_clipboard_worker_starts_once_and_caches(clipboard_win32):
+    """The worker is lazy-started on first call and cached. Double-checked
+    locking guards against concurrent first-callers via asyncio.to_thread
+    spawning multiple workers."""
+    import ctypes as _ctypes
+    import threading as _threading
+
+    fake_ole32 = _ctypes.windll.ole32  # type: ignore[attr-defined]
+    fake_ole32.CoInitializeEx.return_value = 0
+
+    # Clear the cached worker the fixture installed; we want to exercise
+    # the real lazy-start path.
+    clipboard_win32._clipboard_worker = None
+
+    n_threads = 16
+    barrier = _threading.Barrier(n_threads)
+    workers: list[Any] = []
+    workers_lock = _threading.Lock()
+
+    def race():
+        barrier.wait()
+        w = clipboard_win32._get_clipboard_worker()
+        with workers_lock:
+            workers.append(w)
+
+    threads = [_threading.Thread(target=race) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    try:
+        # All threads see the same worker instance.
+        assert all(w is workers[0] for w in workers)
+        assert workers[0] is clipboard_win32._clipboard_worker
+    finally:
+        clipboard_win32._clipboard_worker._queue.put(None)
+        clipboard_win32._clipboard_worker.join(timeout=2.0)
+        clipboard_win32._clipboard_worker = None
 
 
 # --- _encode_for_format ----------------------------------------------------
@@ -702,6 +858,42 @@ def test_clipboard_data_object_querygetdata_unknown_format_raises(
     with pytest.raises(COMException) as excinfo:
         do.QueryGetData(_make_fe(0xC801))
     assert excinfo.value.hresult == fake_winerror.DV_E_FORMATETC
+
+
+def test_clipboard_data_object_querygetdata_wrong_aspect_raises_dv_e_dvaspect(
+    clipboard_win32, fake_win32clipboard
+):
+    """QueryGetData with aspect=0 (no DVASPECT_CONTENT bit) -> DV_E_DVASPECT,
+    the documented HRESULT for 'wrong aspect for this data source'."""
+    import sys as _sys
+
+    fake_winerror = _sys.modules["winerror"]
+    from win32com.server.exception import COMException
+
+    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
+    with pytest.raises(COMException) as excinfo:
+        # aspect=0 -> aspect & DVASPECT_CONTENT == 0 -> DV_E_DVASPECT branch.
+        do.QueryGetData(_make_fe(0xC800, aspect=0))
+    assert excinfo.value.hresult == fake_winerror.DV_E_DVASPECT
+
+
+def test_clipboard_data_object_querygetdata_wrong_tymed_raises_dv_e_tymed(
+    clipboard_win32, fake_win32clipboard
+):
+    """QueryGetData with tymed != TYMED_HGLOBAL -> DV_E_TYMED. Distinct
+    from GetData's DV_E_TYMED check because QueryGetData also checks
+    aspect first; assert the tymed-specific branch when aspect is OK."""
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_winerror = _sys.modules["winerror"]
+    from win32com.server.exception import COMException
+
+    do = clipboard_win32._ClipboardDataObject({0xC800: b"x"})
+    with pytest.raises(COMException) as excinfo:
+        # aspect=DVASPECT_CONTENT (passes), tymed=4 (TYMED_ISTREAM, wrong).
+        do.QueryGetData(_make_fe(0xC800, aspect=fake_pythoncom.DVASPECT_CONTENT, tymed=4))
+    assert excinfo.value.hresult == fake_winerror.DV_E_TYMED
 
 
 def test_clipboard_data_object_enumformatetc_get_direction_returns_enum(
@@ -861,6 +1053,25 @@ def test_ole_set_clipboard_raises_after_budget_exhausted(clipboard_win32, fake_w
         )
 
     assert fake_pythoncom.OleSetClipboard.call_count == 3
+
+
+# --- _write_via_ole --------------------------------------------------------
+
+
+def test_write_via_ole_empty_payloads_is_noop(clipboard_win32, fake_win32clipboard):
+    """Direct call: an empty payloads dict short-circuits before any
+    worker dispatch -- avoids constructing an empty IDataObject and
+    publishing it. (write_multi({}) has its own early return upstream
+    that doesn't reach _write_via_ole, so this test covers the
+    _write_via_ole-internal guard directly.)"""
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+
+    clipboard_win32._write_via_ole({})
+
+    fake_pythoncom.OleSetClipboard.assert_not_called()
+    fake_pythoncom.OleFlushClipboard.assert_not_called()
 
 
 # --- write_text ------------------------------------------------------------

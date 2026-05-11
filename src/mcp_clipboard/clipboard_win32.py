@@ -57,8 +57,11 @@ a confusing pywin32 error later.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
+from collections.abc import Callable
+from concurrent.futures import Future
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
@@ -90,22 +93,25 @@ logger = logging.getLogger(__name__)
 
 # --- COM apartment management ----------------------------------------------
 #
-# OleSetClipboard requires the calling thread to be CoInitialize'd. The
-# integration-windows CI on commits d3d7372 and 3904fef both showed
-# OleSetClipboard raising CO_E_NOTINITIALIZED ("CoInitialize has not been
-# called") on every call, even when pythoncom.CoInitializeEx had just run
-# at the start of the same function. The pywin32 wrapper appears to
-# silently no-op in uv-installed venvs (no pywin32_postinstall step), so
-# we bypass it and call ole32.CoInitializeEx directly via ctypes.
+# OleSetClipboard requires the calling thread to be CoInitialize'd, and the
+# integration-windows CI on commits d3d7372, 3904fef, and 0a0f933 all
+# failed with OleSetClipboard raising CO_E_NOTINITIALIZED on every call --
+# whether we cached CoInitializeEx, called it unconditionally via
+# pythoncom, or called it directly via ctypes.windll.ole32. The apartment
+# state on the pytest main thread is somehow being lost between our init
+# call and the OleSetClipboard call (likely a pywin32-internal state
+# tracking issue under uv-installed venvs, where pywin32_postinstall has
+# not run).
 #
-# ctypes loads ole32.dll from the system path and calls the underlying
-# Win32 API regardless of pywin32 state. CoInitializeEx is idempotent on
-# the same thread: re-init with the same apartment model returns S_FALSE
-# (1, not an error); re-init with a different model returns
-# RPC_E_CHANGED_MODE (-2147417850) which we accept and proceed (the
-# existing apartment may still support OLE clipboard). No matching
-# CoUninitialize: long-running server processes keep COM init'd for their
-# lifetime; Python's interpreter shutdown handles teardown on exit.
+# Resolution: a dedicated OLE worker thread. The thread inits its own
+# apartment exactly once at start (via ctypes -> ole32.CoInitializeEx),
+# then services a queue of clipboard write requests for the lifetime of
+# the process. asyncio.to_thread workers don't need their own apartment;
+# they call _write_via_ole which dispatches to the worker via a future.
+# Single thread, single apartment, no churn.
+#
+# Reads stay on the existing OpenClipboard + GetClipboardData path; OLE
+# is only required for the cross-process write race, not for reads.
 
 # Magic numbers from Win32 headers, kept here so non-Windows imports don't
 # need to touch ctypes / ole32 at module load.
@@ -113,19 +119,13 @@ _COINIT_APARTMENTTHREADED = 0x2  # objbase.h COINIT.COINIT_APARTMENTTHREADED
 _RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as signed 32-bit
 
 
-def _ensure_com_init() -> None:
-    """Initialize an STA on the current thread via ctypes-direct
-    ole32.CoInitializeEx, bypassing pywin32's wrapper.
+def _ole32_co_initialize_ex() -> None:
+    """Call ole32.CoInitializeEx(NULL, COINIT_APARTMENTTHREADED) via ctypes.
 
-    Why ctypes and not pythoncom.CoInitializeEx: the pywin32 wrapper has
-    been observed to return success without actually initing the
-    apartment in uv-installed venvs on the integration-windows CI runner.
-    Direct ctypes calls go straight to ole32.dll regardless of pywin32
-    bootstrap state.
-
-    Safe to call repeatedly on the same thread: S_FALSE on same-mode
-    re-init, RPC_E_CHANGED_MODE if a different model is already active
-    (which we accept).
+    Goes straight to ole32.dll regardless of pywin32 state. Accepts S_OK
+    (0, newly inited), S_FALSE (1, same-mode re-init), and
+    RPC_E_CHANGED_MODE (different model already active). Any other
+    negative HRESULT raises OSError.
     """
     import ctypes
 
@@ -133,12 +133,92 @@ def _ensure_com_init() -> None:
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
     ole32.CoInitializeEx.restype = ctypes.c_long  # HRESULT (signed 32-bit)
     hr = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
-    # S_OK=0 (newly inited), S_FALSE=1 (already inited same mode) -> both
-    # success. FAILED is hr < 0 in 32-bit-signed terms.
     if hr < 0 and hr != _RPC_E_CHANGED_MODE:
         raise OSError(
             f"CoInitializeEx (via ctypes / ole32.dll) failed with HRESULT 0x{hr & 0xFFFFFFFF:08X}"
         )
+
+
+class _ClipboardWorker(threading.Thread):
+    """Dedicated daemon thread that owns the OLE clipboard apartment.
+
+    All OLE writes (OleSetClipboard / OleFlushClipboard) run on this
+    thread to keep the apartment state stable across calls. The thread:
+
+      1. CoInitializeEx's itself to STA on start (via ole32 + ctypes).
+      2. Imports pythoncom on the same thread (so any pywin32-internal
+         per-thread state is set up alongside the Win32 TLS init).
+      3. Loops on a queue, executing submitted callables and reporting
+         results / exceptions back through Futures.
+
+    daemon=True so the worker dies on process exit without needing
+    explicit shutdown signaling from the MCP server lifecycle. The
+    apartment is implicitly torn down by interpreter shutdown.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True, name="mcp-clipboard-ole")
+        self._queue: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...], Future[Any]] | None] = (
+            queue.Queue()
+        )
+        self._started = threading.Event()
+        self._init_error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            _ole32_co_initialize_ex()
+            # Import pythoncom on this thread so any pywin32-internal
+            # per-thread setup runs here rather than on a caller's thread.
+            import pythoncom  # type: ignore[import-not-found,import-untyped]  # noqa: F401
+        except BaseException as exc:
+            self._init_error = exc
+            self._started.set()
+            return
+        self._started.set()
+
+        while True:
+            item = self._queue.get()
+            if item is None:  # sentinel for shutdown (tests only)
+                return
+            fn, args, future = item
+            try:
+                future.set_result(fn(*args))
+            except BaseException as exc:
+                future.set_exception(exc)
+
+    def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
+        """Queue ``fn(*args)`` for execution on the worker thread and
+        return a Future. Raises immediately if the worker failed to init."""
+        self._started.wait()
+        if self._init_error is not None:
+            f: Future[Any] = Future()
+            f.set_exception(self._init_error)
+            return f
+        future: Future[Any] = Future()
+        self._queue.put((fn, args, future))
+        return future
+
+
+_clipboard_worker: _ClipboardWorker | None = None
+_clipboard_worker_lock = threading.Lock()
+
+
+def _get_clipboard_worker() -> _ClipboardWorker:
+    """Lazy-start the OLE worker thread on first use.
+
+    Double-checked locking: clipboard.py dispatches the synchronous Win32
+    path through asyncio.to_thread, so a burst of concurrent first-callers
+    is possible. The check-outside / check-inside-lock pattern means at
+    most one worker is ever created and the steady-state read is lock-free.
+    """
+    global _clipboard_worker
+    if _clipboard_worker is not None:
+        return _clipboard_worker
+    with _clipboard_worker_lock:
+        if _clipboard_worker is None:
+            _clipboard_worker = _ClipboardWorker()
+            _clipboard_worker.start()
+        return _clipboard_worker
 
 
 # --- Format registration cache ---------------------------------------------
@@ -603,25 +683,38 @@ def _ole_set_clipboard_with_retry(
     )
 
 
-def _write_via_ole(payloads: dict[int, bytes]) -> None:
-    """Place all (format_id, bytes) pairs on the clipboard via OleSetClipboard
-    + OleFlushClipboard.
+def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
+    """The OLE write body that runs ON the dedicated worker thread.
 
-    Atomic by construction: OleSetClipboard publishes the IDataObject
-    pointer (single Win32 SetClipboardData under OLE's internal window),
-    OleFlushClipboard then walks each FORMATETC, calls our GetData, and
-    renders the HGLOBAL bytes onto the clipboard. The IDataObject pointer
-    is released at flush time so the data persists without our process
-    needing to pump messages.
+    Lives here (rather than inline in _write_via_ole) so the worker can
+    call it directly and unit tests can call it on a synthetic worker
+    without invoking the thread-dispatch path.
     """
-    if not payloads:
-        return
-    _ensure_com_init()
     import pythoncom  # type: ignore[import-not-found,import-untyped]
 
     data_object = _make_data_object(payloads)
     _ole_set_clipboard_with_retry(pythoncom, data_object)
     pythoncom.OleFlushClipboard()
+
+
+def _write_via_ole(payloads: dict[int, bytes]) -> None:
+    """Place all (format_id, bytes) pairs on the clipboard via the
+    dedicated OLE worker thread.
+
+    The worker owns one STA-initialized COM apartment for the process's
+    lifetime; all OLE writes run there. This sidesteps the
+    main-thread apartment instability observed on integration-windows CI
+    (where pythoncom.CoInitializeEx and ctypes-direct CoInitializeEx
+    both reported success but OleSetClipboard still raised
+    CO_E_NOTINITIALIZED on the next line).
+    """
+    if not payloads:
+        return
+    worker = _get_clipboard_worker()
+    future = worker.submit(_ole_write_on_worker, payloads)
+    # Block on the worker's result. Exceptions from the worker thread
+    # surface here via future.result().
+    future.result()
 
 
 def write_text(content: str, mime_type: str) -> None:
