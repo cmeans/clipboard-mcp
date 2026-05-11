@@ -699,8 +699,32 @@ def _ole_set_clipboard_with_retry(
     )
 
 
+# OLE write verify-and-retry: PR #146 CC-on-QEMU-Windows e2e run
+# (run-index a796b55f-f727-43d2-be46-338ffdb99fd9) on commit 8535045 saw
+# 4-of-30 transient SVG silent-no-ops where OleSetClipboard +
+# OleFlushClipboard reported success but a subsequent
+# IsClipboardFormatAvailable showed the registered custom format absent
+# from the clipboard. integration-windows CI on windows-latest passes
+# cleanly because the runner has no clipboard chain monitors; real
+# Windows 11 desktops have several (clipboard manager, OneDrive shell
+# extension, antivirus) which can briefly re-grab ownership and
+# EmptyClipboard our write before it lands visibly. The race is
+# transient -- the agent's manual retry recovered every occurrence.
+# Doing the retry server-side closes the gap with bounded latency.
+
+_OLE_WRITE_VERIFY_RETRIES = 3
+_OLE_WRITE_VERIFY_DELAY_MS = 50  # 3 * 50 = 150ms worst-case overhead
+
+
 def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
     """The OLE write body that runs ON the dedicated worker thread.
+
+    Publishes the IDataObject via OleSetClipboard, flushes via
+    OleFlushClipboard, then verifies via IsClipboardFormatAvailable that
+    every advertised format actually landed on the clipboard. If any
+    format is missing, re-publishes after a brief settle delay (clipboard
+    chain listeners typically release within ~10-50ms). Up to
+    _OLE_WRITE_VERIFY_RETRIES attempts.
 
     Lives here (rather than inline in _write_via_ole) so the worker can
     call it directly and unit tests can call it on a synthetic worker
@@ -708,9 +732,32 @@ def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
     """
     import pythoncom  # type: ignore[import-not-found,import-untyped]
 
-    data_object = _make_data_object(payloads)
-    _ole_set_clipboard_with_retry(pythoncom, data_object)
-    pythoncom.OleFlushClipboard()
+    win32clipboard = _import_win32clipboard()
+
+    last_missing: list[int] = []
+    for attempt in range(_OLE_WRITE_VERIFY_RETRIES):
+        # Rebuild the IDataObject for each attempt: OleSetClipboard
+        # AddRef's it and OleFlushClipboard releases that reference, so
+        # the same wrapped object should not be reused across multiple
+        # publish cycles.
+        data_object = _make_data_object(payloads)
+        _ole_set_clipboard_with_retry(pythoncom, data_object)
+        pythoncom.OleFlushClipboard()
+        last_missing = [
+            fmt_id for fmt_id in payloads if not win32clipboard.IsClipboardFormatAvailable(fmt_id)
+        ]
+        if not last_missing:
+            return
+        # Brief settle window: clipboard chain listeners (clipboard
+        # manager, shell extensions) typically finish their post-write
+        # work within tens of milliseconds. Wait then retry.
+        if attempt < _OLE_WRITE_VERIFY_RETRIES - 1:
+            time.sleep(_OLE_WRITE_VERIFY_DELAY_MS / 1000.0)
+    raise RuntimeError(
+        f"OLE write verify failed after {_OLE_WRITE_VERIFY_RETRIES} attempts; "
+        f"formats not on clipboard after OleFlushClipboard: {last_missing!r}. "
+        f"A clipboard chain listener may be repeatedly hijacking ownership."
+    )
 
 
 def _write_via_ole(payloads: dict[int, bytes]) -> None:

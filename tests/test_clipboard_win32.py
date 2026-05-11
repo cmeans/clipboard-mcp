@@ -1085,6 +1085,86 @@ def test_ole_set_clipboard_raises_after_budget_exhausted(clipboard_win32, fake_w
 # --- _write_via_ole --------------------------------------------------------
 
 
+def test_write_via_ole_verify_passes_on_first_attempt(clipboard_win32, fake_win32clipboard):
+    """Happy path: OleSetClipboard + OleFlushClipboard runs once, the
+    IsClipboardFormatAvailable verify returns True for every published
+    format, no retry. No sleep on the success path."""
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABC
+    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+
+    clipboard_win32.write_text("<svg/>", "image/svg+xml")
+
+    assert fake_pythoncom.OleSetClipboard.call_count == 1
+    assert fake_pythoncom.OleFlushClipboard.call_count == 1
+    # Verify called once for the single format we wrote.
+    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 1
+    fake_win32clipboard.IsClipboardFormatAvailable.assert_called_with(0xCABC)
+
+
+def test_write_via_ole_retries_when_format_missing_then_succeeds(
+    clipboard_win32, fake_win32clipboard
+):
+    """A clipboard chain listener has hijacked ownership and our first
+    OleFlushClipboard's data is gone by the time we verify. Second
+    attempt lands cleanly. RuntimeError is NOT raised because the retry
+    recovers within the budget. This is the canonical PR #146 e2e flake
+    pattern (mc-017 / mc-020 / mc-103 / mc-301 on commit 8535045)."""
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABD
+    # First verify: format absent (listener stole it). Second verify:
+    # format present (we won the race this time).
+    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = [False, True]
+
+    clipboard_win32.write_text("<svg/>", "image/svg+xml")
+
+    assert fake_pythoncom.OleSetClipboard.call_count == 2
+    assert fake_pythoncom.OleFlushClipboard.call_count == 2
+    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 2
+
+
+def test_write_via_ole_raises_after_verify_budget_exhausted(clipboard_win32, fake_win32clipboard):
+    """If every attempt sees the format missing after OleFlushClipboard,
+    the retry budget exhausts and write_text raises RuntimeError naming
+    the missing format IDs. The user-visible error makes the failure
+    diagnosable rather than a silent no-op."""
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABE
+    fake_win32clipboard.IsClipboardFormatAvailable.return_value = False
+
+    with pytest.raises(RuntimeError, match="OLE write verify failed after"):
+        clipboard_win32.write_text("<svg/>", "image/svg+xml")
+
+    # All retries exhausted.
+    assert (
+        fake_win32clipboard.IsClipboardFormatAvailable.call_count
+        == clipboard_win32._OLE_WRITE_VERIFY_RETRIES
+    )
+
+
+def test_write_via_ole_verify_checks_every_published_format(clipboard_win32, fake_win32clipboard):
+    """Multi-format write: the verify step calls
+    IsClipboardFormatAvailable for EACH format ID published. If any one
+    is missing, the whole write retries (we can't selectively re-publish
+    -- OleFlushClipboard is one transaction)."""
+    ids = iter([0xCAC0, 0xCAC1])
+    fake_win32clipboard.RegisterClipboardFormat.side_effect = lambda _: next(ids)
+    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+
+    clipboard_win32.write_multi({"text/plain": "x", "text/html": "<p>x</p>"})
+
+    # Both text/plain (CF_UNICODETEXT=13) and the registered text/html
+    # format ID are verified.
+    verified = {
+        call.args[0] for call in fake_win32clipboard.IsClipboardFormatAvailable.call_args_list
+    }
+    assert 13 in verified  # CF_UNICODETEXT
+    assert 0xCAC0 in verified
+
+
 def test_write_via_ole_empty_payloads_is_noop(clipboard_win32, fake_win32clipboard):
     """Direct call: an empty payloads dict short-circuits before any
     worker dispatch -- avoids constructing an empty IDataObject and
