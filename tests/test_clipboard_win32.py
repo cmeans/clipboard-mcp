@@ -147,8 +147,16 @@ def fake_win32clipboard() -> MagicMock:
 
     fake_ole32 = MagicMock(name="ole32")
     fake_ole32.OleInitialize.return_value = 0  # S_OK
+    # GetClipboardSequenceNumber lives on user32 and is consulted by the
+    # OLE write verify loop's quiescence wait. A plain int return_value is
+    # required so the wrapper's `current_seq == last_seq` comparison
+    # works against a stable value (MagicMock attribute auto-creation
+    # would return distinct sentinel objects per call).
+    fake_user32 = MagicMock(name="user32")
+    fake_user32.GetClipboardSequenceNumber.return_value = 0
     fake_windll = MagicMock(name="windll")
     fake_windll.ole32 = fake_ole32
+    fake_windll.user32 = fake_user32
     prior_windll = getattr(_ctypes, "windll", None)
     _ctypes.windll = fake_windll  # type: ignore[attr-defined]
 
@@ -1179,6 +1187,78 @@ def test_write_via_ole_empty_payloads_is_noop(clipboard_win32, fake_win32clipboa
 
     fake_pythoncom.OleSetClipboard.assert_not_called()
     fake_pythoncom.OleFlushClipboard.assert_not_called()
+
+
+# --- _wait_for_clipboard_quiescent / GetClipboardSequenceNumber ------------
+
+
+def test_quiescent_wait_returns_immediately_when_sequence_stable(
+    clipboard_win32, fake_win32clipboard
+):
+    """If GetClipboardSequenceNumber returns the same value across two
+    consecutive samples, the clipboard chain has settled and the wait
+    function returns True. Used after a failed verify so a retry with
+    no listener interference does not pay the previous fixed-sleep cost.
+    """
+    import ctypes as _ctypes
+
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    user32.GetClipboardSequenceNumber.return_value = 42
+
+    result = clipboard_win32._wait_for_clipboard_quiescent(max_wait_ms=200, sample_ms=1)
+
+    assert result is True
+
+
+def test_quiescent_wait_returns_false_when_budget_exhausts(
+    clipboard_win32, fake_win32clipboard
+):
+    """If GetClipboardSequenceNumber keeps advancing on every sample,
+    the clipboard chain has not settled within the budget. The wait
+    function returns False so the caller can still retry (the OLE
+    write verify loop retries up to the budget regardless of
+    quiescence outcome -- quiescence is a hint, not a precondition)."""
+    import ctypes as _ctypes
+    import itertools as _itertools
+
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    # Every call returns a new value -- the chain never settles.
+    user32.GetClipboardSequenceNumber.side_effect = _itertools.count(start=1)
+
+    result = clipboard_win32._wait_for_clipboard_quiescent(max_wait_ms=10, sample_ms=1)
+
+    assert result is False
+
+
+def test_write_via_ole_retry_path_consults_sequence_number(
+    clipboard_win32, fake_win32clipboard
+):
+    """After a failed IsClipboardFormatAvailable verify, the retry
+    path waits for the clipboard chain to quiesce by sampling
+    GetClipboardSequenceNumber. This test asserts the sequence
+    number is queried on the retry path (proving the new signal is
+    wired in) and the second attempt succeeds when the verify
+    eventually passes. The first verify failure must trigger at
+    least one GetClipboardSequenceNumber call beyond any baseline
+    captured before the first attempt."""
+    import ctypes as _ctypes
+    import sys as _sys
+
+    fake_pythoncom = _sys.modules["pythoncom"]
+    fake_win32clipboard.RegisterClipboardFormat.return_value = 0xCABF
+    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = [False, True]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    user32.GetClipboardSequenceNumber.return_value = 7  # stable -> quick quiesce
+
+    clipboard_win32.write_text("<svg/>", "image/svg+xml")
+
+    # OLE published twice, verified twice, and the sequence number was
+    # consulted at least twice during the post-failure quiescence wait
+    # (one baseline sample + one comparison sample). A pre-ec6d6a5
+    # build with no sequence-number wiring would call this zero times.
+    assert fake_pythoncom.OleSetClipboard.call_count == 2
+    assert fake_win32clipboard.IsClipboardFormatAvailable.call_count == 2
+    assert user32.GetClipboardSequenceNumber.call_count >= 2
 
 
 # --- write_text ------------------------------------------------------------

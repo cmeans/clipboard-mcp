@@ -700,8 +700,9 @@ def _ole_set_clipboard_with_retry(
 
 
 # OLE write verify-and-retry: PR #146 CC-on-QEMU-Windows e2e runs on
-# commits 8535045 (run-index a796b55f-f727-43d2-be46-338ffdb99fd9) and
-# 3078f35 (run-index 874f183d-ea67-4e3c-85f6-11cf70ef32c9) saw transient
+# commits 8535045 (run-index a796b55f-f727-43d2-be46-338ffdb99fd9),
+# 3078f35 (run-index 874f183d-ea67-4e3c-85f6-11cf70ef32c9), and ec6d6a5
+# (run-index a758e1cf-00c0-423b-a847-101ddc977c5a) saw transient
 # silent-no-ops where OleSetClipboard + OleFlushClipboard reported
 # success but a subsequent IsClipboardFormatAvailable showed the
 # registered custom format absent. integration-windows CI on
@@ -714,15 +715,87 @@ def _ole_set_clipboard_with_retry(
 # transient: agent-level retries (several seconds later) recovered
 # every occurrence. The initial 3-attempt x 50ms budget on 8535045
 # caught some occurrences but not all (some chain listeners stay
-# active >150ms). Bumped to 5 attempts with exponential backoff;
-# worst-case overhead 750ms of sleep plus ~250ms of work = ~1s on the
-# bad path, microseconds on the happy path.
+# active >150ms). The 5-attempt exponential schedule on ec6d6a5
+# (50/100/200/400ms) closed the read_raw-after-write race for
+# sequential text/plain -> SVG (mc-020 race-bucket 3/3 PASS) but
+# still missed the mc-017 race-bucket (1/3 PASS) where the prior
+# state was DIB residue from a PowerShell image-write and a chain
+# listener stayed active across the entire fixed-budget window.
+#
+# Resolution on this commit: replace the fixed-sleep schedule with
+# a quiescence wait keyed on GetClipboardSequenceNumber. The kernel-
+# maintained clipboard sequence number advances on every clipboard
+# mutation system-wide. After a failed IsClipboardFormatAvailable
+# verify, polling the sequence number until two consecutive samples
+# match tells us the chain has finished churning; retrying then
+# gives our write a clean shot rather than racing the same listener
+# again. The previous exponential schedule is kept as the per-
+# attempt budget cap, so worst-case overhead is unchanged on the
+# bad path; quiescence detection only changes WHEN within the
+# budget we retry, not the total budget.
+#
+# IsClipboardFormatAvailable remains the final win signal --
+# GetClipboardSequenceNumber alone cannot tell us OUR format won,
+# only that SOMETHING changed.
 
 _OLE_WRITE_VERIFY_RETRIES = 5
-# Per-attempt sleep BEFORE the next retry, in milliseconds. Attempt N
-# (0-indexed) sleeps _OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[N] ms before
-# attempt N+1. The final attempt has no following sleep.
+# Per-attempt quiescence-wait budget cap BEFORE the next retry, in
+# milliseconds. Attempt N (0-indexed) waits up to
+# _OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[N] ms for the clipboard to settle
+# before attempt N+1. The final attempt has no following wait.
 _OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS: tuple[int, ...] = (50, 100, 200, 400)
+# Sample interval for the quiescence wait. Two consecutive samples
+# of GetClipboardSequenceNumber separated by this many ms must
+# return the same value for the clipboard to count as quiescent.
+# 25ms is short enough to detect most listeners finishing within
+# the first budget tier (50ms) and long enough to avoid burning
+# CPU on the polling loop.
+_OLE_WRITE_QUIESCENT_SAMPLE_MS = 25
+
+
+def _get_clipboard_sequence_number() -> int:
+    """Return the system-wide clipboard sequence number from user32.
+
+    GetClipboardSequenceNumber advances on every clipboard mutation
+    (set, empty, ownership change) by any process, system-wide. The
+    function does not require OpenClipboard -- it is a passive read
+    of a kernel-maintained DWORD. Used as the unforged "did the
+    clipboard state move" signal in the OLE write verify loop: when
+    two consecutive samples match, the chain has finished churning
+    and a retry has a clean shot, regardless of which chain listener
+    was active.
+    """
+    import ctypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]  # Windows-only
+    user32.GetClipboardSequenceNumber.argtypes = []
+    user32.GetClipboardSequenceNumber.restype = ctypes.c_ulong  # DWORD
+    return int(user32.GetClipboardSequenceNumber())
+
+
+def _wait_for_clipboard_quiescent(
+    max_wait_ms: int, sample_ms: int = _OLE_WRITE_QUIESCENT_SAMPLE_MS
+) -> bool:
+    """Poll GetClipboardSequenceNumber until two consecutive samples
+    `sample_ms` apart return the same value, or `max_wait_ms` elapses.
+
+    Returns True if the clipboard quiesced (chain listeners are done
+    writing), False if the budget expired with the sequence still
+    advancing. More reliable than a fixed sleep because real chain
+    listeners (clipboard managers, OneDrive, antivirus) have
+    unpredictable run times -- a stale fixed delay either over-pays
+    on the common path or under-shoots on the slow tail.
+    """
+    elapsed_ms = 0
+    last_seq = _get_clipboard_sequence_number()
+    while elapsed_ms < max_wait_ms:
+        time.sleep(sample_ms / 1000.0)
+        elapsed_ms += sample_ms
+        current_seq = _get_clipboard_sequence_number()
+        if current_seq == last_seq:
+            return True
+        last_seq = current_seq
+    return False
 
 
 def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
@@ -731,9 +804,9 @@ def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
     Publishes the IDataObject via OleSetClipboard, flushes via
     OleFlushClipboard, then verifies via IsClipboardFormatAvailable that
     every advertised format actually landed on the clipboard. If any
-    format is missing, re-publishes after a brief settle delay (clipboard
-    chain listeners typically release within ~10-50ms). Up to
-    _OLE_WRITE_VERIFY_RETRIES attempts.
+    format is missing, waits for the clipboard chain to quiesce (via
+    GetClipboardSequenceNumber) within the per-attempt budget cap, then
+    re-publishes. Up to _OLE_WRITE_VERIFY_RETRIES attempts.
 
     Lives here (rather than inline in _write_via_ole) so the worker can
     call it directly and unit tests can call it on a synthetic worker
@@ -757,12 +830,15 @@ def _ole_write_on_worker(payloads: dict[int, bytes]) -> None:
         ]
         if not last_missing:
             return
-        # Settle window before retry. Exponential-ish schedule:
-        # 50, 100, 200, 400ms. Most chain listeners finish within
-        # 100ms, the longer tail is for slower antivirus / shell
-        # extension paths that need more time.
+        # Wait for the chain to quiesce before the next attempt.
+        # Returns immediately if the sequence number is already
+        # stable (no listener interference, just a silent OleSet
+        # no-op -- retry without delay) and waits up to the budget
+        # cap if a listener is still actively writing.
         if attempt < len(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS):
-            time.sleep(_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt] / 1000.0)
+            _wait_for_clipboard_quiescent(
+                max_wait_ms=_OLE_WRITE_VERIFY_DELAY_SCHEDULE_MS[attempt]
+            )
     raise RuntimeError(
         f"OLE write verify failed after {_OLE_WRITE_VERIFY_RETRIES} attempts; "
         f"formats not on clipboard after OleFlushClipboard: {last_missing!r}. "
