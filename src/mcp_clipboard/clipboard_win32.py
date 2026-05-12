@@ -35,30 +35,48 @@ mature non-WPF Windows clipboard writer. The flow is:
       memcpy(GlobalLock(h), payload, len(payload)); GlobalUnlock(h)
       SetClipboardData(format_id, h)   # system takes ownership
   -> CloseClipboard()
-  -> verify pair: OpenClipboard, IsClipboardFormatAvailable per
-     written format, CloseClipboard. Retry the whole transaction
-     up to _WRITE_VERIFY_RETRIES if any format is missing.
 
 No OLE, no IDataObject, no hidden OLE-managed window, no delayed
-rendering, no message pump.
+rendering, no message pump, no post-write verify, no retry on
+SetClipboardData itself.
 
-**Verify-retry tax.** The Windows clipboard chain is racy by design.
-Per the [Microsoft Q&A on WM_CLIPBOARDUPDATE]
+**Why no post-write verify-retry tax.** The Windows clipboard chain
+is racy by design. Per the [Microsoft Q&A on WM_CLIPBOARDUPDATE]
 (https://learn.microsoft.com/en-us/answers/questions/1327362/wm-clipboardupdate-issue)
 the notification is asynchronously POSTED on Windows 11, so
 observers (Clipboard History service `cbdhsvc`, Cloud Clipboard,
 Suggested Actions text extractor, OneDrive, antivirus, third-party
 clipboard managers) can re-open the clipboard immediately after our
-CloseClipboard and clobber our write. We confirmed this empirically:
-disabling cbdhsvc + AllowClipboardHistory + AllowCrossDeviceClipboard
-+ SmartClipboard\Disabled eliminates the silent-no-op symptom
-entirely; re-enabling them brings it back with the same fingerprint
-(failure on first attempt after a format-family transition).
-The verify-retry tax (10 attempts at 100 ms, matching .NET's
-Clipboard.SetDataObject defaults) masks the race for users with
-those observers active. On the happy path it costs one extra
-Open/Close pair (microseconds). The control script that proved the
-race is observer-caused lives at dev/windows-clipboard-observers.ps1.
+CloseClipboard and overwrite our content. Commit 75bcb0f added a
+.NET-shaped 10x100ms verify-retry on top of this path to mitigate
+the symptom. QEMU testing showed it made the race STRICTLY WORSE
+(race-bucket reruns went 4/6 PASS on dev11 to 0/6 PASS on dev12)
+because each verify pair generates an additional WM_CLIPBOARDUPDATE
+notification that amplifies observer contention. The mitigation was
+reverted in the next commit. Every major Windows clipboard library
+matches the no-post-write-verify shape we now use: Chromium,
+clipboard-win (the Rust FFI behind arboard), pyperclip, pyclip, Qt's
+non-retry path. The .NET WinForms `Clipboard.SetDataObject(data,
+copy, 10, 100)` retry famously cited as "the standard tax" is on
+the OpenClipboard contention side, not on post-write verify.
+
+The race remains. Affected users (typically anyone with Windows 11
+Clipboard History on, which is the default) can disable the
+documented Microsoft observers via the control script at
+dev/windows-clipboard-observers.ps1 for a zero-flake run.
+
+**Sequence-number canary.** We sample
+`GetClipboardSequenceNumber` before and after the write transaction
+and emit a WARNING via Python logging (routes to the MCP host's
+server-log file) if the delta is zero. Per MSDN, immediate-rendering
+writes MUST advance the sequence number synchronously to
+`CloseClipboard`; a zero delta means the kernel did not register
+our write -- a different and fixable bug class than the chain-
+observer race (which advances the sequence number, then overwrites
+the content). With `--debug` / `MCP_CLIPBOARD_DEBUG=1`, the wrapper
+also emits the `seq_before` / `seq_after` / `delta` tuple for every
+write at DEBUG level. Both signals stay in the log file (stderr)
+and never reach the chat surface.
 
 **Why not OleSetClipboard / OleFlushClipboard?** OLE is for delayed
 rendering, cross-process drag-drop, and IDataObject-based marshaling.
@@ -220,7 +238,30 @@ def _user32() -> Any:
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]  # Windows-only
     user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
     user32.SetClipboardData.restype = ctypes.c_void_p
+    user32.GetClipboardSequenceNumber.argtypes = []
+    user32.GetClipboardSequenceNumber.restype = ctypes.c_ulong  # DWORD
     return user32
+
+
+def _get_clipboard_sequence_number() -> int:
+    """Return the system-wide clipboard sequence number from user32.
+
+    GetClipboardSequenceNumber advances on every clipboard mutation
+    (any process's set, empty, or ownership change) and the bump
+    happens synchronously to CloseClipboard for immediate-rendering
+    writes like ours per the MSDN remarks: "If clipboard rendering is
+    delayed, the sequence number is not incremented until the changes
+    are rendered." Since we always immediate-render (real HGLOBAL
+    handed to SetClipboardData), our writes MUST advance the sequence
+    number by the time CloseClipboard returns. The wrapper samples it
+    before OpenClipboard and after CloseClipboard purely as a
+    diagnostic: if the delta is zero, our write did not commit at the
+    kernel level (different bug class than the documented chain-
+    observer race where the sequence DOES advance but observers
+    clobber the contents AFTER our return).
+    """
+    user32 = _user32()
+    return int(user32.GetClipboardSequenceNumber())
 
 
 def _set_clipboard_data(fmt_id: int, handle: int) -> None:
@@ -520,45 +561,73 @@ def _encode_for_format(fmt_id: int, content: str, win32clipboard: Any) -> bytes:
 #
 # One Open + Empty + N x SetClipboardData + Close per write call. Matches
 # Chromium WritePortableAndPlatformRepresentations() and the canonical
-# Win32 example in Microsoft docs. The atomicity guarantees of the
-# clipboard chain are enforced by the OS between Open and Close.
+# Win32 example in Microsoft docs. No retry on SetClipboardData success,
+# no post-write IsClipboardFormatAvailable verify. This matches every
+# major Windows clipboard library: Chromium retries 5x5ms on
+# OpenClipboard contention only; Qt retries OleSetClipboard 3x100ms on
+# CLIPBRD_E_CANT_OPEN only; clipboard-win does no retry at all; .NET
+# WinForms' 10x100ms tax is also on the OpenClipboard side, not on
+# post-write verify. The atomicity guarantees of the clipboard chain
+# are enforced by the OS between Open and Close.
 #
-# **Verify-retry tax.** After CloseClipboard we open the clipboard again
-# and confirm via IsClipboardFormatAvailable that every format we wrote
-# is present. If any is missing, a clipboard chain observer (Windows
-# Clipboard History service `cbdhsvc`, Cloud Clipboard cross-device
-# sync, Suggested Actions text extractor, third-party clipboard
-# managers) raced our write and clobbered it -- a documented Windows
-# ecosystem reality with no published fix. We sleep briefly and retry
-# the whole transaction; the observer's WM_CLIPBOARDUPDATE-driven
-# re-open is one-shot per change, so the next write usually wins.
+# Earlier revisions added a write-side verify-retry on top of this
+# path (dev12 / commit 75bcb0f). QEMU testing showed it made the race
+# STRICTLY WORSE under active chain observers: each retry generates
+# an additional WM_CLIPBOARDUPDATE notification that amplifies
+# observer contention. The race-bucket reruns on dev12 produced
+# 0/6 PASS vs dev11's 4/6 PASS with the same observers active. The
+# mitigation is removed; we match the published state of the art
+# across every major library. The race-bucket result is what every
+# clipboard library lives with on Windows desktops with chain
+# observers active. See dev/windows-clipboard-observers.ps1 for a
+# control script that disables the documented Microsoft observers
+# (Clipboard History service `cbdhsvc`, Cloud Clipboard sync,
+# Suggested Actions) for users who need zero-flake behavior.
 #
-# This tax matches what every mature Windows clipboard library carries:
-# .NET's Clipboard.SetDataObject(data, copy, retryTimes, retryDelay)
-# defaults to 10 attempts at 100 ms each; Chromium's
-# ScopedClipboard::Acquire retries 5x5 ms on the OpenClipboard side;
-# arboard's docs say "adding a call to sleep() near the set operation
-# makes it behave more reliably." See dev/windows-clipboard-observers.ps1
-# for a control script that proves the race is observer-caused: when
-# Clipboard History, Cloud Clipboard, Suggested Actions, and cbdhsvc
-# are all disabled, the verify-retry tax never fires.
-
-# Match .NET's Clipboard.SetDataObject defaults: 10 attempts at 100 ms.
-# Five would also be reasonable given our empirical data (the race fires
-# on attempt 1 and is gone by attempt 2 in 100% of observed cases) but
-# matching .NET makes "we behave like every other Windows clipboard
-# library" the easy answer when this gets reviewed.
-_WRITE_VERIFY_RETRIES = 10
-_WRITE_VERIFY_RETRY_DELAY_MS = 100
+# **Sequence-number canary.** We sample GetClipboardSequenceNumber
+# before and after the transaction. Per MSDN, immediate-rendering
+# writes (real HGLOBAL, not NULL for delayed render) MUST advance
+# the sequence number synchronously by the time CloseClipboard
+# returns. If the delta is zero we emit a WARNING -- the kernel
+# did not register our write, which is a DIFFERENT bug class than
+# the documented chain-observer race (where the sequence DOES
+# advance but observers clobber the contents AFTER our return).
+# Routes through Python logging at WARNING level, so it lands in
+# the host's MCP server log file (e.g. %APPDATA%\Claude\logs\ on
+# Windows) without polluting the chat surface. With logging.DEBUG
+# enabled (MCP_CLIPBOARD_DEBUG=1 or --debug), the wrapper also
+# emits the seq_before / seq_after / delta tuple for every write,
+# so a user who reports a flake can produce a clear post-mortem
+# without us having to re-instrument anything live.
 
 
-def _write_payloads_once(win32clipboard: Any, payloads: dict[int, bytes]) -> None:
-    """Single Open + Empty + Set..Set + Close transaction. Allocates
-    fresh HGLOBALs per attempt because SetClipboardData transfers
-    ownership to the system on success (the handles from a previous
-    failed attempt are gone once EmptyClipboard fires the next time).
+def _write_payloads(payloads: dict[int, bytes]) -> None:
+    """Replace the clipboard with the given (format_id -> bytes) mapping
+    via the canonical Win32 raw-SetClipboardData pattern.
+
+    Allocates a GMEM_MOVEABLE HGLOBAL per format and hands ownership to
+    SetClipboardData under a single Open/Empty/Close transaction. On
+    success the system owns every handle. On any failure, allocated
+    handles that did not transfer are GlobalFree'd.
+
+    Atomicity: between OpenClipboard and CloseClipboard, no other
+    process can EmptyClipboard or write its own data -- the OS
+    serializes clipboard access via the per-clipboard mutex inside
+    the kernel. Once CloseClipboard returns, our formats are visible
+    to the entire system in one observable step (modulo the
+    documented chain-observer race where observers can re-open the
+    clipboard immediately AFTER our CloseClipboard and overwrite via
+    their own WM_CLIPBOARDUPDATE reaction; that race is documented
+    in the comment block above this function).
     """
+    if not payloads:
+        return
+
+    win32clipboard = _import_win32clipboard()
     kernel32 = _kernel32()
+
+    seq_before = _get_clipboard_sequence_number()
+
     handles: list[tuple[int, int]] = []  # (format_id, handle)
     transferred: set[int] = set()
     try:
@@ -578,70 +647,38 @@ def _write_payloads_once(win32clipboard: Any, payloads: dict[int, bytes]) -> Non
             if handle not in transferred:
                 kernel32.GlobalFree(ctypes.c_void_p(handle))
 
-
-def _missing_formats(win32clipboard: Any, fmt_ids: list[int]) -> list[int]:
-    """Open the clipboard read-side and return the subset of `fmt_ids`
-    that IsClipboardFormatAvailable reports as absent. Used to verify
-    a write transaction landed.
-
-    Held in its own Open/Close pair separate from the write itself --
-    Windows requires Close before another Open from the same thread,
-    and verifying inside the write transaction would observe our own
-    OleSetClipboard-internal state, not what the clipboard chain
-    actually publishes to consumers.
-    """
-    _open_clipboard_with_retry(win32clipboard)
-    try:
-        return [
-            fmt_id for fmt_id in fmt_ids if not win32clipboard.IsClipboardFormatAvailable(fmt_id)
-        ]
-    finally:
-        win32clipboard.CloseClipboard()
-
-
-def _write_payloads(payloads: dict[int, bytes]) -> None:
-    """Replace the clipboard with the given (format_id -> bytes) mapping
-    via the canonical Win32 raw-SetClipboardData pattern, retrying the
-    whole transaction up to _WRITE_VERIFY_RETRIES times if a clipboard
-    chain observer races our write.
-
-    Per-attempt body lives in _write_payloads_once; this driver loop
-    handles the verify + retry tax. On the happy path (no observer
-    interference) the loop exits after one attempt with one extra
-    OpenClipboard/CloseClipboard pair for the verify -- microseconds.
-    On the bad path (observer clobbered us), retries up to ~1 second
-    total before raising.
-    """
-    if not payloads:
-        return
-
-    win32clipboard = _import_win32clipboard()
+    seq_after = _get_clipboard_sequence_number()
     fmt_ids = list(payloads.keys())
-
-    last_missing: list[int] = []
-    for attempt in range(_WRITE_VERIFY_RETRIES):
-        _write_payloads_once(win32clipboard, payloads)
-        last_missing = _missing_formats(win32clipboard, fmt_ids)
-        if not last_missing:
-            return
-        # Observer clobbered us. Sleep before the next attempt; the
-        # observer's reaction to WM_CLIPBOARDUPDATE is one-shot per
-        # change, so a small delay lets it finish and our next write
-        # has a clean shot. Skip the sleep after the final attempt.
-        if attempt < _WRITE_VERIFY_RETRIES - 1:
-            time.sleep(_WRITE_VERIFY_RETRY_DELAY_MS / 1000.0)
-    raise RuntimeError(
-        f"Clipboard write verify failed after {_WRITE_VERIFY_RETRIES} attempts "
-        f"({_WRITE_VERIFY_RETRY_DELAY_MS}ms per retry); formats not on clipboard "
-        f"after CloseClipboard: {last_missing!r}. Likely cause: a Windows "
-        f"clipboard chain observer (Clipboard History service `cbdhsvc`, Cloud "
-        f"Clipboard sync, Suggested Actions text extractor, OneDrive, antivirus, "
-        f"or a third-party clipboard manager) is repeatedly racing the write "
-        f"via WM_CLIPBOARDUPDATE. See dev/windows-clipboard-observers.ps1 in "
-        f"the source tree for a control script that disables the documented "
-        f"Microsoft observers; that script proves the race is observer-caused "
-        f"by making the verify-retry tax never fire."
-    )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "clipboard write: seq %d -> %d (delta %d), formats=%s",
+            seq_before,
+            seq_after,
+            seq_after - seq_before,
+            fmt_ids,
+        )
+    if seq_after == seq_before:
+        # Per MSDN, immediate-rendering writes MUST advance the
+        # sequence number synchronously to CloseClipboard. A zero
+        # delta means either the kernel did not register our write
+        # or another process held clipboard ownership through the
+        # whole transaction. Distinct from the documented chain-
+        # observer race (where seq advances but observers clobber
+        # afterward). Surface as WARNING so a later post-mortem on
+        # a user-reported flake can distinguish the two cases
+        # without re-instrumenting.
+        logger.warning(
+            "Clipboard write canary: GetClipboardSequenceNumber did not "
+            "advance across Open/Empty/Set/Close (seq=%d, formats=%s). The "
+            "write did not register at the kernel level. This is distinct "
+            "from the documented Windows chain-observer race in which the "
+            "sequence advances but observers (Clipboard History `cbdhsvc`, "
+            "Cloud Clipboard, third-party managers) re-write the clipboard "
+            "after our CloseClipboard. If this WARNING fires under normal "
+            "use, the failure mode is in our wrapper, not in the chain.",
+            seq_after,
+            fmt_ids,
+        )
 
 
 def write_text(content: str, mime_type: str) -> None:

@@ -84,33 +84,34 @@ All notable changes to this project will be documented here.
   instability entirely.
 
 ### Fixed
-- Windows: added a write-side verify-retry mitigation to mask the
-  documented Windows clipboard chain race. The Windows
-  `WM_CLIPBOARDUPDATE` notification is asynchronously posted on
-  Windows 11 (per [Microsoft Q&A 1327362](https://learn.microsoft.com/en-us/answers/questions/1327362/wm-clipboardupdate-issue)),
-  which lets chain observers (`cbdhsvc` Clipboard History service,
-  Cloud Clipboard cross-device sync, Suggested Actions text extractor,
-  third-party clipboard managers) race the write transaction by
-  re-opening the clipboard immediately after `CloseClipboard`. We
-  empirically confirmed the race is observer-caused: with `cbdhsvc`
-  stopped and `AllowClipboardHistory` / `AllowCrossDeviceClipboard` /
-  `SmartClipboard\Disabled` policies set, the silent-no-op symptom
-  vanishes entirely (mc-017 first-attempt PASS in race-bucket reruns,
-  zero in-suite 1st-attempt recoveries). With observers active the
-  same race fires on first attempt after a format-family transition.
-  The mitigation: after `CloseClipboard`, open the clipboard read-side
-  and call `IsClipboardFormatAvailable` for every format written; if
-  any is missing, retry the whole transaction up to 10 times at 100ms
-  intervals (matching .NET's `Clipboard.SetDataObject(data, copy,
-  retryTimes=10, retryDelay=100)` defaults). Worst-case latency on a
-  fully-contended write is ~1s; happy-path cost is one extra
-  Open/Close pair (microseconds). The verify-retry tax matches what
-  every mature Windows clipboard library carries (.NET 10x100ms,
-  Chromium 5x5ms on `OpenClipboard`, arboard "add a sleep()") because
-  the race is inherent to the OS, not specific to any one library.
-  Affected users can disable the documented Microsoft observers via
-  the new control script at `dev/windows-clipboard-observers.ps1` for
-  a zero-tax run.
+- Windows: added a control script (`dev/windows-clipboard-observers.ps1`)
+  to disable the documented Windows clipboard chain observers
+  (`cbdhsvc` Clipboard History service, Cloud Clipboard sync, Suggested
+  Actions text extractor) for users who need zero-flake clipboard
+  behavior. The script captures current state, applies test values,
+  and restores cleanly on `-Mode Restore`. The race the script
+  works around is the asynchronously-posted `WM_CLIPBOARDUPDATE`
+  notification on Windows 11 (per [Microsoft Q&A 1327362](https://learn.microsoft.com/en-us/answers/questions/1327362/wm-clipboardupdate-issue)),
+  which lets observers re-open the clipboard immediately after our
+  `CloseClipboard` and overwrite our content. This is the same race
+  every mature Windows clipboard library lives with (Chromium, Qt,
+  clipboard-win, pyperclip, .NET WinForms) and has no published fix.
+  We empirically confirmed the script eliminates the symptom: with
+  observers off the QEMU e2e suite goes from 24/28 PASS to 27/28
+  PASS with zero first-attempt race recoveries.
+- Windows: added a `GetClipboardSequenceNumber` canary in the write
+  path. The wrapper samples the sequence number before
+  `OpenClipboard` and after `CloseClipboard`; per MSDN, immediate-
+  rendering writes MUST advance it synchronously, so a zero delta
+  emits a WARNING through Python logging (lands in the MCP host's
+  log file, not the chat). The canary distinguishes a different bug
+  class -- kernel did not register our write -- from the documented
+  chain-observer race (where the sequence advances but observers
+  clobber the contents after our return). With
+  `MCP_CLIPBOARD_DEBUG=1` / `--debug`, the wrapper also emits the
+  full `seq_before` / `seq_after` / `delta` tuple at DEBUG level on
+  every write so user-reported flakes can be diagnosed without us
+  re-instrumenting live.
 - Windows: replaced the entire `OleSetClipboard` + `OleFlushClipboard`
   write path with the canonical raw-`SetClipboardData` pattern used by
   Chromium (`ui/base/clipboard/clipboard_win.cc`), pyperclip, and pyclip.

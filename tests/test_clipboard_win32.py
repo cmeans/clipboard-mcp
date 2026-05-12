@@ -613,12 +613,10 @@ def test_allocate_hglobal_frees_handle_on_lock_failure(clipboard_win32, fake_win
 
 
 def test_write_payloads_single_format_full_transaction(clipboard_win32, fake_win32clipboard):
-    """Happy path for one format: write transaction (OpenClipboard,
-    EmptyClipboard, GlobalAlloc + lock/copy/unlock, SetClipboardData,
-    CloseClipboard) followed by a verify pair (OpenClipboard,
-    IsClipboardFormatAvailable, CloseClipboard). EmptyClipboard fires
-    exactly once -- only the write transaction empties; the verify
-    pair is read-only."""
+    """Happy path for one format: OpenClipboard, EmptyClipboard,
+    GlobalAlloc + lock/copy/unlock, SetClipboardData, CloseClipboard.
+    No retry, no verify, no pump -- the canonical Win32 sequence
+    matching Chromium / Qt / clipboard-win."""
     import ctypes as _ctypes
 
     kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
@@ -626,26 +624,28 @@ def test_write_payloads_single_format_full_transaction(clipboard_win32, fake_win
     kernel32.GlobalAlloc.return_value = 0xCAFE
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 0xCAFE  # success
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True  # verify passes
+    # Sequence number advances by 1 (the canonical immediate-rendering
+    # bump per MSDN); canary stays quiet.
+    user32.GetClipboardSequenceNumber.side_effect = [100, 101]
 
     clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    # Write pair + verify pair = 2 Open/Close.
-    assert fake_win32clipboard.OpenClipboard.call_count == 2
-    assert fake_win32clipboard.CloseClipboard.call_count == 2
+    fake_win32clipboard.OpenClipboard.assert_called_once()
     fake_win32clipboard.EmptyClipboard.assert_called_once()
     user32.SetClipboardData.assert_called_once()
     fmt_arg, handle_arg = user32.SetClipboardData.call_args.args
     assert fmt_arg.value == 0xC100
     assert handle_arg.value == 0xCAFE
-    fake_win32clipboard.IsClipboardFormatAvailable.assert_called_once_with(0xC100)
+    fake_win32clipboard.CloseClipboard.assert_called_once()
+    # No post-write verify pair.
+    fake_win32clipboard.IsClipboardFormatAvailable.assert_not_called()
 
 
 def test_write_payloads_multi_format_uses_one_transaction(clipboard_win32, fake_win32clipboard):
     """A multi-format write is ONE OpenClipboard / EmptyClipboard /
-    multiple-SetClipboardData / CloseClipboard transaction followed
-    by ONE verify pair. EmptyClipboard runs exactly once -- not once
-    per format -- so the formats appear on the clipboard atomically."""
+    multiple-SetClipboardData / CloseClipboard transaction. EmptyClipboard
+    runs exactly once -- not once per format -- so the formats appear on
+    the clipboard atomically."""
     import ctypes as _ctypes
 
     handles = iter([0xCAFE0001, 0xCAFE0002])
@@ -654,17 +654,15 @@ def test_write_payloads_multi_format_uses_one_transaction(clipboard_win32, fake_
     kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 1  # success
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+    user32.GetClipboardSequenceNumber.side_effect = [200, 201]
 
     clipboard_win32._write_payloads({13: b"x\x00", 0xC100: b"<p>x</p>"})
 
-    assert fake_win32clipboard.OpenClipboard.call_count == 2  # write + verify
+    fake_win32clipboard.OpenClipboard.assert_called_once()
     fake_win32clipboard.EmptyClipboard.assert_called_once()
     assert user32.SetClipboardData.call_count == 2
-    assert fake_win32clipboard.CloseClipboard.call_count == 2
-    # Verify confirmed both formats.
-    verified = {c.args[0] for c in fake_win32clipboard.IsClipboardFormatAvailable.call_args_list}
-    assert verified == {13, 0xC100}
+    fake_win32clipboard.CloseClipboard.assert_called_once()
+    fake_win32clipboard.IsClipboardFormatAvailable.assert_not_called()
 
 
 def test_write_payloads_empty_input_is_noop(clipboard_win32, fake_win32clipboard):
@@ -735,70 +733,18 @@ def test_write_payloads_frees_handles_when_open_clipboard_exhausts(
     kernel32.GlobalFree.assert_called_once()
 
 
-def test_write_payloads_verifies_each_format_after_close(clipboard_win32, fake_win32clipboard):
-    """After the write transaction's CloseClipboard, the wrapper opens
-    the clipboard read-side and calls IsClipboardFormatAvailable for
-    EVERY format it wrote. If any one is missing, the chain observer
-    raced our write and the whole transaction retries; if all are
-    present, the call returns. The verify pair is the engineering tax
-    every mature Windows clipboard library carries (.NET retries
-    OleSetClipboard up to 10x100ms; arboard says "add a sleep()";
-    Chromium has the OpenClipboard contention retry). Documented
-    Microsoft observers (Clipboard History `cbdhsvc`, Cloud Clipboard,
-    Suggested Actions) race via asynchronously-posted WM_CLIPBOARDUPDATE
-    notifications, so a small delay + retry is the only published
-    mitigation."""
-    import ctypes as _ctypes
-
-    handles = iter([0xCAFE0001, 0xCAFE0002])
-    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
-    kernel32.GlobalLock.return_value = 0xBEEF
-    user32.SetClipboardData.return_value = 1
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
-
-    clipboard_win32._write_payloads({13: b"x\x00", 0xC100: b"<p>x</p>"})
-
-    # Verify queried every format ID exactly once on the happy path.
-    verified = [c.args[0] for c in fake_win32clipboard.IsClipboardFormatAvailable.call_args_list]
-    assert sorted(verified) == [13, 0xC100]
-
-
-def test_write_payloads_retries_when_observer_clobbers(clipboard_win32, fake_win32clipboard):
-    """If IsClipboardFormatAvailable reports our format absent after
-    CloseClipboard (a clipboard chain observer raced our write), the
-    whole transaction retries. Second attempt's verify passes and the
-    call returns without raising. This is the canonical observer-race
-    mitigation: rewrite, re-verify, win the next round."""
-    import ctypes as _ctypes
-
-    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    handle_seq = iter([0xCAFE01, 0xCAFE02])  # one per attempt
-    kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handle_seq)
-    kernel32.GlobalLock.return_value = 0xBEEF
-    user32.SetClipboardData.return_value = 1  # SetClipboardData always succeeds
-    # First verify: format absent (observer clobbered). Second: present.
-    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = [False, True]
-
-    # Short-circuit the inter-attempt sleep so the test runs fast.
-    with patch.object(clipboard_win32, "_WRITE_VERIFY_RETRY_DELAY_MS", 0):
-        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
-
-    # Two full write transactions ran (write + verify + write + verify).
-    assert user32.SetClipboardData.call_count == 2
-    assert fake_win32clipboard.EmptyClipboard.call_count == 2
-    # OpenClipboard fires 4 times: write-open, verify-open, write-open, verify-open.
-    assert fake_win32clipboard.OpenClipboard.call_count == 4
-
-
-def test_write_payloads_raises_after_verify_budget_exhausted(clipboard_win32, fake_win32clipboard):
-    """If every attempt's verify reports the format missing, the retry
-    budget exhausts and RuntimeError surfaces with a diagnostic message
-    naming chain observers as the likely cause and pointing at the
-    control script. The user-visible error makes the failure mode
-    discoverable rather than a silent no-op."""
+def test_write_payloads_no_post_write_verify(clipboard_win32, fake_win32clipboard):
+    """Architectural invariant: there is NO post-write
+    IsClipboardFormatAvailable verify. This matches Chromium, Qt,
+    clipboard-win, pyperclip, pyclip, and .NET WinForms (whose 10x100ms
+    retry is on the OpenClipboard side, not on post-write verify).
+    A prior revision (commit 75bcb0f) added a verify-retry tax;
+    QEMU testing showed it made the race STRICTLY WORSE under active
+    chain observers (race-bucket went 4/6 to 0/6 PASS) because each
+    verify pair generates an additional WM_CLIPBOARDUPDATE
+    notification that amplifies observer contention. The verify-retry
+    is gone. If a future change reintroduces it, this test fails the
+    architectural smell."""
     import ctypes as _ctypes
 
     kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
@@ -806,40 +752,106 @@ def test_write_payloads_raises_after_verify_budget_exhausted(clipboard_win32, fa
     kernel32.GlobalAlloc.return_value = 0xCAFE
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 1
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = False  # always missing
-
-    with (
-        patch.object(clipboard_win32, "_WRITE_VERIFY_RETRY_DELAY_MS", 0),
-        patch.object(clipboard_win32, "_WRITE_VERIFY_RETRIES", 3),
-    ):
-        with pytest.raises(RuntimeError, match="verify failed after 3 attempts"):
-            clipboard_win32._write_payloads({0xC100: b"<svg/>"})
-
-    # The error message names the chain observer hypothesis and the script.
-    # (Substring already asserted via match; this is the architectural
-    # commitment that we publish the diagnostic, not just the symptom.)
-    assert user32.SetClipboardData.call_count == 3
-
-
-def test_write_payloads_no_retry_when_first_verify_passes(clipboard_win32, fake_win32clipboard):
-    """Happy path under chain-observer-disabled conditions (or when the
-    observer happened not to fire): one write transaction, one verify
-    pair, no retry. The verify-retry tax has zero cost on the steady-
-    state happy path beyond a single Open/Close pair (microseconds)."""
-    import ctypes as _ctypes
-
-    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    kernel32.GlobalAlloc.return_value = 0xCAFE
-    kernel32.GlobalLock.return_value = 0xBEEF
-    user32.SetClipboardData.return_value = 1
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+    user32.GetClipboardSequenceNumber.side_effect = [50, 51]
 
     clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    assert user32.SetClipboardData.call_count == 1
-    assert fake_win32clipboard.EmptyClipboard.call_count == 1
-    assert fake_win32clipboard.OpenClipboard.call_count == 2  # write + verify
+    # OpenClipboard fires ONCE (just the write transaction).
+    fake_win32clipboard.OpenClipboard.assert_called_once()
+    fake_win32clipboard.CloseClipboard.assert_called_once()
+    # SetClipboardData fires ONCE.
+    user32.SetClipboardData.assert_called_once()
+    # IsClipboardFormatAvailable is NEVER called on the write path.
+    fake_win32clipboard.IsClipboardFormatAvailable.assert_not_called()
+
+
+def test_write_payloads_emits_seq_canary_when_sequence_unchanged(
+    clipboard_win32, fake_win32clipboard, caplog
+):
+    """Diagnostic: when GetClipboardSequenceNumber does not advance
+    across the Open/Empty/Set/Close transaction, the kernel did not
+    register our write. Per MSDN this must NOT happen for
+    immediate-rendering writes (real HGLOBAL). If it does, the wrapper
+    emits a WARNING via Python logging so a post-mortem on a
+    user-reported flake can distinguish this from the documented chain-
+    observer race (which advances the sequence but overwrites
+    contents). The WARNING routes to stderr through the host's logging
+    config; it does NOT surface in the chat."""
+    import ctypes as _ctypes
+    import logging as _logging
+
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 1
+    # Sequence number does NOT change -- canary should fire.
+    user32.GetClipboardSequenceNumber.return_value = 42
+
+    with caplog.at_level(_logging.WARNING, logger="mcp_clipboard.clipboard_win32"):
+        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
+
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert len(warnings) == 1, (
+        f"expected exactly one WARNING when seq is unchanged; got {len(warnings)}"
+    )
+    msg = warnings[0].getMessage()
+    assert "GetClipboardSequenceNumber did not advance" in msg
+    assert "kernel" in msg
+    # The WARNING must distinguish itself from the chain-observer race
+    # so a post-mortem reader knows the failure mode is in OUR code,
+    # not in the OS clipboard chain.
+    assert "chain-observer" in msg or "observers" in msg
+
+
+def test_write_payloads_no_canary_when_sequence_advances(
+    clipboard_win32, fake_win32clipboard, caplog
+):
+    """The seq-number canary stays quiet on the happy path. Per MSDN,
+    every successful immediate-rendering write advances
+    GetClipboardSequenceNumber synchronously to CloseClipboard."""
+    import ctypes as _ctypes
+    import logging as _logging
+
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 1
+    user32.GetClipboardSequenceNumber.side_effect = [100, 101]
+
+    with caplog.at_level(_logging.WARNING, logger="mcp_clipboard.clipboard_win32"):
+        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
+
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert warnings == [], (
+        "seq-number canary must not fire when GetClipboardSequenceNumber advances"
+    )
+
+
+def test_write_payloads_debug_logs_seq_delta_when_debug_enabled(
+    clipboard_win32, fake_win32clipboard, caplog
+):
+    """With logging.DEBUG enabled (MCP_CLIPBOARD_DEBUG=1 / --debug),
+    the wrapper emits the seq_before / seq_after / delta tuple on
+    every write so a user reporting a flake can produce a clean
+    diagnostic without us instrumenting live."""
+    import ctypes as _ctypes
+    import logging as _logging
+
+    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
+    kernel32.GlobalAlloc.return_value = 0xCAFE
+    kernel32.GlobalLock.return_value = 0xBEEF
+    user32.SetClipboardData.return_value = 1
+    user32.GetClipboardSequenceNumber.side_effect = [500, 503]
+
+    with caplog.at_level(_logging.DEBUG, logger="mcp_clipboard.clipboard_win32"):
+        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
+
+    debug_msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.DEBUG]
+    matching = [m for m in debug_msgs if "seq 500" in m and "503" in m and "delta 3" in m]
+    assert matching, f"expected DEBUG seq log line; got debug_msgs={debug_msgs}"
 
 
 # --- write_text ------------------------------------------------------------
@@ -913,17 +925,11 @@ def test_write_text_uses_open_empty_set_close_sequence(clipboard_win32, fake_win
     fake_win32clipboard.EmptyClipboard.side_effect = lambda: call_order.append("empty")
     user32.SetClipboardData.side_effect = lambda *_a: (call_order.append("set"), 1)[1]
     fake_win32clipboard.CloseClipboard.side_effect = lambda: call_order.append("close")
-    fake_win32clipboard.IsClipboardFormatAvailable.side_effect = lambda _f: (
-        call_order.append("verify"),
-        True,
-    )[1]
+    user32.GetClipboardSequenceNumber.side_effect = [10, 11]
 
     clipboard_win32.write_text("hi", "text/plain")
 
-    # Write transaction (open/empty/set/close) then verify pair
-    # (open/verify/close). Two full Open/Close brackets, one
-    # EmptyClipboard, one SetClipboardData, one IsClipboardFormatAvailable.
-    assert call_order == ["open", "empty", "set", "close", "open", "verify", "close"]
+    assert call_order == ["open", "empty", "set", "close"]
 
 
 # --- write_multi -----------------------------------------------------------
@@ -954,17 +960,14 @@ def test_write_multi_publishes_all_formats_in_one_transaction(clipboard_win32, f
     kernel32.GlobalLock.return_value = 0xB1
     user32.SetClipboardData.return_value = 1
 
-    fake_win32clipboard.IsClipboardFormatAvailable.return_value = True
+    user32.GetClipboardSequenceNumber.side_effect = [300, 301]
 
     clipboard_win32.write_multi({"text/plain": "hi", "text/html": "<p>hi</p>"})
 
-    # One write transaction (one Empty + two SetClipboardData) plus
-    # one verify pair (one Open/Close, two IsClipboardFormatAvailable
-    # calls). Total Open/Close brackets: 2.
-    assert fake_win32clipboard.OpenClipboard.call_count == 2
+    fake_win32clipboard.OpenClipboard.assert_called_once()
     fake_win32clipboard.EmptyClipboard.assert_called_once()
     assert user32.SetClipboardData.call_count == 2
-    assert fake_win32clipboard.CloseClipboard.call_count == 2
+    fake_win32clipboard.CloseClipboard.assert_called_once()
 
 
 def test_write_multi_resolves_formats_before_clipboard_open(clipboard_win32, fake_win32clipboard):
