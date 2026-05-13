@@ -99,19 +99,6 @@ All notable changes to this project will be documented here.
   We empirically confirmed the script eliminates the symptom: with
   observers off the QEMU e2e suite goes from 24/28 PASS to 27/28
   PASS with zero first-attempt race recoveries.
-- Windows: added a `GetClipboardSequenceNumber` canary in the write
-  path. The wrapper samples the sequence number before
-  `OpenClipboard` and after `CloseClipboard`; per MSDN, immediate-
-  rendering writes MUST advance it synchronously, so a zero delta
-  emits a WARNING through Python logging (lands in the MCP host's
-  log file, not the chat). The canary distinguishes a different bug
-  class -- kernel did not register our write -- from the documented
-  chain-observer race (where the sequence advances but observers
-  clobber the contents after our return). With
-  `MCP_CLIPBOARD_DEBUG=1` / `--debug`, the wrapper also emits the
-  full `seq_before` / `seq_after` / `delta` tuple at DEBUG level on
-  every write so user-reported flakes can be diagnosed without us
-  re-instrumenting live.
 - Windows: replaced the entire `OleSetClipboard` + `OleFlushClipboard`
   write path with the canonical raw-`SetClipboardData` pattern used by
   Chromium (`ui/base/clipboard/clipboard_win.cc`), pyperclip, and pyclip.

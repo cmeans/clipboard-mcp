@@ -65,18 +65,17 @@ Clipboard History on, which is the default) can disable the
 documented Microsoft observers via the control script at
 dev/windows-clipboard-observers.ps1 for a zero-flake run.
 
-**Sequence-number canary.** We sample
-`GetClipboardSequenceNumber` before and after the write transaction
-and emit a WARNING via Python logging (routes to the MCP host's
-server-log file) if the delta is zero. Per MSDN, immediate-rendering
-writes MUST advance the sequence number synchronously to
-`CloseClipboard`; a zero delta means the kernel did not register
-our write -- a different and fixable bug class than the chain-
-observer race (which advances the sequence number, then overwrites
-the content). With `--debug` / `MCP_CLIPBOARD_DEBUG=1`, the wrapper
-also emits the `seq_before` / `seq_after` / `delta` tuple for every
-write at DEBUG level. Both signals stay in the log file (stderr)
-and never reach the chat surface.
+We previously added a passive sequence-number canary at the write
+boundary (two `GetClipboardSequenceNumber` calls bracketing the
+Open/Empty/Set/Close transaction) intended as observation-only
+diagnostic. QEMU re-tested with chain observers DISABLED to isolate
+the canary's effect; the result was 0/6 race-bucket PASS and six
+in-suite 1st-attempt recoveries on a posture that without the
+canary produced 6/6 race-bucket PASS and zero recoveries. Even a
+"passive" instrumentation pass measurably changed the race timing
+on real Windows 11 desktops. The canary was removed in the next
+commit. The lesson is in the public commit history: do not add
+work to the write hot path even when it looks free.
 
 **Why not OleSetClipboard / OleFlushClipboard?** OLE is for delayed
 rendering, cross-process drag-drop, and IDataObject-based marshaling.
@@ -238,30 +237,7 @@ def _user32() -> Any:
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]  # Windows-only
     user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
     user32.SetClipboardData.restype = ctypes.c_void_p
-    user32.GetClipboardSequenceNumber.argtypes = []
-    user32.GetClipboardSequenceNumber.restype = ctypes.c_ulong  # DWORD
     return user32
-
-
-def _get_clipboard_sequence_number() -> int:
-    """Return the system-wide clipboard sequence number from user32.
-
-    GetClipboardSequenceNumber advances on every clipboard mutation
-    (any process's set, empty, or ownership change) and the bump
-    happens synchronously to CloseClipboard for immediate-rendering
-    writes like ours per the MSDN remarks: "If clipboard rendering is
-    delayed, the sequence number is not incremented until the changes
-    are rendered." Since we always immediate-render (real HGLOBAL
-    handed to SetClipboardData), our writes MUST advance the sequence
-    number by the time CloseClipboard returns. The wrapper samples it
-    before OpenClipboard and after CloseClipboard purely as a
-    diagnostic: if the delta is zero, our write did not commit at the
-    kernel level (different bug class than the documented chain-
-    observer race where the sequence DOES advance but observers
-    clobber the contents AFTER our return).
-    """
-    user32 = _user32()
-    return int(user32.GetClipboardSequenceNumber())
 
 
 def _set_clipboard_data(fmt_id: int, handle: int) -> None:
@@ -575,30 +551,25 @@ def _encode_for_format(fmt_id: int, content: str, win32clipboard: Any) -> bytes:
 # STRICTLY WORSE under active chain observers: each retry generates
 # an additional WM_CLIPBOARDUPDATE notification that amplifies
 # observer contention. The race-bucket reruns on dev12 produced
-# 0/6 PASS vs dev11's 4/6 PASS with the same observers active. The
-# mitigation is removed; we match the published state of the art
-# across every major library. The race-bucket result is what every
-# clipboard library lives with on Windows desktops with chain
-# observers active. See dev/windows-clipboard-observers.ps1 for a
-# control script that disables the documented Microsoft observers
-# (Clipboard History service `cbdhsvc`, Cloud Clipboard sync,
-# Suggested Actions) for users who need zero-flake behavior.
-#
-# **Sequence-number canary.** We sample GetClipboardSequenceNumber
-# before and after the transaction. Per MSDN, immediate-rendering
-# writes (real HGLOBAL, not NULL for delayed render) MUST advance
-# the sequence number synchronously by the time CloseClipboard
-# returns. If the delta is zero we emit a WARNING -- the kernel
-# did not register our write, which is a DIFFERENT bug class than
-# the documented chain-observer race (where the sequence DOES
-# advance but observers clobber the contents AFTER our return).
-# Routes through Python logging at WARNING level, so it lands in
-# the host's MCP server log file (e.g. %APPDATA%\Claude\logs\ on
-# Windows) without polluting the chat surface. With logging.DEBUG
-# enabled (MCP_CLIPBOARD_DEBUG=1 or --debug), the wrapper also
-# emits the seq_before / seq_after / delta tuple for every write,
-# so a user who reports a flake can produce a clear post-mortem
-# without us having to re-instrument anything live.
+# 0/6 PASS vs dev11's 4/6 PASS with the same observers active. A
+# second attempt (dev13 / commit ab05aef) added a passive sequence-
+# number canary -- two GetClipboardSequenceNumber calls bracketing
+# the Open/Empty/Set/Close transaction, intended as observation-only
+# diagnostic. QEMU re-tested with chain observers DISABLED to isolate
+# the canary's effect; the result was 0/6 race-bucket PASS and six
+# in-suite 1st-attempt recoveries on a posture that on dev11 had
+# produced 6/6 race-bucket PASS and zero recoveries. The canary
+# itself, despite being structurally passive (no clipboard handle
+# taken, no extra WM_CLIPBOARDUPDATE generated), measurably changed
+# the race timing -- likely by introducing CPU work on the worker
+# thread immediately around the transaction window. Both mitigations
+# are now removed. The wrapper is the bare canonical Win32 pattern,
+# matching the published state of the art across every major
+# library. The race-bucket result is what every Windows clipboard
+# library lives with under active chain observers. See
+# dev/windows-clipboard-observers.ps1 for a control script that
+# disables the documented Microsoft observers for users who need
+# zero-flake behavior.
 
 
 def _write_payloads(payloads: dict[int, bytes]) -> None:
@@ -626,8 +597,6 @@ def _write_payloads(payloads: dict[int, bytes]) -> None:
     win32clipboard = _import_win32clipboard()
     kernel32 = _kernel32()
 
-    seq_before = _get_clipboard_sequence_number()
-
     handles: list[tuple[int, int]] = []  # (format_id, handle)
     transferred: set[int] = set()
     try:
@@ -646,39 +615,6 @@ def _write_payloads(payloads: dict[int, bytes]) -> None:
         for _, handle in handles:
             if handle not in transferred:
                 kernel32.GlobalFree(ctypes.c_void_p(handle))
-
-    seq_after = _get_clipboard_sequence_number()
-    fmt_ids = list(payloads.keys())
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "clipboard write: seq %d -> %d (delta %d), formats=%s",
-            seq_before,
-            seq_after,
-            seq_after - seq_before,
-            fmt_ids,
-        )
-    if seq_after == seq_before:
-        # Per MSDN, immediate-rendering writes MUST advance the
-        # sequence number synchronously to CloseClipboard. A zero
-        # delta means either the kernel did not register our write
-        # or another process held clipboard ownership through the
-        # whole transaction. Distinct from the documented chain-
-        # observer race (where seq advances but observers clobber
-        # afterward). Surface as WARNING so a later post-mortem on
-        # a user-reported flake can distinguish the two cases
-        # without re-instrumenting.
-        logger.warning(
-            "Clipboard write canary: GetClipboardSequenceNumber did not "
-            "advance across Open/Empty/Set/Close (seq=%d, formats=%s). The "
-            "write did not register at the kernel level. This is distinct "
-            "from the documented Windows chain-observer race in which the "
-            "sequence advances but observers (Clipboard History `cbdhsvc`, "
-            "Cloud Clipboard, third-party managers) re-write the clipboard "
-            "after our CloseClipboard. If this WARNING fires under normal "
-            "use, the failure mode is in our wrapper, not in the chain.",
-            seq_after,
-            fmt_ids,
-        )
 
 
 def write_text(content: str, mime_type: str) -> None:

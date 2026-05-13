@@ -624,9 +624,6 @@ def test_write_payloads_single_format_full_transaction(clipboard_win32, fake_win
     kernel32.GlobalAlloc.return_value = 0xCAFE
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 0xCAFE  # success
-    # Sequence number advances by 1 (the canonical immediate-rendering
-    # bump per MSDN); canary stays quiet.
-    user32.GetClipboardSequenceNumber.side_effect = [100, 101]
 
     clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
@@ -654,7 +651,6 @@ def test_write_payloads_multi_format_uses_one_transaction(clipboard_win32, fake_
     kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 1  # success
-    user32.GetClipboardSequenceNumber.side_effect = [200, 201]
 
     clipboard_win32._write_payloads({13: b"x\x00", 0xC100: b"<p>x</p>"})
 
@@ -752,7 +748,6 @@ def test_write_payloads_no_post_write_verify(clipboard_win32, fake_win32clipboar
     kernel32.GlobalAlloc.return_value = 0xCAFE
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 1
-    user32.GetClipboardSequenceNumber.side_effect = [50, 51]
 
     clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
@@ -765,93 +760,28 @@ def test_write_payloads_no_post_write_verify(clipboard_win32, fake_win32clipboar
     fake_win32clipboard.IsClipboardFormatAvailable.assert_not_called()
 
 
-def test_write_payloads_emits_seq_canary_when_sequence_unchanged(
-    clipboard_win32, fake_win32clipboard, caplog
-):
-    """Diagnostic: when GetClipboardSequenceNumber does not advance
-    across the Open/Empty/Set/Close transaction, the kernel did not
-    register our write. Per MSDN this must NOT happen for
-    immediate-rendering writes (real HGLOBAL). If it does, the wrapper
-    emits a WARNING via Python logging so a post-mortem on a
-    user-reported flake can distinguish this from the documented chain-
-    observer race (which advances the sequence but overwrites
-    contents). The WARNING routes to stderr through the host's logging
-    config; it does NOT surface in the chat."""
+def test_write_payloads_no_seq_number_sampling(clipboard_win32, fake_win32clipboard):
+    """Architectural invariant: the write path must NOT call
+    GetClipboardSequenceNumber. A prior revision (commit ab05aef)
+    added a passive seq-number canary bracketing the transaction as
+    an observation-only diagnostic. QEMU re-test with chain observers
+    DISABLED showed the canary itself measurably degraded the race
+    posture: 0/6 race-bucket PASS vs the canary-free 6/6 baseline on
+    the same observer setting. Even "passive" instrumentation on the
+    write hot path is not free on real Windows 11. The canary is
+    removed. If a future change reintroduces sampling at the write
+    boundary, this test fails the architectural smell."""
     import ctypes as _ctypes
-    import logging as _logging
 
     kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
     user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
     kernel32.GlobalAlloc.return_value = 0xCAFE
     kernel32.GlobalLock.return_value = 0xBEEF
     user32.SetClipboardData.return_value = 1
-    # Sequence number does NOT change -- canary should fire.
-    user32.GetClipboardSequenceNumber.return_value = 42
 
-    with caplog.at_level(_logging.WARNING, logger="mcp_clipboard.clipboard_win32"):
-        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
+    clipboard_win32._write_payloads({0xC100: b"<svg/>"})
 
-    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
-    assert len(warnings) == 1, (
-        f"expected exactly one WARNING when seq is unchanged; got {len(warnings)}"
-    )
-    msg = warnings[0].getMessage()
-    assert "GetClipboardSequenceNumber did not advance" in msg
-    assert "kernel" in msg
-    # The WARNING must distinguish itself from the chain-observer race
-    # so a post-mortem reader knows the failure mode is in OUR code,
-    # not in the OS clipboard chain.
-    assert "chain-observer" in msg or "observers" in msg
-
-
-def test_write_payloads_no_canary_when_sequence_advances(
-    clipboard_win32, fake_win32clipboard, caplog
-):
-    """The seq-number canary stays quiet on the happy path. Per MSDN,
-    every successful immediate-rendering write advances
-    GetClipboardSequenceNumber synchronously to CloseClipboard."""
-    import ctypes as _ctypes
-    import logging as _logging
-
-    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    kernel32.GlobalAlloc.return_value = 0xCAFE
-    kernel32.GlobalLock.return_value = 0xBEEF
-    user32.SetClipboardData.return_value = 1
-    user32.GetClipboardSequenceNumber.side_effect = [100, 101]
-
-    with caplog.at_level(_logging.WARNING, logger="mcp_clipboard.clipboard_win32"):
-        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
-
-    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
-    assert warnings == [], (
-        "seq-number canary must not fire when GetClipboardSequenceNumber advances"
-    )
-
-
-def test_write_payloads_debug_logs_seq_delta_when_debug_enabled(
-    clipboard_win32, fake_win32clipboard, caplog
-):
-    """With logging.DEBUG enabled (MCP_CLIPBOARD_DEBUG=1 / --debug),
-    the wrapper emits the seq_before / seq_after / delta tuple on
-    every write so a user reporting a flake can produce a clean
-    diagnostic without us instrumenting live."""
-    import ctypes as _ctypes
-    import logging as _logging
-
-    kernel32 = _ctypes.windll.kernel32  # type: ignore[attr-defined]
-    user32 = _ctypes.windll.user32  # type: ignore[attr-defined]
-    kernel32.GlobalAlloc.return_value = 0xCAFE
-    kernel32.GlobalLock.return_value = 0xBEEF
-    user32.SetClipboardData.return_value = 1
-    user32.GetClipboardSequenceNumber.side_effect = [500, 503]
-
-    with caplog.at_level(_logging.DEBUG, logger="mcp_clipboard.clipboard_win32"):
-        clipboard_win32._write_payloads({0xC100: b"<svg/>"})
-
-    debug_msgs = [r.getMessage() for r in caplog.records if r.levelno == _logging.DEBUG]
-    matching = [m for m in debug_msgs if "seq 500" in m and "503" in m and "delta 3" in m]
-    assert matching, f"expected DEBUG seq log line; got debug_msgs={debug_msgs}"
+    user32.GetClipboardSequenceNumber.assert_not_called()
 
 
 # --- write_text ------------------------------------------------------------
@@ -925,7 +855,6 @@ def test_write_text_uses_open_empty_set_close_sequence(clipboard_win32, fake_win
     fake_win32clipboard.EmptyClipboard.side_effect = lambda: call_order.append("empty")
     user32.SetClipboardData.side_effect = lambda *_a: (call_order.append("set"), 1)[1]
     fake_win32clipboard.CloseClipboard.side_effect = lambda: call_order.append("close")
-    user32.GetClipboardSequenceNumber.side_effect = [10, 11]
 
     clipboard_win32.write_text("hi", "text/plain")
 
@@ -959,8 +888,6 @@ def test_write_multi_publishes_all_formats_in_one_transaction(clipboard_win32, f
     kernel32.GlobalAlloc.side_effect = lambda *_a, **_kw: next(handles)
     kernel32.GlobalLock.return_value = 0xB1
     user32.SetClipboardData.return_value = 1
-
-    user32.GetClipboardSequenceNumber.side_effect = [300, 301]
 
     clipboard_win32.write_multi({"text/plain": "hi", "text/html": "<p>hi</p>"})
 
