@@ -12,6 +12,10 @@ All notable changes to this project will be documented here.
   record `mcp_clipboard_version` from inside an MCP session
   without depending on a shell or filesystem access.
 
+### Changed
+
+- **Bump github-actions group: actions/checkout 6→7, codecov/codecov-action 6→7, actions/create-github-app-token 3.1.1→3.2.0** (#151)
+
 ### Fixed
 - Windows: non-ASCII characters survive `clipboard_paste` and
   `clipboard_read_raw` round-trips. Em dash (U+2014), curly quotes
